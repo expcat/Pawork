@@ -60,7 +60,7 @@ CU-10 native 入口：`NativeHost::new(surface)` / `host()`、open_scope / close
 
 ## 4. 关键行为与语义
 
-CU-10 本轮等批接缝（2026-10-09，实施中、待独立 review）：`NativeControl` / `NativeHost::wait_for_requested_grant(scope, bundle_id, cancelled)` 仅对活跃 scope 内恰好一条同 bundle requested target、且当前缺授权的情况等待；其它情况立即返回，由后续 bind/launch 解析终态。Condvar 使用原 registry 锁的真实谓词循环，等待释放锁；grant / revoke / close_scope 唤醒，取消每 250ms 复查。撤销同时移除对应待批请求，避免再次睡回原请求。该接缝不签授权、不克隆许可，不放宽原授权代次与一次派发凭证。
+CU-10 本轮等批接缝（2026-10-09，本轮模拟验证与独立 R3 review PASS）：`NativeControl` / `NativeHost::wait_for_requested_grant(scope, bundle_id, cancelled)` 仅对活跃 scope 内恰好一条同 bundle requested target、且当前缺授权的情况等待；其它情况立即返回，由后续 bind/launch 解析终态。Condvar 使用原 registry 锁的真实谓词循环，等待释放锁；grant / revoke / close_scope 唤醒，取消每 250ms 复查。撤销同时移除对应待批请求，避免再次睡回原请求。该接缝不签授权、不克隆许可，不放宽原授权代次与一次派发凭证。
 
 桌面以会话为所有权边界（CU-09）：一个桌面同时只属于一个 workspace/run，非拥有 Run 的任何动作（含 status）按 Error::Conflict(owner) 立即拒绝、零后端访问；取消/超时释放占用并作废待用观测，空闲超过 OWNERSHIP_TTL（60 秒，与观测租约同寿）自动失拥有，宿主用 Computer::release(scope) 在 Run 终止时显式释放。坐标从 JPEG 左上角开始，严格在 `[0,width) × [0,height)`，按虚拟尺寸缩放。截图最长 1280、≤512 KiB；raw framebuffer 单边 ≤4096、总像素 ≤8M，响应字节、矩形、消息与 8 秒 I/O 均有上限。每次全量截图覆盖全部像素后才返回，禁止残帧伪装截图。观察绑定 scope、连接身份和尺寸，60 秒失效；输入前即消费，错误不允许重用。断线后新连接身份使旧观察失效；不自动重试输入。取消/错误时尝试释放，传输失败断开由 Xvnc 释放客户端状态。成功仅代表投递（CU-10 起输入结果随附动作后新截图供直接核对；观测失败时输入事实保留，效果以再次截图核对）。
 

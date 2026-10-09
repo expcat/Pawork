@@ -36,7 +36,7 @@
 | 已实现；自动回归通过，read/click/句柄/拒绝/重放真实验收通过，截图正路径与焦点探针待人工验收 | [CU-13 · 内置浏览器截图与 DOM 观测](plan/cu-13-browser-observation.md) | P4 | 在现有系统 WebView 上补截图与稳定 DOM 观测，保持用户可同时使用 Pawork。 |
 | 已实现；自动回归通过，归属/负路径/重放真实验收通过；复审修复四项过自动门禁，标签条滚动与空标签地址栏真窗复验通过（2026-10-08），Agent 不动展示复验待模型链路人工验收 | [CU-14 · 内置浏览器标签页与任务生命周期](plan/cu-14-browser-tabs.md) | P4 | 将每任务单页扩展为有归属的多标签，支持选择与清理。 |
 | 实现完成；自动门禁全绿，真实浏览器验收待人工执行（验收机已解锁 2026-10-08，扩展安装须用户当面确认） | [CU-15 · 外部 Chrome / Edge 的真实后台控制](plan/cu-15-external-browser.md) | P4 | MV3 扩展 + native messaging 桥（`pawork_browser_bridge`）+ Host `external_browser` 工具 + Desktop `ext_` 分流；自动门禁全绿，真实浏览器验收待用户确认安装扩展后执行。 |
-| 等待人工验收 | [CU-16 · 应用与网站范围的 Host 审批](plan/cu-16-target-approvals.md) | P1 | 在现有 Policy 和显式审批上补目标范围，生产原生操作在本任务落地后才接入。 |
+| ✅ 完成（模拟验收） | [CU-16 · 应用与网站范围的 Host 审批](plan/cu-16-target-approvals.md) | P1 | 当前 GUI 审批到共享台账与正式工具链的 12 项定向测试通过，源码无改，独立 review PASS；原生网站缺来源仍拒绝，系统权限独立待验。 |
 | 已实现 | [CU-17 · GUI 观测查询与协议版本接入](plan/cu-17-gui-observation-protocol.md) | P5 | 为 GUI 提供有界目标状态与截图证据查询，保留 Host 作为唯一入口。 |
 | 已实现；自动门禁通过，真窗验收覆盖入口/空态/刷新/断线重连；empty 态与授权回执端到端待 CU-20 目标登记后人工验收 | [CU-18 · GUI 目标选择与权限交互](plan/cu-18-gui-target-approvals.md) | P5 | 让用户选择后台操作目标并管理应用/网站授权。 |
 | 已实现；自动门禁通过；真窗验收覆盖证据区空态（no_workspace / no_run）与 observation_list 真实往返；观测行 / 停止状态机待活动 run（环境阻塞，见任务记录） | [CU-19 · GUI 截图证据与停止状态](plan/cu-19-gui-evidence-stop.md) | P5 | 让用户查看实际操作前后证据，并可靠停止后台任务。 |

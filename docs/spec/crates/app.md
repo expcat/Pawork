@@ -308,11 +308,11 @@ Host 是观测证据与 computer-use 目标的唯一入口（`gui_host/handlers/
 
 GUI run_start 注册前 open；RunService 在进入 engine 前对 CLI / GUI / child 同源 open，Drop 守卫覆盖 open 后早退，显式终态 close 后 disarm，GUI spawn wrapper 仍兜底。close 清该 scope 授权、句柄、待批请求与占用，不影响父 / 其它 Run，不累积终态台账。GUI 断连、切任务或关窗不取消已进入 Host 的 Run。
 
-native 返回结果沿 AgentTool → Scheduler → Engine → ToolExecutionCompleted / 工具 MessageCommitted 持久化，JPEG 为 ImageSource::Base64；取消时若整批有成功结果或严格布尔 `input_dispatched=true` 的事实，则配齐整批工具结果后沿原事件链保存，再结束为 Cancelled，具体见 [engine](engine.md#43-取消传播)。既有 observation 查询 / resume 只读历史、不重捕获。Host 在登记锁外执行 AX / 捕获 / 启动 / 派发，以 ProbeSnapshot 在登记处复核，不克隆 authorizer；原票据与授权代次承接在途撤销，入口、长探测后、派发前及事件组的真实目标活动复核承接接管，不记录全局键盘内容。修后模拟验证与独立 review 仍在进行，真实 native / GUI / Provider / 连续用户输入与接管边界见 [CU-10](../../plan/cu-10-action-observe.md)。
+native 返回结果沿 AgentTool → Scheduler → Engine → ToolExecutionCompleted / 工具 MessageCommitted 持久化，JPEG 为 ImageSource::Base64；取消时若整批有成功结果或严格布尔 `input_dispatched=true` 的事实，则配齐整批工具结果后沿原事件链保存，再结束为 Cancelled，具体见 [engine](engine.md#43-取消传播)。既有 observation 查询 / resume 只读历史、不重捕获。Host 在登记锁外执行 AX / 捕获 / 启动 / 派发，以 ProbeSnapshot 在登记处复核，不克隆 authorizer；原票据与授权代次承接在途撤销，入口、长探测后、派发前及事件组的真实目标活动复核承接接管，不记录全局键盘内容。本轮修后模拟验证与独立 R3 review 已 PASS，真实 native / GUI / Provider / 连续用户输入与接管边界见 [CU-10](../../plan/cu-10-action-observe.md)。
 
-历史 R4～R7 的扩写与离线回归审查记录保留在 [CU-10](../../plan/cu-10-action-observe.md)，不代表本轮代码状态。2026-10-09 新授权覆盖原 Engine / CLI 待回复事项；候选显式 `--gui-host` 已进入实现，丢失终态沿既有重连 / Resume 与 SessionGet 分页 Timeline 查询原 run_id，running / unknown 和分页末尾均不作为终态。
+历史 R4～R7 的扩写与离线回归审查记录保留在 [CU-10](../../plan/cu-10-action-observe.md)，不代表本轮代码状态。2026-10-09 新授权覆盖原 Engine / CLI 待回复事项；显式 `--gui-host` 已实现并通过本轮模拟验证与独立 R3 review，丢失终态沿既有重连 / Resume 与 SessionGet 分页 Timeline 查询原 run_id，running / unknown 和分页末尾均不作为终态。
 
-2026-10-09 用户新授权后的实施状态：历史 R4～R7 的「扩写待回复」不再作为延期依据。App 在 Policy 与通用审批之后、scheduler 之前，为显式 CLI Host Run 的 `computer_native bind/launch` 调用通过 `spawn_blocking` 等待同 scope / bundle 的真实 requested pair；等待释放 registry 锁，grant / revoke / close 唤醒，取消短周期检查，等批不占 native 工具 25 秒执行预算。request / discover 与普通 CLI Run 不等待。CLI 客户端与修后完整链验证仍在实施，独立 review 尚未执行；取消结果的 Engine 持久化语义见 [engine](engine.md#43-取消传播)。
+2026-10-09 用户新授权后的实施状态：历史 R4～R7 的「扩写待回复」不再作为延期依据。App 在 Policy 与通用审批之后、scheduler 之前，为显式 CLI Host Run 的 `computer_native bind/launch` 调用通过 `spawn_blocking` 等待同 scope / bundle 的真实 requested pair；等待释放 registry 锁，grant / revoke / close 唤醒，取消短周期检查，等批不占 native 工具 25 秒执行预算。request / discover 与普通 CLI Run 不等待。CLI 客户端与修后完整链验证已完成本轮模拟验证和独立 R3 review PASS；取消结果的 Engine 持久化语义见 [engine](engine.md#43-取消传播)。
 
 以上流程的跨包端到端视角（CLI ↔ GUI ↔ engine ↔ storage）见 [../flows.md](../flows.md)。
 
