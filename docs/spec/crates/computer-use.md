@@ -102,6 +102,8 @@ CU-08 指针与窗口移动不变量：指针动作（点击 / 滚动 / 拖动�
 
 ## 7. 测试与 golden 资产
 
+CU-09（2026-10-09）扩展现有 `examples/isolated_probe.rs`：bare action 默认 scope 保留，增加指定 scope / release / 取消时点、`conflict_during_type` 与 `release_during_type` 两条并发入口；输出 owner 完整回执与 JPEG，JPEG 写失败显式报错。真实隔离 Xvnc / RFB 验证 Conflict、跨 Run/旧观测拒绝、释放与取消后的再使用；R2 只证明调用在途释放，首字符与逐事件中止未在真桌面重证。库内 Fake / wire、正式 Tool/Host 与 App 连接/持久化使用同版日志复用；当前验收与真实平台边界见 [CU-09](../../plan/cu-09-ownership-cancellation.md)。
+
 lib 回归验证坐标映射、单次消费、权限、取消、scope/连接变化、过期、非法坐标/未知字段/控制字符。CU-10 增三项：`input_returns_its_fresh_observation_in_the_same_call`（输入同调用返回新观测：新 id 单次可用、旧 id 与已消费 id 均 Stale）、`capture_failure_after_dispatch_keeps_the_input_fact`（输入已派发而捕获失败：结果保留派发事实、观测缺席记录原因、后端调用计数钉住不自动重试）、`release_between_dispatch_and_observation_never_mints_a_lease`（复审 P1：派发后 release + 同 scope 重认领的交错下不跨 release 签发租约，派发事实保留）。RFB 定向测试覆盖握手→raw 截图→输入与关键拒绝路径；组合键在每个修饰键和主键发送前检查取消，既有 wire 回归确认 Control 按下后取消不会继续发送 S / Shift，且仍释放 Control。tools 证明审批拒绝前零后端访问、图片返回及序列化；app 证明审批/持久化/resume 不重执行；Providers 保留三协议图片。实际隔离桌面验收结果见路线图，历史 macOS HID 验收不算当前后端通过证据。
 
 `target.rs` 十二项回归钉住契约拒绝语义：CU-01 能力矩阵（指针全族后台拒绝、AppKit 最小化拒定向键、Chromium 语义写拒绝、AppKit AXPress 与最小化窗口移动/缩放按 Unverified、Unverified 与 Unsupported 同拒）、观测一次性消费与跨 Run / 跨 workspace 拒绝（拒绝不消耗租约）、伪造句柄 UnknownHandle 与句柄 JSON 往返、进程级命名空间格式与跨 Host 实例同 PID 旧句柄拒绝、进程退出/重启、窗口销毁与标识符复用、AX 树变化（观测消费与元素句柄同校，截图观测不受树变化影响）、元素消费连带作废父观测与兄弟句柄（反向同样成立）、60 秒过期、取消先于消费、图像坐标映射与越界（含 NaN / 无穷 / 边缘）。

@@ -1,6 +1,6 @@
 # CU-09 · 目标占用、用户接管与后台生命周期
 
-> 状态：等待人工验收。前置：[CU-02](cu-02-target-contracts.md)。更新：2026-10-07。
+> 状态：✅ 自动回归复用与模拟/隔离桌面验收通过；独立 review PASS。前置：[CU-02](cu-02-target-contracts.md)。更新：2026-10-09。
 
 [返回 ROADMAP](../ROADMAP.md#computer-use-rust-升级)
 
@@ -10,7 +10,7 @@
 
 ## 当前依据与读取范围
 
-ComputerTool 使用进程级 OnceLock，物理桌面与 generation 全局共享；串行锁不等于 Run 隔离。关闭 Desktop 已不取消进入 Core 的 Run。
+ComputerTool 的进程级 OnceLock 共享隔离桌面的实际所有权槽；Computer 与 TargetRegistry 已实现按 Run 归属、释放与在途撤销。NativeHost 及 Run 终态 close_scope 已由 CU-10 / CU-17 接入生产。关闭 Desktop 或 GUI 断线不取消进入 Core 的 Run。本轮核现有链与剩余验收缺口，Docker 服务已复核可用，不沿用当日未运行结论。
 
 [computer-use Spec](../spec/crates/computer-use.md)、[tools Spec](../spec/crates/tools.md)、[app Spec](../spec/crates/app.md)、[GUI 连接流程](../spec/flows.md)。
 
@@ -30,7 +30,34 @@ ComputerTool 使用进程级 OnceLock，物理桌面与 generation 全局共享�
 
 实施时优先受影响包的现有定向回归；真实后台能力必须有真实目标状态和用户侧/文件/Host 等独立事实。截图不写入仓库，证据注明日期、环境、输入、实际结果与位置。
 
-## 完成记录
+## 本轮验收（2026-10-09）
+
+生产源码未改。扩展既有 `examples/isolated_probe.rs`：默认 bare action 保留，增加指定 scope、release、取消时点和两条并发调用入口。通过真实 Computer → RFB → Xvnc 验证隔离桌面；同版 Tool / NativeHost 与 GUI 连接回归承接产品链模拟。
+
+| 输入与链路 | 可观察结果与证据范围 |
+| --- | --- |
+| Run A 截图，Run B status / 回传 A 的 observation | 首轮真实 RFB 返回明确 Conflict，耗时 0 ms；A 可继续使用原 observation。 |
+| A 进行 paced type，B 同时 status | 修后 R2 核对完整 Conflict 原因、`owner_running_during_other=true`、B 耗时 0 ms；A 整次调用 2132 ms，结果保留 `input_dispatched=true`、新 observation、JPEG 与 `observation_failure=null`。2132 ms 是 A 整次时长，不是冲突发生时点。 |
+| 在 A 调用未结束时 release，再由 B screenshot | R2 A 收为 Cancelled，整次 229 ms；B 获得新 session 2 的 observation。只证明调用在途释放，不证明真实目标首字符已落地或释放发生在字符组中途；`input_prefix_proven=false`。 |
+| 非拥有者 release、释放后的旧 observation、取消 drag 后另一 Run 截图 | 首轮非拥有者不能释放 B；旧 observation 按 Stale 拒绝；drag Cancelled 后 A 可重新截图。首轮只作这些明确结果的证据，不把其旧宽松 `ok` 判定当修后通过。 |
+| NativeHost 接管 / 撤销 / 取消、scope 与旧元素拒绝 | 复用同版 `/tmp/cu05-20261009/05-tools-computer-native.log` 十条；实际 Tool / Scheduler / Host，OS 活动为平台替身。 |
+| GUI 断线、恢复和 Run 终态释放 | App 源码与 CU-10 验证版本无差异，复用真实 GuiClient / MemoryTransport / GuiServer / Engine 三条 wire 回归及两条持久化回归；断线恢复原 Run、resume / 观测查询零重执行，终态 scope 关闭。不是 GPUI 隐藏、切任务或关窗的真实交互。 |
+
+首轮 19 步原始输出 `/tmp/cu09-20261009/05-drive-stdout.txt`、`05-probe-summary.json` 保留。指挥发现探针把任意错误当 Conflict、吞 JPEG 写错误，并丢弃并发 owner 的回执；修后分别核完整冲突原因、写错误显式 `ok:false` 并保派发事实、成功 owner 完整结果与 JPEG。R2 四步原始输出 `r2-drive-stdout.txt` / `r2-probe-summary.json`，driver exit 0、Cargo exit 0。JPEG 写失败分支本轮由源码检查确认，未注入真实 I/O 失败。截图仅在 `/tmp/cu09-20261009/shots*/`，不入库。
+
+同版 computer-use 库 99 项复用 `/tmp/cu03-20261009/04-computer-use-lib.log`，逐事件 release 中止由 Fake 锚点 `release_during_input_stops_the_remaining_events`、键鼠平衡与取消由真实监听 wire 锚点 `raw_screenshot_and_virtual_unicode_keys_click_and_cancelled_drag` 支持，不称本轮真桌面重证。GUI 连接三条日志 `/tmp/pawork-cu10-glm-final/15-app-wire-tests.log`、持久化两条 `16-app-native-engine-tests.log`；均只复用，不重跑。
+
+Docker Server 29.6.1，实际容器 `e70242201ee2` 启动前 Exited；两轮均只启动该隔离容器，端口 5905 开放。R2 结束恢复 Exited(143)，docker stop exit 0，状态查询 exit 0；未删除镜像或卷。真实连续本机输入/用户接管、系统权限与 GPUI 生命周期交互未重验，按本轮授权使用产品链模拟；不得把这些真实平台边界改记为已验。
+
+```text
+Validated: R2 driver / cargo run 实际 exit 0；rustfmt、diff 与文档链接检查；同版定向日志复用
+Targeted regressions: R2 四步真实 RFB；首轮明确拒绝与恢复；库 99、tools 10、App wire 3/持久化 2 复用
+Full workspace gate: NOT RUN（当前未设置全量门禁）
+```
+
+独立 `gpt-6.1-sol / max` reviewer `01a120dd-2ed5-77e1-8f69-d5c806151e3b`、turn `01a120dd-33a8-7810-8bd1-496cbdcb0ac7` completed / error=null，结论 PASS。四文件受审快照 27714 bytes、SHA256 `a2ecddd6214db903f91734ea16df72fe41f9195269b6ded9dcdc9180b2ef06fb`；核原始 RFB 输出、JPEG、同版回归与实际断言、终态释放和容器恢复，未运行 Cargo。原文 `/tmp/cu09-20261009/REVIEW-R1-PASS.txt`。
+
+## 历史实施记录
 
 2026-10-07 实现；自动定向回归全绿；真实隔离桌面与 GUI 后台生命周期人工验收待执行。
 
@@ -43,7 +70,7 @@ ComputerTool 使用进程级 OnceLock，物理桌面与 generation 全局共享�
 
 **定向回归**：`bash scripts/test.sh computer-use tools app` 全绿（exit 0，63s；computer-use 68 项 / tools 81 项 / app 275+ 项，一次 Cargo 调用含 ui-fixture）。新增八项：tools `another_run_conflict_is_visible_and_never_touches_the_backend`（第二个 Run 的 Conflict 错误可见且后端零调用、拥有者观测照常派发）；lib.rs `second_run_gets_a_visible_conflict_without_touching_the_backend`（冲突可见 + 零后端调用 + 拥有者观测照常派发）、`cancellation_releases_ownership_and_invalidates_the_observation`（取消后无占用 / 无可派发租约残留，新 Run 立即接管）、`release_and_idle_expiry_free_the_desktop_for_the_next_run`（非拥有 scope 不能偷释放、拥有者释放生效、空闲超 TTL 失拥有且孤儿观测不可派发）；target.rs `second_run_conflicts_on_the_same_application_until_released`（同应用冲突、不同应用不冲突、网站按浏览器进程冲突、release_scope 作废句柄并释放占用）、`idle_occupancy_lapses_for_the_next_run`、`user_takeover_pauses_dispatch_without_consuming`（暂停期间派发 UserActive 且租约不消耗、观测保持可用、恢复后继续派发）、`revocation_releases_occupancy_while_leases_block`。既有跨 Run 观测测试按新语义订正（跨 Run 调用先撞所有权闸 → Conflict，仍不可互用观测）。
 
-**真实 / 人工结果**：隔离桌面 Docker（127.0.0.1:5905）本机未运行，真实桌面上两 Run 冲突 / 取消释放 / 后台存活待人工验收（验收时先起 desktop/compose.yaml，再以两个不同 run scope 走 `examples/isolated_probe.rs` 或真实 Host 双会话验证 Conflict 与释放）；原生目标路径为契约层实现，生产接线与真实用户接管信号源属 CU-10 / CU-17 / CU-18，届时随真实目标状态一并人工验收。RFB wire 级取消 / 键平衡由既有 rfb 回归覆盖（真实监听线程）。
+**当日真实 / 人工结果**：2026-10-07 隔离桌面 Docker（127.0.0.1:5905）本机未运行，两 Run 冲突 / 取消释放 / 后台存活未验。2026-10-09 Docker Server 已复核为 29.6.1，生产 NativeHost / Run scope 与接管闸接线已完成，不能把上述当日缺口当作当前实现状态。本轮独立验证另列。RFB wire 级取消 / 键平衡由既有 rfb 回归覆盖（真实监听线程）。
 
 **复审修复**（2026-10-07，6.1 sol 审查结论 ISSUES，5 项必须修，写入集增 `crates/app/src/services/run.rs` 并同批回写 computer-use / tools / app 三包 Spec）：
 
@@ -62,4 +89,4 @@ ComputerTool 使用进程级 OnceLock，物理桌面与 generation 全局共享�
 
 复审后 `bash scripts/test.sh computer-use tools app` 全绿（computer-use 75 项 / tools 82 项 / app 275+2+1 项）。
 
-**遗留缺口**：隔离桌面的 Run 终态释放已接线 app（`ComputerTool::release_shared`），Host 进程被杀死时仍靠占用 TTL 60 秒自愈；契约层 `release_scope` / 用户接管信号源（GUI 观测用户操作目标应用）的生产接线属 CU-10 / CU-18；冲突等待策略首版为明确拒绝，无排队或抢占。
+**当前边界**：隔离桌面的 Run 终态释放已接线 app（`ComputerTool::release_shared`），NativeHost scope 终态与接管闸也已接线。正常 GUI 断连不触发 Run 释放；停止、取消、超时和 Run 终态才收口。冲突策略保持明确拒绝，不排队或抢占；Host 进程死亡不能伪称已完成真实跨进程恢复验收。
