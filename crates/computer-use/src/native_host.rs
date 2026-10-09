@@ -511,7 +511,9 @@ struct RegistryState<S: NativeProbe> {
 
 impl<S: NativeProbe> RegistryState<S> {
     fn lock(&self) -> MutexGuard<'_, TargetRegistry<S>> {
-        self.inner.lock().unwrap_or_else(|poison| poison.into_inner())
+        self.inner
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
     }
 
     fn try_lock(&self) -> Option<MutexGuard<'_, TargetRegistry<S>>> {
@@ -764,10 +766,13 @@ impl<S: NativeSurface> NativeHost<S> {
         let windows = self.surface.list_windows(&resolved, &instance, &|| {
             self.should_cancel(scope, &target, watch, cancelled)
         })?;
-        if windows.len() != 1 {
+        if windows.is_empty() {
             return Err(TargetError::Invalid(
-                "the application does not have exactly one window; refusing to guess",
+                "the application does not have a live window",
             ));
+        }
+        if windows.len() > 1 {
+            return self.bind_listed(scope, &target, &instance, &windows, watch, cancelled);
         }
         let window = windows[0].window;
         if self.should_cancel(scope, &target, watch, cancelled) {
@@ -782,6 +787,48 @@ impl<S: NativeSurface> NativeHost<S> {
         let mut output = info(format!("bound {}", handle.as_str()));
         output.window_id = Some(handle.as_str().to_string());
         Ok(output)
+    }
+
+    /// One host handle per live window, issued in the same registry. The
+    /// result does not pick a window. The model passes one handle back.
+    /// Lines are `handle widthxheight` only: no title, pid, or window id.
+    fn bind_listed(
+        &self,
+        scope: &Scope,
+        target: &TargetIdentity,
+        instance: &ProcessInstance,
+        windows: &[WindowSnapshot],
+        watch: bool,
+        cancelled: &(dyn Fn() -> bool + Send + Sync),
+    ) -> Result<NativeOutput, TargetError> {
+        if self.should_cancel(scope, target, watch, cancelled) {
+            return Err(TargetError::Cancelled);
+        }
+        let snapshot = self.snapshot(instance, &windows[0].window, false);
+        if self.should_cancel(scope, target, watch, cancelled) {
+            return Err(TargetError::Cancelled);
+        }
+        let mut registry = self.lock();
+        if self.revoked(&registry, scope, target, watch) || cancelled() {
+            return Err(TargetError::Cancelled);
+        }
+        let mut lines = Vec::with_capacity(windows.len());
+        for window in windows {
+            let handle = registry.bind_window_with(
+                scope,
+                target.clone(),
+                instance.clone(),
+                window.window,
+                &snapshot,
+            )?;
+            lines.push(format!(
+                "{} {}x{}",
+                handle.as_str(),
+                window.width,
+                window.height
+            ));
+        }
+        Ok(info(lines.join("\n")))
     }
 
     fn screenshot(
@@ -1240,14 +1287,13 @@ impl<S: NativeSurface> NativeHost<S> {
         scope: &Scope,
         validated: &ValidatedWindow,
     ) -> Result<WindowHandle, TargetError> {
-        let registry = self.lock();
-        registry
-            .target_states()
-            .into_iter()
-            .find(|state| {
-                &state.scope == scope && state.target == validated.target && state.window.is_some()
-            })
-            .and_then(|state| state.window)
+        self.lock()
+            .issued_window(
+                scope,
+                &validated.target,
+                &validated.instance,
+                &validated.window,
+            )
             .ok_or(TargetError::UnknownHandle)
     }
 

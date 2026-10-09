@@ -1476,12 +1476,21 @@ impl<P: NativeProbe> TargetRegistry<P> {
                 dispatch_paused: false,
             })
             .collect();
-        for (handle, record) in &self.windows {
+        // One GUI row still carries one handle. Multiple windows of the same
+        // application keep the lowest issued handle so the row does not follow
+        // HashMap order; the tool result lists every handle.
+        let mut bound: Vec<_> = self.windows.iter().collect();
+        bound.sort_by(|left, right| left.0.cmp(right.0));
+        for (handle, record) in bound {
             let entry = states
                 .iter_mut()
                 .find(|state| state.scope == record.scope && state.target == record.target);
             match entry {
-                Some(state) => state.window = Some(WindowHandle(handle.clone())),
+                Some(state) => {
+                    if state.window.is_none() {
+                        state.window = Some(WindowHandle(handle.clone()));
+                    }
+                }
                 None => states.push(TargetState {
                     target: record.target.clone(),
                     scope: record.scope.clone(),
@@ -1565,6 +1574,24 @@ impl<P: NativeProbe> TargetRegistry<P> {
         Ok(())
     }
 
+    /// Handle already stored for this target, scope, process and generation.
+    /// Map lookup only: no probe and no second ledger.
+    pub(crate) fn issued_window(
+        &self,
+        scope: &Scope,
+        target: &TargetIdentity,
+        instance: &ProcessInstance,
+        window: &WindowIdentity,
+    ) -> Option<WindowHandle> {
+        self.windows.iter().find_map(|(handle, record)| {
+            (record.scope == *scope
+                && record.target == *target
+                && record.instance == *instance
+                && record.window == *window)
+                .then(|| WindowHandle(handle.clone()))
+        })
+    }
+
     /// Bind a window the host just enumerated for scope. Requires an active
     /// grant for the target and rejects a process that is already gone;
     /// the authorization check runs before any probe access. Binding alone
@@ -1604,6 +1631,10 @@ impl<P: NativeProbe> TargetRegistry<P> {
             }
         }
         self.touch_occupancy(&target, scope);
+        // Reuse only after the grant and occupancy gates above.
+        if let Some(handle) = self.issued_window(scope, &target, &instance, &window) {
+            return Ok(handle);
+        }
         let handle = WindowHandle(next_handle("w"));
         self.windows.insert(
             handle.0.clone(),

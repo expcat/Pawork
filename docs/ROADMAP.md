@@ -23,7 +23,7 @@
 | --- | --- | --- | --- |
 | ✅ 完成（模拟验收） | [CU-01 · macOS 本机后台操作可行性与能力基线](plan/cu-01-background-feasibility.md) | P0 | 复用原生基线与异目标并发证据；Host 在途接管、取消及撤销后 Idle 模拟与 6 条回归通过，独立 review PASS，未证明能力继续拒绝。 |
 | ✅ 完成（模拟验收） | [CU-02 · 目标、观测与后台能力契约](plan/cu-02-target-contracts.md) | P1 | 当前契约及正式入口拒绝语义核验，复用同版 99 条库回归与 6 条 Host 回归；源码无改，Spec 消费顺序同步，独立复审 PASS。 |
-| 等待人工验收 | [CU-03 · 应用发现、窗口选择与受控启动](plan/cu-03-app-window-discovery.md) | P2 | 让 Agent 选择已授权的真实应用与窗口，并按目标身份受控启动应用。 |
+| ✅ 已实现，自动门禁与模拟验收通过；独立 review PASS | [CU-03 · 应用发现、窗口选择与受控启动](plan/cu-03-app-window-discovery.md) | P2 | bind / launch 返回同应用多窗口的 Host 句柄，所选窗口动作后的观测精确绑定；8 条工具回归与 99 条库回归通过，系统权限另列待验。 |
 | 等待人工验收 | [CU-04 · 窗口级截图与观测坐标](plan/cu-04-window-observation.md) | P2 | 提供目标窗口截图与可供动作使用的新鲜观测。 |
 | 等待人工验收 | [CU-05 · 有界无障碍树与元素定位](plan/cu-05-accessibility-tree.md) | P2 | 为支持的目标应用提供 AX 状态、元素查找和观测绑定的句柄。 |
 | 已实现；自动回归与真实验收通过（2026-10-08 探针路径三族）；VS Code 元素级受树深度截断结构性阻塞，生产接线属 CU-10 | [CU-06 · 后台 AX 语义动作](plan/cu-06-semantic-actions.md) | P2 | 优先用目标元素的语义动作实现后台点击、选择和赋值。 |
