@@ -370,7 +370,8 @@ mod tests {
         oversize: AtomicBool,
         activity: Mutex<ActivityProof>,
         fail_capture: AtomicBool,
-        tree: AxTreeRead,
+        tree: Mutex<AxTreeRead>,
+        tree_failure: Mutex<Option<&'static str>>,
         tree_reads: AtomicUsize,
         tree_wait: AtomicBool,
         tree_entered: AtomicBool,
@@ -382,6 +383,7 @@ mod tests {
         semantic_wait: AtomicBool,
         semantic_entered: AtomicBool,
         semantic_go: AtomicBool,
+        targeted: AtomicUsize,
     }
 
     impl Surface {
@@ -426,7 +428,8 @@ mod tests {
                 oversize: AtomicBool::new(false),
                 activity: Mutex::new(ActivityProof::Idle),
                 fail_capture: AtomicBool::new(fail_capture),
-                tree,
+                tree: Mutex::new(tree),
+                tree_failure: Mutex::new(None),
                 tree_reads: AtomicUsize::new(0),
                 tree_wait: AtomicBool::new(false),
                 tree_entered: AtomicBool::new(false),
@@ -438,6 +441,7 @@ mod tests {
                 semantic_wait: AtomicBool::new(false),
                 semantic_entered: AtomicBool::new(false),
                 semantic_go: AtomicBool::new(false),
+                targeted: AtomicUsize::new(0),
             }))
         }
 
@@ -603,6 +607,28 @@ mod tests {
         fn semantic_gate_entered(&self) -> bool {
             self.0.semantic_entered.load(Ordering::SeqCst)
         }
+
+        fn targeted(&self) -> usize {
+            self.0.targeted.load(Ordering::SeqCst)
+        }
+
+        fn set_tree(&self, nodes: Vec<AxTreeNode>, truncation: AxTreeTruncation) {
+            let tree = AxTreeRead {
+                window: WindowIdentity {
+                    window_id: 7,
+                    generation: 1,
+                },
+                tree_revision: ax_tree_revision(&nodes, truncation),
+                nodes,
+                truncation,
+            };
+            *self.0.tree.lock().expect("tree") = tree;
+            *self.0.tree_failure.lock().expect("tree failure") = None;
+        }
+
+        fn fail_tree_read(&self, message: &'static str) {
+            *self.0.tree_failure.lock().expect("tree failure") = Some(message);
+        }
     }
 
     fn node(
@@ -676,7 +702,8 @@ mod tests {
             let live = self.0.windows.lock().expect("windows").iter().any(|item| {
                 item.id == window.window_id && item.generation == Some(window.generation)
             });
-            live.then_some(self.0.tree.tree_revision)
+            let revision = self.0.tree.lock().expect("tree").tree_revision;
+            live.then_some(revision)
         }
         fn current_origin(&self, _: &WindowIdentity) -> Option<String> {
             self.bump();
@@ -855,7 +882,10 @@ mod tests {
             if cancelled() {
                 return Err(TargetError::Cancelled);
             }
-            Ok(self.0.tree.clone())
+            if let Some(message) = *self.0.tree_failure.lock().expect("tree failure") {
+                return Err(TargetError::ProbeUnavailable(message.to_string()));
+            }
+            Ok(self.0.tree.lock().expect("tree").clone())
         }
         fn semantic(
             &self,
@@ -889,6 +919,7 @@ mod tests {
             if cancelled() {
                 return Err(TargetError::Cancelled);
             }
+            self.0.targeted.fetch_add(1, Ordering::SeqCst);
             Ok(TargetedOutcome::Dispatched {
                 events_posted: 1,
                 events_total: 1,
@@ -2075,5 +2106,306 @@ mod tests {
         );
         assert_eq!(surface.captures(), 1);
         assert_eq!(surface.frames().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn bounded_tree_issues_a_role_match_and_reaches_semantic_and_keyboard() {
+        let surface = Surface::new(false);
+        let mut field = node(vec![0], 1, "AXTextField", None, 0);
+        field.name_unreadable = true;
+        surface.set_tree(
+            vec![node(Vec::new(), 0, "AXWindow", Some("Note"), 1), field],
+            AxTreeTruncation {
+                names: true,
+                ..AxTreeTruncation::default()
+            },
+        );
+        let (main, window) = bound_native(&surface).await;
+
+        let tree = call(
+            &main,
+            "run",
+            json!({"action": "read_tree", "window": window}),
+        )
+        .await
+        .expect("read tree");
+        assert!(tree.success);
+        let tree_text = text_of(&tree);
+        assert!(
+            tree_text.contains("truncation depth=false nodes=false text=false names=true"),
+            "{tree_text}"
+        );
+        assert!(
+            tree_text.contains(
+                "path=[0] role=AXTextField name= children=0 name_truncated=false name_unreadable=true"
+            ),
+            "{tree_text}"
+        );
+        let observation = tree.metadata["observation"]
+            .as_str()
+            .expect("observation")
+            .to_string();
+
+        let named = call(
+            &main,
+            "run",
+            json!({"action": "find_element", "observation": observation, "name": "Note"}),
+        )
+        .await
+        .expect_err("name query over an unreadable-name read");
+        assert_eq!(named.kind, ToolErrorKind::InvalidInput);
+        assert!(
+            named.message.contains("not unique in a provable tree"),
+            "{}",
+            named.message
+        );
+        assert_eq!(surface.semantics(), 0);
+        assert_eq!(surface.targeted(), 0);
+
+        let found = call(
+            &main,
+            "run",
+            json!({"action": "find_element", "observation": observation, "role": "AXTextField"}),
+        )
+        .await
+        .expect("role-only query");
+        assert!(found.success);
+        let found_text = text_of(&found);
+        assert!(
+            found_text.contains("role AXTextField"),
+            "role-only lookup must still issue: {found_text}"
+        );
+        let element = found.metadata["element_id"]
+            .as_str()
+            .expect("element")
+            .to_string();
+
+        let pressed = call(
+            &main,
+            "run",
+            json!({"action": "semantic", "element": element, "semantic": "set_value", "text": "hello"}),
+        )
+        .await
+        .expect("semantic set_value");
+        assert_eq!(pressed.metadata["input_dispatched"], true);
+        assert_eq!(pressed.metadata["outcome"].as_str(), Some("dispatched"));
+        assert_eq!(surface.semantics(), 1);
+        assert_eq!(surface.targeted(), 0);
+
+        let again = call(
+            &main,
+            "run",
+            json!({"action": "read_tree", "window": window}),
+        )
+        .await
+        .expect("second read");
+        let again_observation = again.metadata["observation"]
+            .as_str()
+            .expect("second observation")
+            .to_string();
+        assert_ne!(again_observation, observation);
+        let keyed_element = call(
+            &main,
+            "run",
+            json!({
+                "action": "find_element",
+                "observation": again_observation,
+                "role": "AXTextField"
+            }),
+        )
+        .await
+        .expect("second find");
+        let keyed_element = keyed_element.metadata["element_id"]
+            .as_str()
+            .expect("second element")
+            .to_string();
+        let keyed = call(
+            &main,
+            "run",
+            json!({
+                "action": "targeted",
+                "element": keyed_element,
+                "targeted": "key",
+                "key": "return"
+            }),
+        )
+        .await
+        .expect("targeted key");
+        assert_eq!(keyed.metadata["input_dispatched"], true);
+        assert_eq!(keyed.metadata["outcome"].as_str(), Some("dispatched"));
+        assert_eq!(surface.semantics(), 1);
+        assert_eq!(surface.targeted(), 1);
+    }
+
+    async fn bound_native(surface: &Surface) -> (ToolScheduler, String) {
+        let host = Arc::new(NativeHost::new(surface.clone()));
+        let performer: Arc<dyn NativePerform> = host.clone();
+        let main = scheduler(
+            Arc::new(NativeComputerTool::new(performer)),
+            ApprovalMode::NeverAsk,
+            true,
+        );
+        let scope = Scope::new("ws", "run");
+        host.open_scope(&scope);
+        host.grant(&scope, &target(), GrantKind::ForRun)
+            .expect("grant");
+        let bound = call(&main, "run", json!({"action": "bind", "bundle_id": BUNDLE}))
+            .await
+            .expect("bind");
+        let window = bound.metadata["window_id"]
+            .as_str()
+            .expect("window")
+            .to_string();
+        (main, window)
+    }
+
+    #[tokio::test]
+    async fn ambiguous_unproven_and_failed_reads_do_not_issue_handles() {
+        let surface = Surface::new(false);
+        let nodes = vec![
+            node(Vec::new(), 0, "AXWindow", Some("Document"), 3),
+            node(vec![0], 1, "AXButton", Some("Save"), 0),
+            node(vec![1], 1, "AXButton", Some("Cancel"), 0),
+            node(vec![2], 1, "AXTextArea", None, 0),
+        ];
+        surface.set_tree(nodes.clone(), AxTreeTruncation::default());
+        let (main, window) = bound_native(&surface).await;
+        let tree = call(
+            &main,
+            "run",
+            json!({"action": "read_tree", "window": window}),
+        )
+        .await
+        .expect("complete read");
+        let tree_text = text_of(&tree);
+        assert!(tree_text.contains("role=AXButton name=Save"), "{tree_text}");
+        assert!(
+            tree_text.contains("role=AXButton name=Cancel"),
+            "{tree_text}"
+        );
+        let observation = tree.metadata["observation"]
+            .as_str()
+            .expect("observation")
+            .to_string();
+
+        let ambiguous = call(
+            &main,
+            "run",
+            json!({"action": "find_element", "observation": observation, "role": "AXButton"}),
+        )
+        .await
+        .expect_err("ambiguous role");
+        assert_eq!(ambiguous.kind, ToolErrorKind::InvalidInput);
+        assert!(
+            ambiguous
+                .message
+                .contains("more than one element matched the query"),
+            "{}",
+            ambiguous.message
+        );
+        assert_eq!(surface.semantics(), 0);
+        assert_eq!(surface.targeted(), 0);
+
+        let second = call(
+            &main,
+            "run",
+            json!({"action": "find_element", "observation": observation, "name": "Cancel"}),
+        )
+        .await
+        .expect("the second button stays addressable");
+        let second_text = text_of(&second);
+        assert!(
+            second_text.contains("role AXButton name Cancel"),
+            "a role query must not have issued the first button: {second_text}"
+        );
+        assert!(!second_text.contains("name Save"), "{second_text}");
+        assert_eq!(surface.semantics(), 0);
+
+        surface.set_tree(
+            nodes,
+            AxTreeTruncation {
+                nodes: true,
+                ..AxTreeTruncation::default()
+            },
+        );
+        let truncated = call(
+            &main,
+            "run",
+            json!({"action": "read_tree", "window": window}),
+        )
+        .await
+        .expect("truncated read");
+        let truncated_text = text_of(&truncated);
+        assert!(
+            truncated_text.contains("truncation depth=false nodes=true text=false names=false"),
+            "{truncated_text}"
+        );
+        assert!(
+            truncated_text.contains("role=AXTextArea"),
+            "{truncated_text}"
+        );
+        let truncated_observation = truncated.metadata["observation"]
+            .as_str()
+            .expect("truncated observation")
+            .to_string();
+        let unproven = call(
+            &main,
+            "run",
+            json!({
+                "action": "find_element",
+                "observation": truncated_observation,
+                "role": "AXTextArea"
+            }),
+        )
+        .await
+        .expect_err("unproven unique");
+        assert_eq!(unproven.kind, ToolErrorKind::InvalidInput);
+        assert!(
+            unproven.message.contains("not unique in a provable tree"),
+            "{}",
+            unproven.message
+        );
+        surface.fail_tree_read("accessibility tree read failed: AXError -25204");
+        let failed = call(
+            &main,
+            "run",
+            json!({"action": "read_tree", "window": window}),
+        )
+        .await
+        .expect_err("failed read");
+        assert_eq!(failed.kind, ToolErrorKind::ExecutionFailed);
+        assert!(
+            failed
+                .message
+                .contains("accessibility tree read failed: AXError -25204"),
+            "{}",
+            failed.message
+        );
+        assert!(
+            !failed.message.contains("truncation depth="),
+            "a failed read must not become an empty listing: {}",
+            failed.message
+        );
+        let retained = call(
+            &main,
+            "run",
+            json!({
+                "action": "find_element",
+                "observation": truncated_observation,
+                "role": "AXTextArea"
+            }),
+        )
+        .await
+        .expect_err("stored tree survives the failed read");
+        assert!(
+            retained.message.contains("not unique in a provable tree"),
+            "the stored tree must not collapse to empty: {}",
+            retained.message
+        );
+        assert!(
+            !retained.message.contains("no element matched"),
+            "{}",
+            retained.message
+        );
     }
 }

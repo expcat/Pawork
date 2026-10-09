@@ -156,7 +156,7 @@ MCP 的独立 API、连接与认证见 [mcp](mcp.md)，注册适配器仍使用�
 ## 6. 依赖关系
 
 - **workspace 内**：`pawork-domain`（AgentTool/ToolResult/CancellationToken 等 canonical 类型）、`pawork-policy`（路径内核 + PolicyEngine）、`pawork-exec`（Process/Sandbox Runtime）、`pawork-workspace`（WorkspaceService、ResolvedConfig）、`pawork-computer-use`（隔离桌面与 native 共享 Host 操作）。
-- **外部**：`tokio`、`async-trait`、`serde/serde_json`、`thiserror`、`tracing`、`ignore`、`globset`、`regex`、`chardetng`、`encoding_rs`、`base64`（截图编码）。dev：`tempfile`、`proptest`。无 cargo feature。
+- **外部**：`tokio`、`async-trait`、`serde/serde_json`、`thiserror`、`tracing`、`ignore`、`globset`、`regex`、`chardetng`、`encoding_rs`、`base64`（截图编码）。dev：`tempfile`、`proptest`、`image`（jpeg-only，CU-04 替身 JPEG 编解码验收）。无 cargo feature。
 - **被依赖**：`pawork-mcp`（注册外部工具）、`pawork-app`（注册与调度装配；engine 经 LoopContext 回调消费，不依赖本包）。
 
 ## 7. 测试与验证资产
@@ -172,6 +172,8 @@ CU-01 模拟验收补两项：`same_target_operating_stops_inflight_action_and_i
 CU-03 再补两项：`multi_window_bind_returns_handles_and_screenshot_follows_the_choice` 经正式 Tool / Scheduler / NativeHost 验证多窗口句柄、重复绑定、明确选择截图及所选窗口动作后的新观测；`closed_window_handle_from_a_multi_window_bind_is_replaced_before_capture` 验证关闭旧句柄零 capture、幸存窗口可用及 Once 在列举期间撤销后的复用拒绝。当前同过滤器为 8 passed / 85 filtered、exit 0，另有 computer-use lib 99 passed。CU-03 当次替身 JPEG 是哨兵，仅证明 canonical Image 通路；失败与恢复原始日志、源码指纹和平台边界见 [CU-03](../../plan/cu-03-app-window-discovery.md)。
 
 CU-04（2026-10-09）只扩上述两条现有用例，仍为八条：按所选窗口的 RGB fixture 在平台替身 capture 时编码 JPEG，正式 Tool / Scheduler / Host 返回字节须与该次回帧相同；解码红/绿窗口色值、移动后同窗新 observation、缩放后旧元素零派发、模拟平台权限错误、超图像边长、关窗与进程退出拒绝。jpeg-only `image = 0.25.10` 仅在 dev-dependencies，复用已有 lock 包，不加生产依赖。修后八条通过，同版 computer-use lib 99 项复用；不证明 ScreenCaptureKit 像素、真实 TCC 拒绝或新的坐标点击。失败日志与恢复边界见 [CU-04](../../plan/cu-04-window-observation.md)。
+
+CU-05（2026-10-09）补主路径 `bounded_tree_issues_a_role_match_and_reaches_semantic_and_keyboard` 与关键拒绝 `ambiguous_unproven_and_failed_reads_do_not_issue_handles`，共十条。经正式 Tool / Scheduler / NativeHost 验证 AX 节点与截断文本、名称不可读时角色单条件签发、set_value / key 派发回执、歧义不挑首个、截断唯一不可证及读失败不伪装空树；复用既有 Surface，不证明真实 macOS AX 安全字段未读取或窗口已接受输入。修后十条通过；首次 press 被既有能力门拒绝的失败、同版库回归复用和真实环境边界见 [CU-05](../../plan/cu-05-accessibility-tree.md)。
 
 默认验证命令：`bash scripts/test.sh tools`（无 `tests/` 目录，用例全部在 `--lib`）。
 

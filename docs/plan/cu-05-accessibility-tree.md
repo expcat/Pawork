@@ -1,6 +1,6 @@
 # CU-05 · 有界无障碍树与元素定位
 
-> 状态：等待人工验收（P2）。前置：[CU-03](cu-03-app-window-discovery.md)。更新：2026-10-07。
+> 状态：✅ 自动回归与模拟验收通过；独立 review PASS（P2）。前置：[CU-03](cu-03-app-window-discovery.md)（已模拟验收并独立 review PASS）。更新：2026-10-09。
 
 [返回 ROADMAP](../ROADMAP.md#computer-use-rust-升级)
 
@@ -10,7 +10,7 @@
 
 ## 当前依据与读取范围
 
-当前没有 AX / AT-SPI 树，LCU 的底层树实现未开源；需要通过系统 API 独立实现。
+当前 macOS 后端已实现有界 AX 树，NativeHost / 正式工具的 read_tree、find_element 与元素消费接线已由 CU-10 完成。树读取使用固定的深度、节点、文本和时间上限；元素句柄由 registry 绑定本次窗口、scope 和树版本。本轮按用户授权核实际产品链模拟与拒绝边界，旧真实 AX 探针记录保留其日期与范围。
 
 [computer-use Spec](../spec/crates/computer-use.md)、[安全规格](../spec/security.md)。
 
@@ -29,9 +29,34 @@
 
 实施时优先受影响包的现有定向回归；真实后台能力必须有真实目标状态和用户侧/文件/Host 等独立事实。截图不写入仓库，证据注明日期、环境、输入、实际结果与位置。
 
-## 完成记录
+## 本轮模拟验收（2026-10-09）
 
-2026-10-07 实现；同日按 6.1 sol 复审意见完成 5 项必须修 + 1 项建议修并重取验收证据；再按第二轮复审意见完成 2 项必须修（时间预算逐调用化、子列表时钟失败释放纪律）并重取验收证据；等待人工验收。
+用户授权以模拟完成人工验收。生产行为未改；只扩展 `computer_native.rs` 既有平台替身并补一条主路径、一条关键拒绝路径，经真实 Scheduler → NativeComputerTool → NativeHost → TargetRegistry 验证。
+
+| 输入与产品调用 | 可观察结果 |
+| --- | --- |
+| read_tree 返回 `names=true`、AXTextField 的 `name_unreadable=true`；按名称及角色分别 find_element | 节点与截断进入普通 Text；名称查询 InvalidInput / 不可证唯一，零派发；角色单条件仍签发元素句柄。 |
+| 消费角色句柄执行 `semantic set_value`；重新读树、查找后执行 `targeted key return` | 两次工具结果均为 `input_dispatched=true` / dispatched；平台替身的 semantic、targeted 计数各为 1。证明产品派发可达，不证明真实窗口接受输入。 |
+| 完整树有两枚 AXButton，再把树标为节点截断 | 角色查询按歧义拒绝；名称 Cancel 可定位第二枚按钮；截断树唯一 AXTextArea 按 UnprovenUnique 拒绝，零派发。 |
+| AX 边界返回 `accessibility tree read failed: AXError -25204` | ExecutionFailed 保留原因，不变成空树；先前截断 observation 仍不可证唯一，不变成 NoMatch。 |
+
+`cargo test -p pawork-tools --offline --lib computer_native::tests:: -- --test-threads=8` 最终 exit 0，10 passed / 85 filtered，原始日志 `/tmp/cu05-20261009/05-tools-computer-native.log`。首次用例误用 AppKit 当前能力矩阵拒绝的 press，9 passed / 1 failed、exit 101，保留 `/tmp/cu05-20261009/04-tools-computer-native.log`；改为已支持的 set_value 后恢复，未放宽能力门。
+
+原八条用例随本轮重跑，覆盖缩放后旧元素零 semantic、关窗、进程退出、scope、取消、长树探测期间撤销和用户活动。computer-use 源码与 CU-03 验证版本相同，复用 `/tmp/cu03-20261009/04-computer-use-lib.log` 的 99 项，不登记为本轮重跑。安全字段分类只复用既有 `ax_secure` 回归；名称与 AXValue 的内容读取限制依赖 `TreeWalk::visit` 实际分支源码审查，不以已去名的替身树声称后端未读敏感内容。
+
+本轮没有操作真实 AppKit / Electron 窗口或修改 TCC；下述 2026-10-07 真实探针证据保留其日期。真实系统权限与连续用户输入未重验；Chromium 物化延迟、深度截断唯一性拒绝及 AXObserver 未接入的边界不变。
+
+```text
+Validated: tools 定向 10 项、rustfmt、diff 与文档链接检查
+Targeted regressions: 新增工具主路径与关键拒绝各 1 项；既有 8 项同次通过；同版库 99 项复用
+Full workspace gate: NOT RUN（当前未设置全量门禁）
+```
+
+独立 `gpt-6.1-sol / max` reviewer `01a120b8-17aa-74d0-9916-85876e7e2163`、turn `01a120b8-1b3b-70c0-b07a-7a61ebae430f` completed / error=null，结论 PASS。四文件受审快照 26443 bytes、SHA256 `d4c0d5bcd95300af692af5ed687534f2f5a2b8515a396867eeaa070f13d44f07`；只读核源码、失败与恢复日志及证据边界，117 相对链接与 diff 检查通过，未重跑 Cargo。原文 `/tmp/cu05-20261009/REVIEW-R1-PASS.txt`。
+
+## 历史后端实施记录
+
+2026-10-07 实现；同日按 6.1 sol 复审意见完成 5 项必须修 + 1 项建议修并重取当日验收证据；再按第二轮复审意见完成 2 项必须修（时间预算逐调用化、子列表时钟失败释放纪律）并重取证据。当时等待人工验收；本轮模拟结论另列。
 
 **实现**（写入集：`crates/computer-use/src/target.rs`、`crates/computer-use/src/macos.rs`、`crates/computer-use/examples/macos_target_probe.rs`）：
 
@@ -66,4 +91,4 @@
 
 **复审后重取（第二轮）**（2026-10-07，同环境同探针；原始输出存 /tmp/cu05/ 的 *_r3.json）：TextEdit（pid 67144 窗口 31119「note.txt」）12 节点 / 33ms，truncation.names=true（文本区 AXDescription 的 kAXErrorFailure 如实置标志）；`axfind AXTextArea` 唯一签发并消费成功（matches_read_revision=true）；axstale 缩放 TreeChanged / 还原重签 / 关窗 WindowReplaced 三段语义不变。VS Code（pid 67187 窗口「code.txt」）首读如实只含窗口铬（12 节点 / 28ms），约 4 秒后复读物化 181 节点 / 78ms、深度截断置位；截断树下 `axfind AXWebArea` 唯一候选 UnprovenUnique 不签发（查找执行时树已继续长到 200 节点，证据 vscode_axfind_webarea_r3.json，与复读的 181 节点为两次独立读取）。逐调用预算与严格子列表一致性在两款真实应用上均未误伤。验收后两应用退出。
 
-**遗留缺口**：树变化通知（AXObserver）未接入——版本复核靠消费时同边界重走整树，开销随树规模增长，大树上频繁校验的成本待 CU-06+ 实测再定。Chromium 族首读物化延迟无系统信号可等待，只能如实返回当前暴露部分（已文档化）。生产 tools / Host 接线与 GUI 观测查询属 CU-10 / CU-17，本任务未接入生产路径。
+**当日遗留缺口与后续接线**：树变化通知（AXObserver）未接入——版本复核靠消费时同边界重走整树，开销随树规模增长。Chromium 族首读物化延迟无系统信号可等待，只能如实返回当前暴露部分；深度截断下唯一性不可证仍拒绝。生产 tools / Host 已由 CU-10 接线，GUI 观测查询由 CU-17 提供；当前不能沿用当日“未接入生产路径”的结论。
