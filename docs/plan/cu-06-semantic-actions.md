@@ -1,6 +1,6 @@
 # CU-06 · 后台 AX 语义动作
 
-> 状态：实现、定向回归与真实验收完成（2026-10-08 探针路径三族，证据 /tmp/cu20/ 不入库）；VS Code 元素级验收受树深度截断结构性阻塞，生产 tools / Host 接线属 CU-10。前置：[CU-04](cu-04-window-observation.md)、[CU-05](cu-05-accessibility-tree.md)、[CU-09](cu-09-ownership-cancellation.md)、[CU-16](cu-16-target-approvals.md)。更新：2026-10-08。
+> 状态：自动回归与模拟验收通过，独立 review PASS；实现与生产 tools / Host 接线已完成，2026-10-08 真实探针证据保留其范围；VS Code 截断下仍拒绝签发。前置：[CU-04](cu-04-window-observation.md)、[CU-05](cu-05-accessibility-tree.md)、[CU-09](cu-09-ownership-cancellation.md)、[CU-16](cu-16-target-approvals.md)。更新：2026-10-09。
 
 [返回 ROADMAP](../ROADMAP.md#computer-use-rust-升级)
 
@@ -10,7 +10,7 @@
 
 ## 当前依据与读取范围
 
-现有 computer 工具只派发坐标和键鼠输入；AX 语义动作只对支持该动作的控件成立。
+现有 computer_native 经 NativeHost 已接入 AX 语义动作；仅当前应用/动作能力矩阵支持且通过元素与授权复核的调用可派发。CU-05 已在正式工具链模拟 set_value / key 可达；本轮只补必要语义动作证据，不沿用历史“未接线”的判断。
 
 [computer-use Spec](../spec/crates/computer-use.md)、[tools Spec](../spec/crates/tools.md)、[policy Spec](../spec/crates/policy.md)。
 
@@ -29,7 +29,7 @@
 
 实施时优先受影响包的现有定向回归；真实后台能力必须有真实目标状态和用户侧/文件/Host 等独立事实。截图不写入仓库，证据注明日期、环境、输入、实际结果与位置。
 
-## 完成记录
+## 历史实施与探针记录
 
 实现（2026-10-07，写入集收敛于 computer-use 包与探针，未提交）：`crates/computer-use/src/target.rs` 增 `SemanticAction`（Press / SetValue / InsertText——仅 CU-01 实测无干扰的动作，未实测独立 select 动作故不暴露，InsertText 即实测的「选择」原语）、`SemanticOutcome`（Dispatched 派发非效果证明 / UnknownEffect 超时效果未知不盲目重试）、`MAX_SEMANTIC_TEXT_CHARS` = 4096（按字符计，空串合法即清空）与 `TargetError` 第十八变体 `ElementUnsupported`（元素自身肯定拒绝，区别于能力闸前置拒绝）；`crates/computer-use/src/macos.rs` 增 `MacosNative::semantic_action`——门序为台账授权 → 载荷校验 → 进程实例 → 身份绑定 → `require_background` 能力闸（先于一切 AX 接触，Chromium 语义写在此零接触拒绝）→ Accessibility preflight → 存活 + 代际 → 同边界重走复核树版本（不一致 TreeChanged）→ 路径存在性 → `resolve_element_by_path` 逐级 armed 有限切片重解析（缺序 TreeChanged、null 洞 ProbeUnavailable）→ 写类 `refuse_secure_write`（安全输入框 Invalid 拒，与读侧对称）→ armed 单次 AX 调用（不可回退点，返回码单独定终态），同一 deadline（AX_TREE_BOUNDS.max_read）贯穿全程；`examples/macos_target_probe.rs` 增 `axact` 全流程验收命令（绑定 → 读树 → 唯一定位 → 矩阵预检 → 签发消费 → 派发 → AXValue / 选区 / 窗口标题读回复核 → 前台 / 焦点 / 鼠标 / 剪贴板无干扰采样；读回为探针专用独立事实取证，产品路径永不读 AXValue），`bind_window` 支持同 bundle 多进程实例按标题落到持有匹配窗口的实例。
 
@@ -39,4 +39,25 @@
 
 真实验收（2026-10-08 执行，macOS 26.6.2 arm64 本机，控制台已解锁；探针路径，原始 JSON 证据 tee 至 /tmp/cu20/、不入库；全程用户侧 front / focus 恒为 Edge pid 916、剪贴板 changeCount 不变、鼠标零漂移——逐动作前后采样）：AppKit（TextEdit pid 24371，窗口 note.txt 全程后台）——set_value AXTextArea Dispatched，读回确认 34→21 字符整值替换（te-setvalue.json）；insert_text Dispatched，插入点追加 21→35 字符（te-insert.json）；press AXTextArea 按能力闸拒绝（AppKit AxPress Unverified 与 Unsupported 同拒）、值不变（te-press-reject.json）；最小化变体（另起实例 pid 39574，min.txt）set_value Dispatched 且读回落地（"CU20-MIN-BASE\n"→"CU20-MIN-SET"，te-min-setvalue.json）——与 CU-01 矩阵「两种语义 kind 最小化不变」一致。Chromium（VS Code pid 25494）——元素级验收未走到能力闸：读树深度截断使唯一性不可证（vsc-find-*.json tree_truncated.depth=true），UnprovenUnique 不签发句柄（结构性阻塞，如实登记）；Chromium 语义写零 AX 接触拒绝由定向回归钉住。Browser（隔离 Chrome 154 pid 27014，--user-data-dir=/tmp/cu20/chrome-profile，页面 file:///tmp/cu06/page1.html）——press AXButton CU06-BTN Dispatched，页面 JS 后台执行、标题 CU06-PAGE1→CU06-PRESSED（chr-press-btn.json）；press AXLink CU06-LINK Dispatched，后台导航 page2（chr-press-link.json）；press AXScrollArea 按 ElementUnsupported 拒绝（chr-press-unsupported.json）；press CU06-BTN2 Dispatched、标题→CU06-PRESSED2（chr-press-btn2.json）；set_value AXTextArea 按 Browser 语义写能力闸拒绝、值不变（chr-setvalue.json）。真实插曲如实记录：VS Code 启动后曾自行激活到前台一次（vsc-open.json front=VSCode），随后用户回到 Edge；验收期间用户在步骤间点击过 TextEdit 窗口（人工观测），所有动作步的逐步采样前台恒为用户应用。新发现登记：Chrome 网页 AX 树物化远超 CU-05 Electron 的 1–2 分钟——AXManualAccessibility 对 app / 窗口元素均 -25205、AXEnhancedUserInterface -25208，约 15 分钟间歇 AX 活动后树自行物化（chrome-axtree.json 仅窗口铬 → chrome-axtree2.json 含 AXWebArea / AXLink / AXTextArea）；探针 axtree 观测登记按「图像 = 窗口点 1:1」口径，1366pt 高超窗 MAX_IMAGE_EDGE=1280 按 Invalid 拒绝，axsetframe 1000×700 后恢复（chrome-setframe.json）——探针口径限制，产品截图路径不受此限（图像边长由 JPEG 预算独立钳制，观测几何分记图像像素与窗口点）。验收后目标应用全部退出、环境还原。
 
-遗留缺口：VS Code 元素级语义写验收受树深度截断阻塞（结构性，随 CU-05 树边界演进再议）；Chrome 网页 AX 树物化条件与时长登记在案；锁屏场景沿用 CU-01 口径不记为支持；生产 tools / Host 接线属 CU-10，不在本任务范围。
+遗留边界：VS Code 元素级语义写验收受树深度截断阻塞（结构性，随 CU-05 树边界演进再议）；Chrome 网页 AX 树物化条件与时长登记在案；锁屏场景沿用 CU-01 口径不记为支持。生产 tools / Host 接线已由 CU-10 闭合。
+
+## 本轮模拟验收（2026-10-09）
+
+用户授权人工验收使用模拟。本轮只扩 `crates/tools/src/computer_native.rs` 的既有平台 Surface 与一条主路径 / 关键拒绝用例，不改生产行为或能力矩阵。输入通过正式 ToolScheduler → NativeComputerTool → NativeHost → TargetRegistry / 授权台账，替身仅返回外部平台结果。
+
+| 输入与产品链 | 实际可观察结果 | 证据范围 |
+|---|---|---|
+| read_tree → find_element → semantic insert_text；平台返回 UnknownEffect | 普通 Text 与 metadata 均保留 unknown_effect、input_dispatched=true；生成新 observation 与 JPEG；只有一次语义调用、一次后置捕获，targeted 调用为零 | 新用例 `semantic_unknown_effect_is_kept_and_element_refusal_is_not_retried`，只证明产品结果传播，不证明目标已接受文本 |
+| 再送同一元素句柄 | Conflict、不可重试；平台调用和捕获计数不增加 | 消费句柄不重复派发 |
+| 重新读树签发元素，set_value 返回 ElementUnsupported | ExecutionFailed、不可重试，错误保留“nothing was dispatched”；没有后置截图，同一句柄再次调用不进入平台 | 元素明确拒绝无自动重试或定向键回退 |
+| CU-05 的 set_value 主路径与当前十一条工具回归 | 支持动作可达、fresh read 后 key 可达；撤销、活动接管、取消和授权门的既有回归保留 | 本轮十一条同次通过；不提升 AppKit press 或 Chromium 写能力 |
+
+Validated: `cargo test -p pawork-tools --offline --lib computer_native::tests:: -- --test-threads=8`，11 passed / 85 filtered，exit 0；`rustfmt --edition 2021 --check crates/tools/src/computer_native.rs`、`git diff --check` 与文档链接检查。证据 `/tmp/cu06-20261009/05-tools-computer-native.log`；首次格式检查失败与格式修复分别保留在 `02-rustfmt-check.log`、`03-rustfmt.log`、`04-rustfmt-check.log`。同版 computer-use 源码与 CU-03 无差异，复用 `/tmp/cu03-20261009/04-computer-use-lib.log` 的 99 项，包含单次 dispatch permit、能力门、AX 结果映射与写侧门序；这些不是本轮重跑。
+
+Targeted regressions: unknown_effect 派发事实、新观测、消费句柄拒绝、ElementUnsupported 无重试；既有 Once / revoke / 接管 / 取消回归保留。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+真实环境边界：本轮未新操作 macOS 目标或 TCC，不证明连续用户输入下的系统焦点 / 剪贴板无干扰。2026-10-08 探针记录保留原日期与范围；VS Code 的截断拒绝和锁屏限制保留，不将替身结果宣称为真实 AX 执行。
+
+独立 review：`gpt-6.1-sol / max`，对话 `01a120f1-90f5-7481-bd70-2a222be3aaaa`，turn `01a120f1-969e-7641-9103-ac0164d6ce47`，PASS。审查核对完整差异、文件 / 日志指纹与原始命令，未重跑 Cargo；支持本轮模拟关闭，不扩大真实平台结论。记录 `/tmp/cu06-20261009/REVIEW-R1-PASS.txt`。

@@ -175,6 +175,8 @@ CU-04（2026-10-09）只扩上述两条现有用例，仍为八条：按所选�
 
 CU-05（2026-10-09）补主路径 `bounded_tree_issues_a_role_match_and_reaches_semantic_and_keyboard` 与关键拒绝 `ambiguous_unproven_and_failed_reads_do_not_issue_handles`，共十条。经正式 Tool / Scheduler / NativeHost 验证 AX 节点与截断文本、名称不可读时角色单条件签发、set_value / key 派发回执、歧义不挑首个、截断唯一不可证及读失败不伪装空树；复用既有 Surface，不证明真实 macOS AX 安全字段未读取或窗口已接受输入。修后十条通过；首次 press 被既有能力门拒绝的失败、同版库回归复用和真实环境边界见 [CU-05](../../plan/cu-05-accessibility-tree.md)。
 
+CU-06（2026-10-09）沿用 Surface，补 `semantic_unknown_effect_is_kept_and_element_refusal_is_not_retried`，共十一条：正式 Tool / Scheduler / NativeHost 保留 UnknownEffect 的派发事实与新观测；已消费句柄不再派发，ElementUnsupported 保留明确未派发错误、不重试、不捕获或回退定向键。平台调用计数只证明尝试次数，不能证明目标已接受文本；生产行为和能力矩阵不变。十一条定向回归通过，复用同版库证据；记录与环境边界见 [CU-06](../../plan/cu-06-semantic-actions.md)。
+
 默认验证命令：`bash scripts/test.sh tools`（无 `tests/` 目录，用例全部在 `--lib`）。
 
 | 文件 | 覆盖点 |

@@ -383,6 +383,8 @@ mod tests {
         semantic_wait: AtomicBool,
         semantic_entered: AtomicBool,
         semantic_go: AtomicBool,
+        semantic_effect: Mutex<SemanticEffect>,
+        semantic_seen: Mutex<Vec<String>>,
         targeted: AtomicUsize,
     }
 
@@ -441,6 +443,8 @@ mod tests {
                 semantic_wait: AtomicBool::new(false),
                 semantic_entered: AtomicBool::new(false),
                 semantic_go: AtomicBool::new(false),
+                semantic_effect: Mutex::new(SemanticEffect::Dispatched),
+                semantic_seen: Mutex::new(Vec::new()),
                 targeted: AtomicUsize::new(0),
             }))
         }
@@ -606,6 +610,14 @@ mod tests {
 
         fn semantic_gate_entered(&self) -> bool {
             self.0.semantic_entered.load(Ordering::SeqCst)
+        }
+
+        fn set_semantic_effect(&self, effect: SemanticEffect) {
+            *self.0.semantic_effect.lock().expect("semantic effect") = effect;
+        }
+
+        fn semantic_seen(&self) -> Vec<String> {
+            self.0.semantic_seen.lock().expect("semantic seen").clone()
         }
 
         fn targeted(&self) -> usize {
@@ -891,7 +903,7 @@ mod tests {
             &self,
             _: &ValidatedElement,
             _: &[u32],
-            _: &SemanticAction,
+            action: &SemanticAction,
             cancelled: &dyn Fn() -> bool,
         ) -> Result<SemanticOutcome, TargetError> {
             self.bump();
@@ -905,8 +917,27 @@ mod tests {
             if cancelled() {
                 return Err(TargetError::Cancelled);
             }
-            self.0.semantic.fetch_add(1, Ordering::SeqCst);
-            Ok(SemanticOutcome::Dispatched)
+            let label = match action {
+                SemanticAction::Press => "press".to_string(),
+                SemanticAction::SetValue(text) => format!("set_value:{text}"),
+                SemanticAction::InsertText(text) => format!("insert_text:{text}"),
+            };
+            self.0
+                .semantic_seen
+                .lock()
+                .expect("semantic seen")
+                .push(label);
+            match *self.0.semantic_effect.lock().expect("semantic effect") {
+                SemanticEffect::Dispatched => {
+                    self.0.semantic.fetch_add(1, Ordering::SeqCst);
+                    Ok(SemanticOutcome::Dispatched)
+                }
+                SemanticEffect::UnknownEffect => {
+                    self.0.semantic.fetch_add(1, Ordering::SeqCst);
+                    Ok(SemanticOutcome::UnknownEffect)
+                }
+                SemanticEffect::ElementUnsupported => Err(TargetError::ElementUnsupported),
+            }
         }
         fn targeted(
             &self,
@@ -952,6 +983,15 @@ mod tests {
     }
 
     struct Approved;
+
+    /// What the existing native surface returns after one semantic platform call.
+    /// Default stays a normal dispatch so the other computer_native tests are unchanged.
+    #[derive(Clone, Copy)]
+    enum SemanticEffect {
+        Dispatched,
+        UnknownEffect,
+        ElementUnsupported,
+    }
 
     #[async_trait]
     impl ApprovalResolver for Approved {
@@ -2235,6 +2275,173 @@ mod tests {
         assert_eq!(keyed.metadata["outcome"].as_str(), Some("dispatched"));
         assert_eq!(surface.semantics(), 1);
         assert_eq!(surface.targeted(), 1);
+    }
+
+    #[tokio::test]
+    async fn semantic_unknown_effect_is_kept_and_element_refusal_is_not_retried() {
+        let surface = Surface::new(false);
+        let (main, window) = bound_native(&surface).await;
+        let tree = call(
+            &main,
+            "run",
+            json!({"action": "read_tree", "window": window}),
+        )
+        .await
+        .expect("read tree");
+        let observation = tree.metadata["observation"]
+            .as_str()
+            .expect("observation")
+            .to_string();
+        let found = call(
+            &main,
+            "run",
+            json!({"action": "find_element", "observation": observation, "role": "AXTextField"}),
+        )
+        .await
+        .expect("find text field");
+        let element = found.metadata["element_id"]
+            .as_str()
+            .expect("element")
+            .to_string();
+
+        surface.set_semantic_effect(SemanticEffect::UnknownEffect);
+        let captures_before = surface.captures();
+        let wrote = call(
+            &main,
+            "run",
+            json!({
+                "action": "semantic",
+                "element": element,
+                "semantic": "insert_text",
+                "text": "kept"
+            }),
+        )
+        .await
+        .expect("insert_text unknown effect");
+        assert!(wrote.success);
+        assert_eq!(wrote.metadata["environment"], "native_background");
+        assert_eq!(wrote.metadata["input_dispatched"], true);
+        assert_eq!(wrote.metadata["outcome"].as_str(), Some("unknown_effect"));
+        assert!(wrote.metadata["observation_failure"].is_null());
+        let fresh = wrote.metadata["observation"]
+            .as_str()
+            .expect("post-action observation");
+        assert_ne!(fresh, observation);
+        assert!(has_image(&wrote));
+        assert!(
+            text_of(&wrote).contains("unknown_effect"),
+            "the tool text must keep the unknown effect, got {}",
+            text_of(&wrote)
+        );
+        assert_eq!(surface.semantic_entries(), 1);
+        assert_eq!(surface.semantics(), 1);
+        assert_eq!(
+            surface.semantic_seen(),
+            vec!["insert_text:kept".to_string()]
+        );
+        assert_eq!(surface.captures(), captures_before + 1);
+        assert_eq!(surface.targeted(), 0);
+
+        let resent = call(
+            &main,
+            "run",
+            json!({
+                "action": "semantic",
+                "element": element,
+                "semantic": "insert_text",
+                "text": "kept"
+            }),
+        )
+        .await
+        .expect_err("a consumed element must not dispatch again");
+        assert_eq!(resent.kind, ToolErrorKind::Conflict);
+        assert!(!resent.retryable);
+        assert!(
+            resent.message.contains("expired or already consumed"),
+            "{}",
+            resent.message
+        );
+        assert_eq!(surface.semantic_entries(), 1);
+        assert_eq!(surface.semantics(), 1);
+        assert_eq!(
+            surface.semantic_seen(),
+            vec!["insert_text:kept".to_string()]
+        );
+        assert_eq!(surface.captures(), captures_before + 1);
+
+        let again = call(
+            &main,
+            "run",
+            json!({"action": "read_tree", "window": window}),
+        )
+        .await
+        .expect("second read");
+        let again_observation = again.metadata["observation"]
+            .as_str()
+            .expect("second observation")
+            .to_string();
+        let refused_element = call(
+            &main,
+            "run",
+            json!({
+                "action": "find_element",
+                "observation": again_observation,
+                "role": "AXTextField"
+            }),
+        )
+        .await
+        .expect("second find");
+        let refused_element = refused_element.metadata["element_id"]
+            .as_str()
+            .expect("refused element")
+            .to_string();
+        surface.set_semantic_effect(SemanticEffect::ElementUnsupported);
+        let refused = call(
+            &main,
+            "run",
+            json!({
+                "action": "semantic",
+                "element": refused_element,
+                "semantic": "set_value",
+                "text": "nope"
+            }),
+        )
+        .await
+        .expect_err("element refusal");
+        assert_eq!(refused.kind, ToolErrorKind::ExecutionFailed);
+        assert!(!refused.retryable);
+        assert!(
+            refused
+                .message
+                .contains("element does not support this action; nothing was dispatched"),
+            "{}",
+            refused.message
+        );
+        assert_eq!(surface.semantic_entries(), 2);
+        assert_eq!(surface.semantics(), 1);
+        assert_eq!(
+            surface.semantic_seen(),
+            vec!["insert_text:kept".to_string(), "set_value:nope".to_string()]
+        );
+        assert_eq!(surface.captures(), captures_before + 1);
+
+        let refused_again = call(
+            &main,
+            "run",
+            json!({
+                "action": "semantic",
+                "element": refused_element,
+                "semantic": "set_value",
+                "text": "nope"
+            }),
+        )
+        .await
+        .expect_err("refused element is not retried");
+        assert!(!refused_again.retryable);
+        assert_eq!(surface.semantic_entries(), 2);
+        assert_eq!(surface.semantics(), 1);
+        assert_eq!(surface.semantic_seen().len(), 2);
+        assert_eq!(surface.captures(), captures_before + 1);
     }
 
     async fn bound_native(surface: &Surface) -> (ToolScheduler, String) {
