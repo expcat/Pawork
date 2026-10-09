@@ -32,7 +32,7 @@
 | ✅ 自动回归复用与模拟/隔离桌面验收通过；独立 review PASS | [CU-09 · 目标占用、用户接管与后台生命周期](plan/cu-09-ownership-cancellation.md) | P3 | 真实 RFB 冲突与在途释放通过；GUI 连接/重放及接管采用同版模拟证据。 |
 | ✅ 完成（模拟验收） | [CU-10 · 动作与新观测的 Host 闭环](plan/cu-10-action-observe.md) | P3 | 共享 Native Host、Engine 取消事实与 CLI 显式接入闭环完成；连接层、半行/恢复取消/拒绝单次发送模拟通过，独立 R3 review PASS，真实平台边界单列。 |
 | ✅ 当前定向回归与模拟验收通过；独立 review PASS | [CU-11 · 图像能力的前置工具门控](plan/cu-11-model-vision-gate.md) | P3 | 在工具暴露和执行前拒绝不支持图像的模型，避免截屏后才失败。 |
-| 自动回归通过，等待人工验收 | [CU-12 · 请求侧截图历史与上下文预算](plan/cu-12-screenshot-context.md) | P3 | 限制发给模型的旧截图，保留完整持久化证据和历史重放。 |
+| ✅ 当前定向回归与模拟验收通过；独立 review PASS | [CU-12 · 请求侧截图历史与上下文预算](plan/cu-12-screenshot-context.md) | P3 | 限制发给模型的旧截图，保留完整持久化证据和历史重放。 |
 | 已实现；自动回归通过，read/click/句柄/拒绝/重放真实验收通过，截图正路径与焦点探针待人工验收 | [CU-13 · 内置浏览器截图与 DOM 观测](plan/cu-13-browser-observation.md) | P4 | 在现有系统 WebView 上补截图与稳定 DOM 观测，保持用户可同时使用 Pawork。 |
 | 已实现；自动回归通过，归属/负路径/重放真实验收通过；复审修复四项过自动门禁，标签条滚动与空标签地址栏真窗复验通过（2026-10-08），Agent 不动展示复验待模型链路人工验收 | [CU-14 · 内置浏览器标签页与任务生命周期](plan/cu-14-browser-tabs.md) | P4 | 将每任务单页扩展为有归属的多标签，支持选择与清理。 |
 | 实现完成；自动门禁全绿，真实浏览器验收待人工执行（验收机已解锁 2026-10-08，扩展安装须用户当面确认） | [CU-15 · 外部 Chrome / Edge 的真实后台控制](plan/cu-15-external-browser.md) | P4 | MV3 扩展 + native messaging 桥（`pawork_browser_bridge`）+ Host `external_browser` 工具 + Desktop `ext_` 分流；自动门禁全绿，真实浏览器验收待用户确认安装扩展后执行。 |

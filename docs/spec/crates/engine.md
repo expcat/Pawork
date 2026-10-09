@@ -105,7 +105,7 @@
 - `TokenEstimator`：`count_text` 唯一必须实现的核心；`count_message`（+4 framing）/ `count_content_part`（图片 85 placeholder；Reasoning 只数 summary）/ `count_tool_schemas`（JSON 序列化 + 每工具 +8）均为默认实现。`HeuristicEstimator::new(chars_per_token)`（默认 4；CJK 类字符恒按 1 字符/token）。
 - `trim_tool_result(_with)(&ToolResultContent, &TrimThresholds, [TrimStrategy])`：按字节分级——Small 完整保留；Medium 头尾各 2 KiB + 截断说明；Large 摘要 + `ArtifactRef` 占位（占位 id `artifact:trimmed-tool-result`）；Huge 仅 `ArtifactRef`。原文经 `TrimmedToolResult::retained_full` 暂存，写 Blob 由调用方负责。
  - `trim_observation_images(&mut [Message], retained_image_bytes) -> ObservationImageTrim`（CU-12，请求侧截图历史裁剪）：只处理 `Tool` 角色消息内 `ToolResultContent` 的 `ImageSource::Base64` 图像（用户附图、`Url` / `Artifact` 来源不动；`Tool` 消息顶层直接挂的图像也不动——生产循环把工具结果统一包装为 `ToolResult`，顶层图像既不裁剪也不参与最新观测判定）；最后一条含图像的 `Tool` 消息（最新观测）全部图像无条件保留、不占预算；更早图像从新到旧在预算内保留；被裁剪图像原位替换为 `[image trimmed: … retained in session history]` 文本说明（不用 `ArtifactRef`——Chat / Responses 会丢弃 Artifact 类型图像来源），同一 tool result 的文本部分（观测 metadata 等）原样保留。
- - `observation_image_budget_bytes(&ContextBudget) -> u64`：旧观测图像保留预算 = `max_input_tokens` × 4 字符/token（与 `HeuristicEstimator` 默认口径一致）。token 估算器对图像只计 85 placeholder token，反映不了 base64 在请求体中的真实体量，图像因此单独按字节设限。
+ - `observation_image_budget_bytes(&ContextBudget) -> u64`：旧观测图像保留预算 = `max_input_tokens` × 4 字符/token（与 `HeuristicEstimator` 默认口径一致）。token 估算器对图像只计 85 placeholder token，反映不了 base64 在请求体中的真实体量，图像因此单独按字节设限。最新观测全部保留且不占该预算，所以它不是请求全部图像的总字节上限；CU-12 主路径中旧图预算 3_000，最终请求的 B+C 载荷为 4_000 字节。
 - `TurnContext { limits, estimator, retained_messages（默认 4）, injected_layers }`：`Default` 全禁用，行为与未接线时完全一致（估算 0、不压缩、不截断、不注入）。
 
 ## 4. 核心行为与数据流
