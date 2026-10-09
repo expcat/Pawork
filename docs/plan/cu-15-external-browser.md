@@ -1,6 +1,6 @@
 # CU-15 · 外部 Chrome / Edge 的真实后台控制
 
-> 状态：实现与自动验证完成，真实浏览器验收待人工执行——验收机已解锁（2026-10-08），扩展安装（chrome://extensions 加载已解压）须用户当面操作确认后按既定流程执行。前置：[CU-01](cu-01-background-feasibility.md)、[CU-02](cu-02-target-contracts.md)、[CU-16](cu-16-target-approvals.md)。更新：2026-10-08。
+> 状态：实现与自动验证完成；真实桥 + fake extension 模拟人工验收通过；独立 review / 复审 PASS；真实浏览器 / 系统安装 / 真实像素与竞态待环境。前置：[CU-01](cu-01-background-feasibility.md)、[CU-02](cu-02-target-contracts.md)、[CU-16](cu-16-target-approvals.md)。更新：2026-10-10。
 
 [返回 ROADMAP](../ROADMAP.md#computer-use-rust-升级)
 
@@ -41,3 +41,15 @@
 sol 审查修复（2026-10-07 第二轮，9 项全部落地）：① 扩展 manifest 声明 `nativeMessaging` 权限，静态回归 `extension_manifest_declares_native_messaging` 钉住；② read / click / type 页面函数在 DOM 访问前核对 `expectOrigin`，不符返回 site_changed 哨兵；③ `ext_navigate` 改走 `call_tab_scoped` 并下发 `bound_origin`（原扩展侧检查从不执行），site_changed / tab_gone 统一解绑；④ 未绑定标签首次 navigate 仅在最终 URL 等于目标时绑定，重定向逃逸或取不到 origin 报错且不绑定（红证 `bridge_refuses_redirect_escape_on_first_navigation`）；⑤ screenshot 捕获期间挂 `onActivated` / `onUpdated` 监听并在回传前重取标签复核 active / url / origin，变化即丢弃并要求重试；⑥ 归属改任务作用域：Host 工具盖章 `task = run_id`，桥强制校验（非空、≤128）并透传，扩展 `owned_tasks`（task → tabId 集合）记 `chrome.storage.session`（红证 `bridge_ownership_is_task_scoped`）；⑦ password 输入点击 fail-closed 拒绝；⑧ origin 闸接受 IPv4 字面量（`http://127.0.0.1:8933` 等），IPv6 仍拒；⑨ `extension_gate` 检查移到 `ext_call` 锁后，SW `onHostMessage` 执行 handler 前再查 `isEnabled()`。门禁：`bash scripts/test.sh browser app` 全绿（app 288+2+1、browser 20+4，含上述红证与 manifest / IPv4 静态回归）；桥二进制已重建（`cargo build --offline -p pawork-browser --bin pawork_browser_bridge`，真实验收用）。真实 Chrome 连接复验仍受锁屏阻塞：静态核对 + 本记录登记，解锁后随真实验收一并补做。
 
 sol 复审修复（2026-10-07 第三轮，3 项全部落地）：① manifest host permissions 改为 `<all_urls>`——`captureVisibleTab` 的权限检查（Chromium permissions_data.cc 口径）只认 `<all_urls>` 或当次用户手势授予的 activeTab，后台截图无手势、http/https host 权限不满足，真实截图会被拒；`<all_urls>` 虽宽于 http/https，桥与扩展的 origin 闸仍只接受 http(s)，不扩大可操作页面范围。静态回归同时钉住 `nativeMessaging` 与 `<all_urls>`。② 桥的站点绑定改按 (task, tab) 存取：attached / read / click / type / screenshot / navigate 都只认本任务 attach 或首航建立的绑定，任务 B 借不到任务 A 的绑定；未绑定 navigate 仍走 `require_owned` 本任务归属检查（fake 扩展同步对齐该语义）；site_changed 与标签关闭按标签作废所有任务的绑定（红证 `bridge_bindings_are_task_scoped`）。③ sw.js 截图的激活 / 导航监听改在首次异步状态读取之前安装，先记录全部激活事件、拿到目标 windowId 后再过滤——目标窗口任何激活变化（含切回目标标签）都丢弃截图要求重试，消除「读到 A active → windows.get 等待期间切 B → 捕获 B → 切回 A」把 B 像素标成 A 的竞态（JS 侧行为，无 Rust 可测面，真实验收覆盖）。门禁：`bash scripts/test.sh browser` 全绿（20+5）；桥二进制已重建。真实验收仍待解锁。
+
+## 模拟人工验收（2026-10-10）
+
+按用户边界不安装真实扩展、不修改 NativeMessagingHosts / TCC / 用户 profile，也不启动真实 Chrome / Edge。验收链为真实 pawork_browser_bridge 二进制 + 真实 pawork_browser::ext::client::execute + fake extension stdio；Desktop ext_ 分流仅做源码核对，未启动 GPUI，因此不冒充完整 Desktop 真窗验收。
+
+既有 [ext_bridge.rs](../../crates/browser/tests/ext_bridge.rs) 的 fake extension 补齐 read 输入/按钮列表、click / type、password / file 拒绝、site drift、screenshot 非 active / 最小化 / synthetic fixture / 超限分支，并让 new_tab 回显请求 URL；页面状态按标签维护，用户与非用户标签的成功导航和重定向都更新当前 URL，navigate 后 tabs / read / screenshot / close_tab 使用同一 URL；重定向后旧 origin attach 被拒绝，继续 a.test 场景前由 fixture 显式恢复并记录，read 输入字段对齐 kind 等真实扩展字段，type 长度按 UTF-16 计数。新增模拟主路径覆盖 tabs → new_tab → navigate → read → type → click → close_tab / close；用户与其它任务标签保留，跨任务 close 拒绝；attach / expect_origin、跨源 navigate、重定向逃逸解绑、用户标签重定向后旧 origin attach 的 mismatch 拒绝与旧句柄拒绝；发现文件 0600 / 目录 0700、token 长度 64、错误 token 拒绝、SIGKILL 后重连拒绝旧句柄。截图回执为 synthetic fixture，不声明真实 DOM 像素或激活 / 导航竞态。
+
+实际验证：首次 cargo test -p pawork-browser --offline --test ext_bridge -- --nocapture 在既有归属测试按旧固定 URL 查找时失败（exit 101，flow / restart 当次已通过）；对齐请求 URL 后同命令通过（7 passed）。证据输出由非空 PAWORK_CU15_ACCEPTANCE_EVIDENCE_DIR 显式启用；带该变量重跑 7 passed 并生成 flow / restart JSON，复审修复同一标签 URL 状态后，带变量与去掉变量均重跑 7 passed；未设置变量时不生成验收 JSON（测试仍使用系统临时目录）。证据在 /tmp/pawork-cu15-external-browser-simulation/（含成功 / 失败日志、conclusion 与脱敏 JSON；token 只记录长度，测试口令不落证据）。
+
+待验边界：真实 Chrome / Edge 安装与启用、NativeMessagingHosts 拉起、真实 DOM / HTTP / 用户输入连续性、真实截图像素与激活 / 导航竞态、Edge smoke。以上需要用户确认安装或真实浏览器环境，不能用 fake extension 结果替代。
+
+独立 review（2026-10-10）：执行者为线程 01a122e9-9fdd-7310-a4c2-c3ff47e4107f（xai/grok-4.7 / xhigh）。R1c 受审快照 /tmp/pawork-cu15-external-browser-r1c.diff，55742 字节，SHA256 dbe1c6c6e86522694e269cc800a7cb72d50ff1f19ba6646253b3155d8ec37eb9；reviewer 复核 R1c 与当时工作区一致。唯一 reviewer 线程 01a122fe-23b2-73d3-a116-e0e2ddba5895（gpt-6.1-sol / max）初审 turn 01a122fe-2760-7b23-a257-000bfdae5068 指出模拟回执 URL 状态矛盾（P2）与输入字段 / UTF-16 长度、副作用文案偏差（P3）；修复后第二轮 turn 01a1230b-fc3c-7581-97f4-5cef3e3b3db8 继续指出用户标签重定向后旧 origin attach 误通过（P2）；执行者补齐所有导航更新当前 URL、旧 origin mismatch 拒绝与显式 fixture 恢复后，最终 turn 01a12311-c8c8-7310-bb93-ed7e1e85d5c0 VERDICT: PASS。reviewer 全程只读，不运行 Cargo。

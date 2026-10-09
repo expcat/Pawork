@@ -54,7 +54,7 @@ CU-15 扩展通道追加：`pawork-browser` 自身新增 `[[bin]] pawork_browser
 
 URL 主路径及拒绝边界、Unicode 输出预算与 DOM 回执的定向单元测试；观测覆盖句柄生命周期（一次性 / 代际 / TTL / 容量逐出）与预算收缩、观测脚本断言（MutationObserver、rect、新鲜度闸与转义）、脚本元数据优先与 state 回退（CU-13 复审：同次脚本 url/title 为准）、观测状态安装失败显式拒绝（不降级签发句柄）、状态发布仅在 Observer 安装成功后（红证：不残留 revision 让后续 read 跳过安装检查）。Desktop 测试覆盖入口、布局、任务归属与生命周期，真实导航以本地 HTTP fixture、请求日志和真实窗口联合核对。未闭合验收见 [ROADMAP](../../ROADMAP.md)。
 
-CU-15 资产：`ext::{origin,protocol,discovery}` 单测（归一化边界含 IPv4 字面量、句柄代际、帧上限与截断前缀报错、发现文件 round trip 与坏文件跳过）与 manifest 权限静态回归（`nativeMessaging` + `<all_urls>`）；`tests/ext_bridge.rs` 集成测试驱动真二进制子进程 + fake 扩展 stdio（Chrome 是唯一 mock 边界），覆盖 token 鉴权、enabled 门、句柄签发与旧句柄拒绝、attach origin 钉定与 mismatch 拒绝、跨源 navigate 拒绝、同源导航保持绑定、未绑定首导航重定向逃逸拒绝、任务作用域归属与绑定隔离（跨任务 close 拒绝、跨任务 read / navigate 借绑定拒绝、缺 task 拒绝）、close_tab 归属闸、close 只报本桥句柄与未知动作拒绝。
+CU-15 资产：ext::{origin,protocol,discovery} 单测（归一化边界含 IPv4 字面量、句柄代际、帧上限与截断前缀报错、发现文件 round trip 与坏文件跳过）与 manifest 权限静态回归（nativeMessaging + <all_urls>）；tests/ext_bridge.rs 集成测试驱动真二进制子进程 + fake 扩展 stdio（Chrome 是唯一 mock 边界），覆盖 token 鉴权、enabled 门、句柄签发与旧句柄拒绝、attach origin 钉定与 mismatch 拒绝、跨源 navigate 拒绝、同源导航保持绑定、未绑定首导航重定向逃逸拒绝、任务作用域归属与绑定隔离（跨任务 close 拒绝、跨任务 read / navigate 借绑定拒绝、缺 task 拒绝）、close_tab 归属闸、close 只报本桥句柄与未知动作拒绝。fake 扩展同时建模按标签一致的页面状态（用户与非用户标签导航 / 重定向均更新当前 URL，重定向后旧 origin attach 拒绝）、read 输入 / 按钮列表（字段与 UTF-16 长度对齐真实扩展）、click / type、password / file 拒绝、site drift 与截图非 active / 最小化 / synthetic fixture / 超限分支；模拟主路径与断线重连测试覆盖完整动作流、用户 / 跨任务标签保留、发现文件权限与旧句柄失效。验收 JSON 仅在 PAWORK_CU15_ACCEPTANCE_EVIDENCE_DIR 非空时写入；默认不生成验收 JSON，测试仍使用系统临时目录。
 
 ## 8. 注意事项与已知限制
 
