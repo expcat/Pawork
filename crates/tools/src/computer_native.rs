@@ -386,6 +386,9 @@ mod tests {
         semantic_effect: Mutex<SemanticEffect>,
         semantic_seen: Mutex<Vec<String>>,
         targeted: AtomicUsize,
+        targeted_entries: AtomicUsize,
+        targeted_effect: Mutex<TargetedEffect>,
+        targeted_seen: Mutex<Vec<String>>,
     }
 
     impl Surface {
@@ -446,6 +449,9 @@ mod tests {
                 semantic_effect: Mutex::new(SemanticEffect::Dispatched),
                 semantic_seen: Mutex::new(Vec::new()),
                 targeted: AtomicUsize::new(0),
+                targeted_entries: AtomicUsize::new(0),
+                targeted_effect: Mutex::new(TargetedEffect::Dispatched),
+                targeted_seen: Mutex::new(Vec::new()),
             }))
         }
 
@@ -622,6 +628,18 @@ mod tests {
 
         fn targeted(&self) -> usize {
             self.0.targeted.load(Ordering::SeqCst)
+        }
+
+        fn targeted_entries(&self) -> usize {
+            self.0.targeted_entries.load(Ordering::SeqCst)
+        }
+
+        fn set_targeted_effect(&self, effect: TargetedEffect) {
+            *self.0.targeted_effect.lock().expect("targeted effect") = effect;
+        }
+
+        fn targeted_seen(&self) -> Vec<String> {
+            self.0.targeted_seen.lock().expect("targeted seen").clone()
         }
 
         fn set_tree(&self, nodes: Vec<AxTreeNode>, truncation: AxTreeTruncation) {
@@ -943,18 +961,41 @@ mod tests {
             &self,
             _: &ValidatedElement,
             _: &[u32],
-            _: &TargetedInput,
+            input: &TargetedInput,
             cancelled: &dyn Fn() -> bool,
         ) -> Result<TargetedOutcome, TargetError> {
             self.bump();
+            self.0.targeted_entries.fetch_add(1, Ordering::SeqCst);
             if cancelled() {
                 return Err(TargetError::Cancelled);
             }
-            self.0.targeted.fetch_add(1, Ordering::SeqCst);
-            Ok(TargetedOutcome::Dispatched {
-                events_posted: 1,
-                events_total: 1,
-            })
+            self.0
+                .targeted_seen
+                .lock()
+                .expect("targeted seen")
+                .push(targeted_label(input));
+            match *self.0.targeted_effect.lock().expect("targeted effect") {
+                TargetedEffect::Dispatched => {
+                    self.0.targeted.fetch_add(1, Ordering::SeqCst);
+                    Ok(TargetedOutcome::Dispatched {
+                        events_posted: 1,
+                        events_total: 1,
+                    })
+                }
+                TargetedEffect::Partial {
+                    events_posted,
+                    events_total,
+                } => {
+                    self.0.targeted.fetch_add(1, Ordering::SeqCst);
+                    self.kill_process();
+                    Ok(TargetedOutcome::Partial {
+                        events_posted,
+                        events_total,
+                        cause: TargetError::ProcessRestarted,
+                    })
+                }
+                TargetedEffect::NotFocused => Err(TargetError::NotFocused),
+            }
         }
         fn move_window(
             &self,
@@ -991,6 +1032,29 @@ mod tests {
         Dispatched,
         UnknownEffect,
         ElementUnsupported,
+    }
+
+    /// Platform answer for one targeted call. Default stays a clean dispatch.
+    /// Partial carries the boundary's own counts and marks the process dead,
+    /// matching ProcessRestarted. NotFocused posts nothing.
+    #[derive(Clone, Copy)]
+    enum TargetedEffect {
+        Dispatched,
+        Partial {
+            events_posted: usize,
+            events_total: usize,
+        },
+        NotFocused,
+    }
+
+    fn targeted_label(input: &TargetedInput) -> String {
+        match input {
+            TargetedInput::InsertText(text) => format!("insert_text:{text}"),
+            TargetedInput::KeyPress(press) => format!(
+                "key:{:?} shift={} control={} option={}",
+                press.key, press.modifiers.shift, press.modifiers.control, press.modifiers.option
+            ),
+        }
     }
 
     #[async_trait]
@@ -2442,6 +2506,184 @@ mod tests {
         assert_eq!(surface.semantics(), 1);
         assert_eq!(surface.semantic_seen().len(), 2);
         assert_eq!(surface.captures(), captures_before + 1);
+    }
+
+    #[tokio::test]
+    async fn targeted_partial_keeps_platform_counts_and_refusal_is_not_resent() {
+        let surface = Surface::new(false);
+        let (main, window) = bound_native(&surface).await;
+        let tree = call(
+            &main,
+            "run",
+            json!({"action": "read_tree", "window": window}),
+        )
+        .await
+        .expect("read tree");
+        let observation = tree.metadata["observation"]
+            .as_str()
+            .expect("observation")
+            .to_string();
+        let found = call(
+            &main,
+            "run",
+            json!({"action": "find_element", "observation": observation, "role": "AXTextField"}),
+        )
+        .await
+        .expect("find text field");
+        let element = found.metadata["element_id"]
+            .as_str()
+            .expect("element")
+            .to_string();
+
+        let captures_before = surface.captures();
+        surface.set_targeted_effect(TargetedEffect::NotFocused);
+        let refused = call(
+            &main,
+            "run",
+            json!({
+                "action": "targeted",
+                "element": element,
+                "targeted": "key",
+                "key": "left",
+                "modifiers": ["shift", "control"]
+            }),
+        )
+        .await
+        .expect_err("unfocused combo is refused before any partial result");
+        assert_eq!(refused.kind, ToolErrorKind::ExecutionFailed);
+        assert!(!refused.retryable);
+        assert!(
+            refused
+                .message
+                .contains("target window or element does not hold keyboard focus"),
+            "{}",
+            refused.message
+        );
+        assert_eq!(surface.targeted_entries(), 1);
+        assert_eq!(surface.targeted(), 0);
+        assert_eq!(
+            surface.targeted_seen(),
+            vec!["key:Left shift=true control=true option=false".to_string()]
+        );
+        assert_eq!(surface.captures(), captures_before);
+
+        let refused_again = call(
+            &main,
+            "run",
+            json!({
+                "action": "targeted",
+                "element": element,
+                "targeted": "key",
+                "key": "left",
+                "modifiers": ["shift", "control"]
+            }),
+        )
+        .await
+        .expect_err("refused element is not retried");
+        assert!(!refused_again.retryable);
+        assert_eq!(surface.targeted_entries(), 1);
+        assert_eq!(surface.targeted(), 0);
+        assert_eq!(surface.targeted_seen().len(), 1);
+        assert_eq!(surface.captures(), captures_before);
+
+        let again = call(
+            &main,
+            "run",
+            json!({"action": "read_tree", "window": window}),
+        )
+        .await
+        .expect("second read");
+        let again_observation = again.metadata["observation"]
+            .as_str()
+            .expect("second observation")
+            .to_string();
+        let partial_element = call(
+            &main,
+            "run",
+            json!({
+                "action": "find_element",
+                "observation": again_observation,
+                "role": "AXTextField"
+            }),
+        )
+        .await
+        .expect("second find");
+        let partial_element = partial_element.metadata["element_id"]
+            .as_str()
+            .expect("partial element")
+            .to_string();
+        // The stand-in dies with the partial answer. This checks receipt
+        // counts and the host's post-action recheck, not an OS text effect.
+        surface.set_targeted_effect(TargetedEffect::Partial {
+            events_posted: 2,
+            events_total: 6,
+        });
+        let partial_outcome = "partial 2/6: target process exited or restarted; bind a new target";
+        let wrote = call(
+            &main,
+            "run",
+            json!({
+                "action": "targeted",
+                "element": partial_element,
+                "targeted": "insert_text",
+                "text": "😀🌍"
+            }),
+        )
+        .await
+        .expect("partial insert_text");
+        assert!(wrote.success);
+        assert_eq!(wrote.metadata["environment"], "native_background");
+        assert_eq!(wrote.metadata["input_dispatched"], true);
+        assert_eq!(wrote.metadata["outcome"].as_str(), Some(partial_outcome));
+        assert!(
+            wrote.metadata["observation_failure"]
+                .as_str()
+                .unwrap_or("")
+                .contains("target process exited or restarted"),
+            "{}",
+            wrote.metadata
+        );
+        assert!(wrote.metadata["observation"].is_null());
+        assert!(!has_image(&wrote));
+        assert!(
+            text_of(&wrote).contains(partial_outcome),
+            "the tool text must keep the partial counts, got {}",
+            text_of(&wrote)
+        );
+        assert_eq!(surface.targeted_entries(), 2);
+        assert_eq!(surface.targeted(), 1);
+        assert_eq!(
+            surface.targeted_seen(),
+            vec![
+                "key:Left shift=true control=true option=false".to_string(),
+                "insert_text:😀🌍".to_string(),
+            ]
+        );
+        assert_eq!(surface.captures(), captures_before);
+
+        let resent = call(
+            &main,
+            "run",
+            json!({
+                "action": "targeted",
+                "element": partial_element,
+                "targeted": "insert_text",
+                "text": "😀🌍"
+            }),
+        )
+        .await
+        .expect_err("a partial element must not be sent again");
+        assert_eq!(resent.kind, ToolErrorKind::Conflict);
+        assert!(!resent.retryable);
+        assert!(
+            resent.message.contains("expired or already consumed"),
+            "{}",
+            resent.message
+        );
+        assert_eq!(surface.targeted_entries(), 2);
+        assert_eq!(surface.targeted(), 1);
+        assert_eq!(surface.targeted_seen().len(), 2);
+        assert_eq!(surface.captures(), captures_before);
     }
 
     async fn bound_native(surface: &Surface) -> (ToolScheduler, String) {

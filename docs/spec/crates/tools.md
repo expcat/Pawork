@@ -177,6 +177,8 @@ CU-05（2026-10-09）补主路径 `bounded_tree_issues_a_role_match_and_reaches_
 
 CU-06（2026-10-09）沿用 Surface，补 `semantic_unknown_effect_is_kept_and_element_refusal_is_not_retried`，共十一条：正式 Tool / Scheduler / NativeHost 保留 UnknownEffect 的派发事实与新观测；已消费句柄不再派发，ElementUnsupported 保留明确未派发错误、不重试、不捕获或回退定向键。平台调用计数只证明尝试次数，不能证明目标已接受文本；生产行为和能力矩阵不变。十一条定向回归通过，复用同版库证据；记录与环境边界见 [CU-06](../../plan/cu-06-semantic-actions.md)。
 
+CU-07（2026-10-09）补 `targeted_partial_keeps_platform_counts_and_refusal_is_not_resent`，共十二条。正式 Tool / Scheduler / NativeHost 保留平台 Partial 2/6 与 ProcessRestarted；替身进程实际置为退出，后置复核返回 observation_failure、无图，已消费句柄不重发；Shift+Control+Left 参数穿过工具层，NotFocused 明确不可重试且零派发。计数由替身给定，仅验证结果传播；真实 UTF-16 分块、目标复核和释放纪律复用同版库锚点。本轮十二条通过，首次模拟状态不一致的通过日志与修后验收分开保留，见 [CU-07](../../plan/cu-07-background-text-keys.md)。
+
 默认验证命令：`bash scripts/test.sh tools`（无 `tests/` 目录，用例全部在 `--lib`）。
 
 | 文件 | 覆盖点 |

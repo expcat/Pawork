@@ -1,6 +1,6 @@
 # CU-07 · 后台定向文本与按键输入
 
-> 状态：实现与定向回归完成；探针动作验收通过（2026-10-08，证据 /tmp/cu20/ 不入库），并发无干扰验收（用户连续输入与用户侧文本核对）未完成、登记待人工；生产 tools / Host 接线属 CU-10。前置：[CU-01](cu-01-background-feasibility.md)、[CU-04](cu-04-window-observation.md)、[CU-05](cu-05-accessibility-tree.md)、[CU-09](cu-09-ownership-cancellation.md)、[CU-16](cu-16-target-approvals.md)。更新：2026-10-08。
+> 状态：自动回归与模拟验收通过，独立 review / 复审 PASS；实现与生产 tools / Host 接线已完成，2026-10-07/08 探针结果保留原范围，真实用户连续输入另列待验。前置：[CU-01](cu-01-background-feasibility.md)、[CU-04](cu-04-window-observation.md)、[CU-05](cu-05-accessibility-tree.md)、[CU-09](cu-09-ownership-cancellation.md)、[CU-16](cu-16-target-approvals.md)。更新：2026-10-09。
 
 [返回 ROADMAP](../ROADMAP.md#computer-use-rust-升级)
 
@@ -10,7 +10,7 @@
 
 ## 当前依据与读取范围
 
-虚拟桌面有 Unicode 文本、组合键和取消释放；本机定向输入的无干扰能力尚未证明。已弃用的 AXUIElementPostKeyboardEvent 不能作为默认现代路径。
+虚拟桌面支持 Unicode 文本、组合键和取消释放；本机已采用 CU-01 实测路线，AppKit 支持范围受能力矩阵与目标状态复核约束。CU-10 已完成正式工具 / Host 接线；本轮按授权模拟剩余产品结果链，连续用户输入的真实系统证据单列。已弃用的 AXUIElementPostKeyboardEvent 不作为默认现代路径。
 
 [computer-use Spec](../spec/crates/computer-use.md)、[tools Spec](../spec/crates/tools.md)、[现行设计](../design.md#computer-use-首版)。
 
@@ -39,6 +39,31 @@
 
 复审修复第二轮（2026-10-07，6.1 sol 复审 1 项必须修，已落地）：预建释放错误地把 ModsDown 的累积掩码规格传给 `release_specs`（该函数要求独立修饰键掩码）——Shift+Control 时按下规格 (Shift,S)/(Control,S|C) 会算出错误释放 (Control,0)/(Shift,0)，正确应为 (Control,S)/(Shift,0)，正常完成与中止清理都会投递这份错误副本（Control 抬离瞬间系统误认为 Shift 也已抬起）；修法为预建释放直接取计划内匹配 ModsUp 步骤的规格（计划生成时已由 `release_specs` 基于独立掩码算好递减掩码），不再从按下规格重推导，找不到释放步骤按不平衡计划 fail-closed 零投递。回归扩展：双修饰键（Shift+Control+Left）正常完成场景断言实际投出事件的 flags 序列（`TARGETED_POSTED_FLAGS` 逐事件记录）——按下累积掩码 S / S|C、tap 携带 S|C、Control 抬离时 Shift 仍在（S）、Shift 清零收尾；tap-up 从 HIDSystemState 源继承真实键盘状态（fn / numpad，及运行测试者按住的真实修饰键）属 CU-01 实测形状、真实按键与派发残留无法区分，故不对其断言。第三轮微调（同日，复审测试问题）：删除 tap-up「不含虚构组合掩码」断言——用户按住任一修饰键跑测试时合法继承的 flags 会被误判泄漏导致误败；保留按下、tap-down 与释放对的精确断言不变。重跑 `bash scripts/test.sh computer-use` 85 项全绿。真实验收仍因控制台锁屏待执行，状态口径不变。
 
-真实验收（2026-10-08 执行，macOS 26.6.2 arm64 本机，控制台已解锁；探针路径，证据 tee 至 /tmp/cu20/、不入库；全程用户侧 front / focus 恒为 Edge pid 916、剪贴板 changeCount 不变）：AppKit（TextEdit pid 24371，窗口 cu20keys.txt 全程后台）——insert_text 多 chunk 文本（8 个 🙂 与 6 个 🌍 跨代理对边界）Dispatched，读回完整落地、UTF-16 分块未劈代理对（te-input-text.json；首次尝试树版本复核 TreeChanged fail-closed，重新观测签发后成功——诚实终态与恢复路径同验）；key_press return Dispatched，插入点断行、选区 [45,0]→[46,0]（te-key-return.json）；key_press shift+left Dispatched，选区 [46,0]→[45,1] 左扩一字符（te-key-shiftleft.json）；窗口最小化后 insert_text 按最小化闸拒绝（后端实读 AXMinimized 命中矩阵最小化拒）、值不变（te-min-input.json）。Chromium（VS Code pid 25494）——元素级验收同 CU-06 受树深度截断阻塞（UnprovenUnique 不签发，结构性）；Chromium 定向键零 AX 接触拒绝由定向回归钉住。Browser（隔离 Chrome pid 27014）——insert_text 按 Browser TargetedKeys Unsupported 能力闸拒绝、零事件派发（chr-input.json）。验收后目标应用全部退出、环境还原。
+真实验收（2026-10-07 晚至 10-08 凌晨执行，macOS 26.6.2 arm64 本机，控制台已解锁；探针路径，证据 tee 至 /tmp/cu20/、不入库；全程用户侧 front / focus 恒为 Edge pid 916、剪贴板 changeCount 不变）：AppKit（TextEdit pid 24371，窗口 cu20keys.txt 全程后台）——insert_text 多 chunk 文本（8 个 🙂 与 6 个 🌍 跨代理对边界）Dispatched，读回完整落地、UTF-16 分块未劈代理对（te-input-text.json；历史叙述曾记首次 TreeChanged 后重新观测成功；本轮复核现存 JSON 仅含成功结果，缺首次拒绝原始记录，不能作为拒绝恢复证据）；key_press return Dispatched，插入点断行、选区 [45,0]→[46,0]（te-key-return.json）；key_press shift+left Dispatched，选区 [46,0]→[45,1] 左扩一字符（te-key-shiftleft.json）；窗口最小化后 insert_text 按最小化闸拒绝（后端实读 AXMinimized 命中矩阵最小化拒）、值不变（te-min-input.json）。Chromium（VS Code pid 25494）——元素级验收同 CU-06 受树深度截断阻塞（UnprovenUnique 不签发，结构性）；Chromium 定向键零 AX 接触拒绝由定向回归钉住。Browser（隔离 Chrome pid 27014）——insert_text 按 Browser TargetedKeys Unsupported 能力闸拒绝、零事件派发（chr-input.json）。验收后目标应用全部退出、环境还原。
 
-遗留缺口：并发无干扰的 session 级单元（用户侧连续输入）沿用 CU-01 T5b2 路由级证据 + 本轮逐步 front / focus / mouse / clipboard 采样，sessiontype 会向真实前台应用发事件、有干扰用户当前输入的风险，登记待人工验收；VS Code 元素级验收受树深度截断阻塞（结构性）；锁屏场景沿用 CU-01 口径不记为支持；生产 tools / Host 接线属 CU-10，不在本任务范围。
+真实环境边界：并发无干扰的 session 级单元（用户侧连续输入）仍只保留 CU-01 T5b2 路由级证据与 2026-10-08 front / focus / mouse / clipboard 逐步采样，未新执行 sessiontype；真实连续用户输入待验。VS Code 元素级验收受树深度截断阻塞（结构性）；锁屏场景沿用 CU-01 口径不记为支持。生产 tools / Host 接线已由 CU-10 闭合。
+
+## 本轮模拟验收（2026-10-09）
+
+用户授权人工验收使用模拟。本轮只扩 `crates/tools/src/computer_native.rs` 的既有 Surface 与一条主路径 / 关键拒绝用例，不改生产行为、定向事件计划或能力矩阵。输入经正式 ToolScheduler → NativeComputerTool → NativeHost → TargetRegistry / 授权台账，替身仅提供外部平台结果与存活状态。
+
+| 输入与产品链 | 实际可观察结果 | 证明范围 |
+|---|---|---|
+| read_tree → find_element → targeted key Left + Shift + Control；平台回 NotFocused | 组合键与修饰参数原样到平台边界；ExecutionFailed、不可重试；零派发计数、零后置捕获，重复旧元素不再进入平台 | 失焦拒绝与参数传播，不证明真实按键释放 |
+| 重新读树签发元素，targeted insert_text `😀🌍`；平台回 Partial 2/6 并标记进程退出 | 普通 Text / metadata 保留 `partial 2/6`、ProcessRestarted 和 input_dispatched=true；Host 实际后置复核得到 observation_failure，observation=null，无 Image、无新增捕获 | 部分发送事实与失效目标观测拒绝；2/6 为平台替身提供的计数，不是本次实际 CGEvent 发送计数 |
+| 再次调用上述部分发送的元素 | Conflict、不可重试；平台仍共进入两次（一拒绝、一部分发送）且派发一次 | 已消费句柄不自动重发 |
+| 既有 `bounded_tree_issues_a_role_match_and_reaches_semantic_and_keyboard` | set_value 后重新读树与 key Dispatched 可达，返回新观测；本轮随十二条工具用例通过 | 成功回执链仍通，不证明目标窗口已接受输入 |
+
+新增用例 `targeted_partial_keeps_platform_counts_and_refusal_is_not_resent`。首次 `01-tools-computer-native.log` 为十二项通过，但当时 Partial 原因写成进程退出、替身进程仍存活且后捕获成功，不能作为修后状态一致性证据。指挥核查后要求原执行对话修复：同一 Surface 在返回 Partial 时调用既有 `kill_process()`，先验失焦拒绝、再验退出后的部分发送，避免虚构进程恢复；原日志保留。最终 `02-tools-computer-native.log` 十二项通过、exit 0，作为本轮验收依据。
+
+历史文件复核：按 Asia/Shanghai 的 mtime，`te-input-text.json`、`te-key-return.json`、`te-key-shiftleft.json` 与 `te-min-input.json` 为 2026-10-07 23:51～23:52，`chr-input.json` 为 10-08 00:17；不把整轮都记作 10-08。成功文本记录为 dispatched 10/10；现存 JSON 不含首次 TreeChanged 拒绝，旧叙述已回写为证据缺失，不用于本轮关闭。
+
+Validated: `cargo test -p pawork-tools --offline --lib computer_native::tests -- --test-threads=8`，12 passed / 85 filtered；格式、diff 与文档链接检查。同版 computer-use 源码与 CU-03 无差异，复用 `/tmp/cu03-20261009/04-computer-use-lib.log` 的 99 项；其中定向事件计划、首组 / 组间复核与 Partial 释放纪律是既有实际投递缝回归，不是本轮 Tool 替身重证。
+
+Targeted regressions: Partial 计数与原因传播、进程退出后的观测失败、失焦拒绝及消费句柄不重发；既有定向文本 / 组合键与取消、目标复核回归保留。
+
+Full workspace gate: NOT RUN（当前未设置全量门禁）。
+
+本轮没有操作用户真实前台、TCC 或目标控件，不证明系统级连续输入隔离、实际 UTF-16 事件分块、物理按键释放或焦点 / 剪贴板无干扰；这些真实证据保留原日期与待验范围。本轮模拟关闭以产品调用与回执传播为边界，不扩展 AppKit 最小化或 Chromium / Browser 能力。
+
+独立 review：`gpt-6.1-sol / max`，对话 `01a12107-cb2f-70b3-b37a-e4d6f58b3cf9`，R1 turn `01a12107-cff5-7cb1-8172-de198e695cbb` PASS；指挥同步 computer-use Spec 历史日期与缺失拒绝证据后，同一 reviewer 的 R2 turn `01a1210e-b801-76a0-8415-397fbf47d52b` PASS。只读核对差异、原始命令 / 日志及版本指纹，未重跑 Cargo；记录 `/tmp/cu07-20261009/REVIEW-R1-PASS.txt`、`REVIEW-R2-PASS.txt`。

@@ -27,7 +27,7 @@
 | ✅ 已实现，自动回归与模拟验收通过；独立 review PASS | [CU-04 · 窗口级截图与观测坐标](plan/cu-04-window-observation.md) | P2 | 所选窗口 JPEG 解码与正式工具路由、移动后新观测和缩放后拒绝通过；真实系统权限与像素另列待验。 |
 | ✅ 自动回归与模拟验收通过；独立 review PASS | [CU-05 · 有界无障碍树与元素定位](plan/cu-05-accessibility-tree.md) | P2 | 正式工具的 AX 结果、查找与拒绝链已模拟；真实 AX 探针保留原日期。 |
 | ✅ 自动回归与模拟验收通过；独立 review PASS | [CU-06 · 后台 AX 语义动作](plan/cu-06-semantic-actions.md) | P2 | 正式工具保留未知效果与新观测；元素拒绝和消费句柄不重试，VS Code 截断仍拒绝签发。 |
-| 已实现；自动回归与探针动作验收通过（2026-10-08）；并发无干扰验收（用户连续输入）待人工，生产接线属 CU-10 | [CU-07 · 后台定向文本与按键输入](plan/cu-07-background-text-keys.md) | P2 | 补齐语义赋值不能覆盖但已证实支持后台输入的文本与按键动作。 |
+| ✅ 自动回归与模拟验收通过；独立 review / 复审 PASS | [CU-07 · 后台定向文本与按键输入](plan/cu-07-background-text-keys.md) | P2 | 部分发送回执与退出后观测拒绝通过；真实用户连续输入另列待验。 |
 | 已实现；自动回归与真实验收通过（2026-10-08 探针路径三族）；生产接线属 CU-10 | [CU-08 · 后台定向点击、滚动与拖动](plan/cu-08-background-pointer.md) | P2 | 实现已通过无干扰验证的窗口定向指针动作。 |
 | ✅ 自动回归复用与模拟/隔离桌面验收通过；独立 review PASS | [CU-09 · 目标占用、用户接管与后台生命周期](plan/cu-09-ownership-cancellation.md) | P3 | 真实 RFB 冲突与在途释放通过；GUI 连接/重放及接管采用同版模拟证据。 |
 | ✅ 完成（模拟验收） | [CU-10 · 动作与新观测的 Host 闭环](plan/cu-10-action-observe.md) | P3 | 共享 Native Host、Engine 取消事实与 CLI 显式接入闭环完成；连接层、半行/恢复取消/拒绝单次发送模拟通过，独立 R3 review PASS，真实平台边界单列。 |
