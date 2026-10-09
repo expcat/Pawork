@@ -8,7 +8,8 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -16,7 +17,8 @@ use pawork_app::devfixture::{self, SeedSpec};
 use pawork_app::{AppCore, GuiHostAdapter};
 use pawork_domain::{
     CancellationToken, CanonicalModelRequest, CommandId, ContentPart, MessageRole, ModelDefinition,
-    ModelId, ModelProvider, ModelResponseSummary, ProviderError, ProviderErrorKind,
+    ImageSource, ModelCapabilities, ModelId, ModelProvider, ModelResponseSummary, ProviderError,
+    ProviderErrorKind,
     ProviderEventSink, ResolvedCredential, SessionId, StopReason, TextContent, Timestamp,
     TokenUsage, WorkspaceId,
 };
@@ -118,6 +120,45 @@ fn pty_script_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/ui/pty-fixture.sh")
 }
 
+/// serve 进程内的证据目录。只给 dev example 的 browser 脚本落 JPEG，不进生产二进制。
+fn fixture_log_dir() -> &'static OnceLock<PathBuf> {
+    static LOG_DIR: OnceLock<PathBuf> = OnceLock::new();
+    &LOG_DIR
+}
+
+fn note_browser_trace(line: &str) {
+    eprintln!("[ui_fixture] {line}");
+    let Some(dir) = fixture_log_dir().get() else {
+        return;
+    };
+    let path = dir.join("browser-script.log");
+    let mut existing = std::fs::read_to_string(&path).unwrap_or_default();
+    existing.push_str(line);
+    existing.push('\n');
+    let _ = std::fs::write(path, existing);
+}
+
+fn note_browser_image(data: &str) {
+    let Some(dir) = fixture_log_dir().get() else {
+        return;
+    };
+    let path = dir.join("browser-screenshot.b64");
+    if path.is_file() {
+        return;
+    }
+    if std::fs::write(&path, data).is_ok() {
+        note_browser_trace(&format!("saved screenshot base64 bytes={}", data.len()));
+    }
+}
+
+fn truncate_trace(text: &str) -> String {
+    let mut end = text.len().min(180);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].replace('\n', " ")
+}
+
 fn load_spec() -> Result<SeedSpec, String> {
     let text = std::fs::read_to_string(seed_json_path())
         .map_err(|error| format!("读取 seed.json 失败：{error}"))?;
@@ -161,6 +202,14 @@ async fn fixture_core(root: &Path, spec: &SeedSpec, profile: &str) -> Result<App
         .await
         .map_err(|error| error.to_string())?;
     devfixture::bind_fixture_sessions(&core, spec);
+    // RunStart 的 browser 视觉闸读已合并目录，不读当场的 list_models。
+    // 沿正式 switch_model → refresh_provider_registry 把本次声明写进目录。
+    let logs = root.join("logs");
+    std::fs::create_dir_all(&logs).map_err(|error| format!("创建 fixture logs 失败：{error}"))?;
+    let _ = fixture_log_dir().set(logs);
+    core.switch_model(None, "fixture-model")
+        .await
+        .map_err(|error| format!("fixture model discovery failed: {error}"))?;
     Ok(core)
 }
 
@@ -178,7 +227,18 @@ impl ModelProvider for FixtureDispatchProvider {
         &self,
         _credential: Option<&ResolvedCredential>,
     ) -> Result<Vec<ModelDefinition>, ProviderError> {
-        Ok(Vec::new())
+        Ok(vec![ModelDefinition {
+            id: ModelId::from("fixture-model"),
+            display_name: "Fixture model".into(),
+            context_window_tokens: 128_000,
+            max_output_tokens: 8_192,
+            capabilities: ModelCapabilities {
+                text: true,
+                image_input: true,
+                tool_calls: true,
+                ..ModelCapabilities::default()
+            },
+        }])
     }
 
     async fn stream(
@@ -215,6 +275,12 @@ fn script_for_request(request: &CanonicalModelRequest) -> MockScript {
         })
         .unwrap_or_default();
     let prefix = first_user.lines().next().unwrap_or("").trim();
+    if let Some(handle) = prefix.strip_prefix("fixture:browser-ttl ").map(str::trim) {
+        return browser_ttl_script(request, handle);
+    }
+    if let Some(url) = prefix.strip_prefix("fixture:browser ").map(str::trim) {
+        return browser_script(request, url);
+    }
     let has_tool_results = request
         .messages
         .iter()
@@ -242,6 +308,169 @@ fn script_for_request(request: &CanonicalModelRequest) -> MockScript {
     }
 }
 
+struct SeenTool {
+    is_error: bool,
+    text: String,
+    has_image: bool,
+}
+
+fn seen_tools(request: &CanonicalModelRequest) -> Vec<SeenTool> {
+    let start = request
+        .messages
+        .iter()
+        .rposition(|message| message.role == MessageRole::User)
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let mut seen = Vec::new();
+    for message in request.messages.iter().skip(start) {
+        if message.role != MessageRole::Tool {
+            continue;
+        }
+        for part in &message.content {
+            let ContentPart::ToolResult(result) = part else {
+                continue;
+            };
+            let mut text = String::new();
+            let mut has_image = false;
+            for inner in &result.content {
+                match inner {
+                    ContentPart::Text(text_content) => text.push_str(&text_content.text),
+                    ContentPart::Image(image) => {
+                        has_image = true;
+                        if let ImageSource::Base64(data) = &image.source {
+                            note_browser_image(data);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            seen.push(SeenTool {
+                is_error: result.is_error,
+                text,
+                has_image,
+            });
+        }
+    }
+    seen
+}
+
+fn tool_use(name: &str, arguments: Value) -> MockScript {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let id = pawork_domain::ToolCallId::from(format!(
+        "browser-tool-{}-{}",
+        browser_tool_namespace(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let json = serde_json::to_string(&arguments).expect("browser tool arguments");
+    MockScript::new()
+        .tool_call_chunks(id, name, [json])
+        .complete_with(StopReason::ToolUse)
+}
+
+/// tool_calls.tool_call_id 是全库主键。计数每个进程从 1 起，Host 重启会撞上旧行。
+/// 前缀在进程内只生成一次：pid 区分进程，墙钟纳秒区分重启；同进程内再靠计数器。
+fn browser_tool_namespace() -> &'static str {
+    static NAMESPACE: OnceLock<String> = OnceLock::new();
+    NAMESPACE
+        .get_or_init(|| {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0);
+            format!("{}-{nanos}", std::process::id())
+        })
+        .as_str()
+}
+
+/// 有界 browser 链：navigate、read、screenshot、密码拒绝、文件拒绝、再读。
+/// 只消费正式工具回执，不执行页面脚本。
+fn browser_script(request: &CanonicalModelRequest, url: &str) -> MockScript {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return MockScript::new()
+            .text("fixture browser stopped: url must be http(s)")
+            .complete();
+    }
+    let seen = seen_tools(request);
+    let rejects = seen
+        .iter()
+        .filter(|item| item.text.contains("Password and file"))
+        .count();
+    let reads = seen
+        .iter()
+        .filter(|item| !item.is_error && item.text.contains("dom_revision"))
+        .count();
+    let saw_image = seen.iter().any(|item| item.has_image);
+    if let Some(last) = seen.last() {
+        if last.is_error && !last.text.contains("Password and file") {
+            let detail = truncate_trace(&last.text);
+            note_browser_trace(&format!("stop unexpected error {detail}"));
+            return MockScript::new()
+                .text(format!("fixture browser stopped: {detail}"))
+                .complete();
+        }
+    }
+    if rejects >= 2 && reads >= 3 {
+        note_browser_trace("complete after secret rejects and final read");
+        return MockScript::new()
+            .text("fixture browser finished")
+            .complete();
+    }
+    if rejects >= 2 {
+        note_browser_trace("read after secret rejects");
+        return tool_use("browser", json!({"action": "read"}));
+    }
+    if rejects == 1 {
+        note_browser_trace("type file input");
+        return tool_use(
+            "browser",
+            json!({"action":"type","selector":"#file","text":"should-not-land"}),
+        );
+    }
+    if saw_image {
+        note_browser_trace("type password input");
+        return tool_use(
+            "browser",
+            json!({"action":"type","selector":"#pw","text":"should-not-land"}),
+        );
+    }
+    if reads >= 2 {
+        note_browser_trace("screenshot");
+        return tool_use("browser", json!({"action": "screenshot"}));
+    }
+    if reads >= 1 {
+        note_browser_trace("read");
+        return tool_use("browser", json!({"action": "read"}));
+    }
+    note_browser_trace(&format!("navigate {url}"));
+    tool_use("browser", json!({"action":"navigate","url":url}))
+}
+
+/// 用上一次 read 回执里的句柄再 type。过期由真实 WebView 句柄表拒绝。
+fn browser_ttl_script(request: &CanonicalModelRequest, handle: &str) -> MockScript {
+    if !handle.starts_with("e-") || handle.len() > 128 {
+        return MockScript::new()
+            .text("fixture ttl stopped: handle missing")
+            .complete();
+    }
+    let seen = seen_tools(request);
+    if let Some(last) = seen.last() {
+        if last.text.contains("expired") {
+            note_browser_trace("ttl rejected");
+            return MockScript::new().text("fixture ttl rejected").complete();
+        }
+        let detail = truncate_trace(&last.text);
+        note_browser_trace(&format!("ttl unexpected {detail}"));
+        return MockScript::new()
+            .text(format!("fixture ttl stopped: {detail}"))
+            .complete();
+    }
+    note_browser_trace(&format!("ttl type handle {handle}"));
+    tool_use(
+        "browser",
+        json!({"action":"type","handle":handle,"text":"ttl-should-not-land"}),
+    )
+}
+
 async fn cmd_seed(args: &[String]) -> Result<(), String> {
     let parsed = parse_args(args, false)?;
     if parsed.profile.is_some() {
@@ -265,8 +494,13 @@ async fn cmd_serve(args: &[String]) -> Result<(), String> {
     require_seeded_root(&parsed.root)?;
     let spec = load_spec()?;
     let profile = parsed.profile.as_deref().unwrap_or("default");
-    let core = fixture_core(&parsed.root, &spec, profile).await?;
+    let mut core = fixture_core(&parsed.root, &spec, profile).await?;
     let approvals = Arc::new(pawork_app::GuiApprovalHost::new());
+    // r6 profile 默认 DenyAll，browser 的 requires_approval 会被立刻拒绝。
+    // 仅当验收显式打开时，把同一 GuiApprovalHost 装进 Core，卡片走正式 GUI。
+    if std::env::var("PAWORK_UI_GUI_APPROVAL").ok().as_deref() == Some("1") {
+        core.set_approval_host(approvals.clone());
+    }
     let core = Arc::new(tokio::sync::RwLock::new(core));
     let adapter = GuiHostAdapter::from_locked(Arc::clone(&core), approvals);
     let pty = adapter.pty();

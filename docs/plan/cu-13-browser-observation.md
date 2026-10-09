@@ -1,8 +1,18 @@
 # CU-13 · 内置浏览器截图与 DOM 观测
 
-> 状态：已实现；自动回归通过，read/click/句柄/拒绝/重放真实验收通过，截图正路径与焦点探针待人工验收（P4）。前置：[CU-02](cu-02-target-contracts.md)、[CU-16](cu-16-target-approvals.md)。更新：2026-10-07。
+> 状态：✅ 完成（模拟验收）；独立 review / 复审 PASS（P4）。前置：[CU-02](cu-02-target-contracts.md)、[CU-16](cu-16-target-approvals.md)。更新：2026-10-10。
 
 [返回 ROADMAP](../ROADMAP.md#computer-use-rust-升级)
+
+真窗核对（2026-10-10，macOS，Pawork-cu13b + `ui_fixture serve --profile r6-terminal`，`PAWORK_UI_GUI_APPROVAL=1`，页面 `http://127.0.0.1:8937/index.html`）：审批卡「允许本次运行」放行后，browser 链为 navigate → read → screenshot → `#pw` / `#file` type 拒绝 → 再 read。截图为洋红底、绿条 `CU13-PAGE-MARKER`、密码框、文件框与文本框，与 fixture 页一致；Base64 解码后是 1024×768 JPEG（证据 `/tmp/cu13b/logs/browser-screenshot.b64`、`/tmp/cu13-20261009/screenshot.jpg`，不入库）。两次 type 回执均为「不支持密码或文件输入 / Password and file inputs are not allowed」。HTTP 日志对成功 run 各有一次 `GET /index.html`。窗口始终停在时间线，没有切到浏览器面板；Composer 连续性按下一段补证记录。
+
+Composer 焦点连续性补证（同日，证据 `/tmp/cu13-focus/`）：`run-gui-1791584164805-4` 于 1791584165096 开始、1791584185126 完成；首个 navigate 工具 `browser-tool-96640-1791582916775963000-19` 的执行区间为 1791584166241–1791584180146。审批点击发生在 1791584165597，四组真实按键 `pr`、`e-`、`fl`、`ight` 的时间分别为 1791584166834–6846、7714–7724、8586–8600、9457–9480，全部落在 navigate 执行窗口内；HTTP GET `/index.html` 时间 1791584168095 也在同一窗口。每组按键后的新 AX 均显示 browser 工具 running、Cancel run 可用、run 时长从 00:01 递增到 00:05、焦点元素始终为 `composer-input`，Composer 值依次为 `pr`、`pre-`、`pre-fl`、`pre-flight`；同步截图与 AX 存于同目录。初审曾因旧 `in-flight.png` 为 run 完成态返回 P2，本段为同 reviewer 要求的补证结果，前两次未能采到进行中状态的尝试不作为结论。
+
+独立 review（2026-10-10）：执行者为同线程 `xai/grok-4.7` / xhigh。R1c 受审快照 `/tmp/pawork-cu13-browser-observation-r1c.diff`，25434 字节，SHA256 `b3fb3a98302a1f4611a912c9ba0afb6b222eb0ea30bba3a7e0243c625791e964`；指挥在 PASS 前核对当前 diff 与快照 `cmp` 一致。唯一 reviewer 线程 `01a122ac-7ed6-76b2-af9b-7ca7ef4458cd`（`gpt-6.1-sol` / max）初审 turn `01a122ac-829e-7ed3-9caa-356c072803c5` 对焦点连续性返回 P2；补证后同 reviewer 复审 turn `01a122c0-a52a-7182-aa14-7687dd8a145e` 最终 `VERDICT: PASS`，确认四组按键位于 navigate 执行区间、AX/截图/HTTP 证据一致且无新增过度声明。reviewer 按要求只读，不运行 Cargo。
+
+句柄 TTL 核对（同日同 Desktop/Host）：先跑新的 `fixture:browser`，从最后一次 read 回执取未消费的 `#echo` 文本句柄 `e-82585-1791580734407382000-126`（read 完成时间 1791582094523），等待 219287ms 后在真实 Desktop 输入 `fixture:browser-ttl <handle>`。type 执行开始于 1791582313810，工具回执 `is_error=true`：「元素句柄已过期，请重新读取 / Element handle expired — read the page again」；UI 停在 `fixture ttl rejected`，HTTP 与 serve 日志在 type 前后无新增，证明这不是页面重载、Host 重启或权限拒绝。证据在 `/tmp/cu13-ttl/`（timing、两次工具参数/回执、AX 快照、页面截图与日志，不入库）。
+
+本轮只在 dev-only `crates/app/examples/ui_fixture.rs` 扩展模拟验收资产：`fixture-model` 声明 `image_input` 与 `tool_calls` 并经正式 `switch_model` 刷新目录；`PAWORK_UI_GUI_APPROVAL=1` 时把同一 `GuiApprovalHost` 装进 Core，使审批卡走正式 GUI；`fixture:browser` / `fixture:browser-ttl` 按前缀驱动真实 BrowserTool 链；工具调用 ID 使用进程级命名空间（pid + 启动纳秒）加进程内计数，避免多步工具或同一 session.db 重启 Host 后撞 `tool_calls` 全库主键；首张截图 Base64 与轨迹只写隔离 root 的 logs。实际检查：`RUSTC_WRAPPER= cargo build -p pawork-app --example ui_fixture --features ui-fixture` EXIT 0；`RUSTC_WRAPPER= cargo build -p pawork-desktop --features gpui/runtime_shaders` EXIT 0；`cargo test -p pawork-browser --lib observe::tests::handle_lifecycle_consumes_once_and_rejects_stale -- --exact` EXIT 0；修复命名空间后 `cargo build -p pawork-app --example ui_fixture --features ui-fixture` EXIT 0。同一 `/tmp/cu13b` session.db 停止旧 Host、重启新 Host 并重连 Desktop 后，完整 browser 链产生 `browser-tool-96640-1791582916775963000-1..6`，与既有 `browser-tool-1..85` 无冲突，HTTP 新增一次 `GET /index.html`（证据 `/tmp/cu13-toolid/`）。未把刚好 60/61 秒、click 句柄、已使用优先于过期、密码/文件句柄作为本轮真窗结论；这些边界仍由既有单测或后续任务覆盖。历史失败与恢复保留：一次 kache `rustc` 挂起被终止（EXIT 143）后按仓库允许的单次 `RUSTC_WRAPPER=` 绕过恢复；早期 DenyAll 立即拒绝、重复 `mock-tool-call-0` 主键冲突与裸计数 Host 重启撞全库主键分别定位为 fixture 审批装配和工具 ID 缺口，修复后由上述真窗链路复验。
 
 ## 目标
 
@@ -10,7 +20,7 @@
 
 ## 当前依据与读取范围
 
-现有 WebKit 支持有界 read/click/type 等固定 DOM 操作，没有截图或观测元素句柄；BrowserView 位于 AppKit 主线程，不能 Send / Sync。
+现有 WebKit 已支持有界 read/click/type、带代际和 DOM revision 的一次性元素句柄及真实 JPEG 截图；BrowserView 位于 AppKit 主线程，不能 Send / Sync。本轮核对的是既有能力的截图与输入连续性验收缺口。
 
 [browser Spec](../spec/crates/browser.md)、[app Spec](../spec/crates/app.md)、[desktop crate Spec](../spec/crates/desktop.md)、[protocol Spec](../spec/crates/protocol.md)。
 
@@ -30,7 +40,9 @@
 
 实施时优先受影响包的现有定向回归；真实后台能力必须有真实目标状态和用户侧/文件/Host 等独立事实。截图不写入仓库，证据注明日期、环境、输入、实际结果与位置。
 
-## 完成记录
+## 实现与历史验收记录（2026-10-07）
+
+以下为实现轮记录，其中「未提交」描述当时工作区；当前基线已包含浏览器主体与复审修复。本轮状态以顶部及后续模拟验收记录为准，历史 AX / 模型配置阻塞不能代替当前环境核实。
 
 实现（2026-10-07，主体已提交 `30b62e9e`，写入集 browser / app / desktop 三包 + browser.md / app.md / desktop.md / protocol.md 四篇 Spec；protocol wire 零改动，复用 GUI 1.18 请求/回执）：pawork-browser 新增页面观测与句柄——`read_page` 返回有界 JSON（页面文本压缩 + links / inputs / buttons 各带 CSS 选择器、视口 rect 与一次性元素句柄，输出 ≤64KiB 先压 text 再弹最长列表），附 `generation`（provisional 导航与内容进程终止 +1）、`dom_revision`（MutationObserver 计数，随机 key `__paworkObs_<nanos+seq>`）与 viewport；句柄 `e-<pid>-<boot_ns>-<seq>`、TTL 60s、一次性、cap 512 FIFO；`click_handle` / `type_handle` 先过新鲜度闸（观测 key 存在 + `location.href` 与签发时一致 + `dom_revision` 未变）再走既有唯一可见检查；`snapshot` 经 `takeSnapshotWithConfiguration` 在网页内容进程离屏渲染，不激活窗口、视图隐藏时可用，JPEG 最长边 ≤1280px、≤512KiB、质量阶梯 75/50/30。pawork-app 的 browser 工具扩展 screenshot / click_handle / type_handle 动作与校验，`browser_respond` 与工具输出上限 96KiB 提至 768KiB，click / type 成功后 Desktop 回一次新鲜观测（`observation` / `observation_error`）由 Host 透传，screenshot 走视觉门。apps/desktop 把浏览器派发后台化（`handle_controller_event` 即时派发、`raw_window_handle` 缓存、`cfg!(test)` 守门）并去掉强制打开面板。
 
