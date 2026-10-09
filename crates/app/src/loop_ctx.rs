@@ -54,6 +54,12 @@ pub(crate) struct SessionLoopCtx<'a> {
     pub token_estimator: Option<Arc<dyn pawork_storage::session::TokenEstimator>>,
     pub checkpoints: Option<CheckpointService>,
     pub workspace_roots: Vec<PathBuf>,
+    /// CU-10 #5：本 Run 的 computer_native bind/launch 是否等待 GUI 目标
+    /// 审批（同锁谓词 + Condvar 唤醒，见 NativeControl 文档）。
+    pub wait_target_approval: bool,
+    /// CU-10 #5：目标台账宿主（等待 GUI 审批用）。与 GUI handler 共用
+    /// AppCore.native，不建第二本台账。
+    pub native: Arc<dyn pawork_computer_use::NativeControl>,
 }
 
 struct ForwardingSink<'a> {
@@ -390,6 +396,8 @@ impl SessionLoopCtx<'_> {
                     approval_mode,
                     workspace_trusted,
                     &descriptors,
+                    self.wait_target_approval,
+                    &self.native,
                 )
                 .await
             }
@@ -434,6 +442,8 @@ async fn execute_one(
     approval_mode: ApprovalMode,
     workspace_trusted: bool,
     descriptors: &[ToolDescriptor],
+    wait_target_approval: bool,
+    native: &Arc<dyn pawork_computer_use::NativeControl>,
 ) -> ToolCallResult {
     // A model may invent a tool call even when its definition was withheld.
     // Check the per-run allowlist before invoking the shared scheduler.
@@ -447,6 +457,8 @@ async fn execute_one(
         tool_call_id: call.tool_call_id.clone(),
         input: call.arguments.clone(),
     };
+    let wait_scope =
+        pawork_computer_use::target::Scope::new(workspace_id.as_str(), run_id.as_str());
     let context = ToolExecutionContext {
         workspace_id,
         run_id,
@@ -477,6 +489,22 @@ async fn execute_one(
     } else {
         None
     };
+    // CU-10 #5：显式 opt-in 的 CLI Run 经 GUI Host 等待目标审批。只对
+    // computer_native 的 bind/launch 生效；request / discover / 其它动作
+    // 不等。等待在 scheduler 前、Policy 与通用审批之后，不占工具执行
+    // 的 25 秒预算；grant / revoke / close_scope / Run 取消都能结束等待，
+    // 结束后至多进入一次现有 execute_named，由 bind/launch 自行收口。
+    if wait_target_approval && call.name == "computer_native" {
+        if let Some(bundle_id) = computer_native_wait_bundle(&call.arguments) {
+            let scope = wait_scope;
+            let native = Arc::clone(native);
+            let wait_cancel = cancel.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                native.wait_for_requested_grant(&scope, &bundle_id, &|| wait_cancel.is_cancelled());
+            })
+            .await;
+        }
+    }
     let mut result = match scheduler
         .execute_named(&call.name, request, context, cancel, approval, &sink)
         .await
@@ -491,6 +519,16 @@ async fn execute_one(
         arguments: call.arguments,
         result,
     }
+}
+
+/// computer_native 是否为需要等待 GUI 目标审批的 bind/launch 调用；
+/// 返回其 bundle id。其它动作（含 request / discover）返回 None。
+fn computer_native_wait_bundle(arguments: &serde_json::Value) -> Option<String> {
+    let action = arguments.get("action")?.as_str()?;
+    if action != "bind" && action != "launch" {
+        return None;
+    }
+    arguments.get("bundle_id")?.as_str().map(str::to_string)
 }
 
 fn fill_error_content(result: &mut ToolResult) {

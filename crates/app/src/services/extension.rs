@@ -432,8 +432,7 @@ pub(crate) fn base64_decode(text: &str) -> Result<Vec<u8>, &'static str> {
                 Ok(0)
             }
         };
-        let n =
-            (symbol(0)? << 18) | (symbol(1)? << 12) | (symbol(2)? << 6) | symbol(3)?;
+        let n = (symbol(0)? << 18) | (symbol(1)? << 12) | (symbol(2)? << 6) | symbol(3)?;
         out.push((n >> 16) as u8);
         if expected_payload > 2 {
             out.push((n >> 8) as u8);
@@ -522,6 +521,7 @@ mod tests {
             vec![
                 "apply_patch",
                 "computer",
+                "computer_native",
                 "edit_file",
                 "find_files",
                 "list_directory",
@@ -750,7 +750,9 @@ mod tests {
                 .expand_at_refs(&workspace, r#"@"cat.png""#)
                 .await
                 .unwrap_err();
-            assert!(error.to_string().contains("escapes workspace root via symlink"));
+            assert!(error
+                .to_string()
+                .contains("escapes workspace root via symlink"));
         }
     }
 
@@ -916,7 +918,8 @@ mod tests {
             for len in 0..(bytes.len() - offset).min(6) {
                 let slice = super::base64_decode_range(&encoded, offset, len).unwrap();
                 assert_eq!(
-                    slice, bytes[offset..offset + len],
+                    slice,
+                    bytes[offset..offset + len],
                     "offset {offset} len {len}"
                 );
             }

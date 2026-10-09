@@ -76,7 +76,11 @@ pub async fn run_gui(
     let mut core = core;
     core.set_approval_host(approvals.clone());
     let core = Arc::new(tokio::sync::RwLock::new(core));
-    let adapter = GuiHostAdapter::from_locked(Arc::clone(&core), approvals);
+    // CU-10 #5：GuiServer 与 Adapter 共享同一份连接登记——RunStart 才能按
+    // 盖章后的 client_id 查到握手名（pawork-cli opt-in 等待开关）。
+    let connections = Arc::new(pawork_gui_server::ConnectionManager::new());
+    let adapter = GuiHostAdapter::from_locked(Arc::clone(&core), approvals)
+        .with_connections(Arc::clone(&connections));
     let pty = adapter.pty();
     let runs = adapter.runs();
     let socket_path = socket.unwrap_or_else(|| gui_socket_path(&data_dir, instance));
@@ -121,7 +125,7 @@ pub async fn run_gui(
         host: Arc::new(adapter),
         handshake,
         transport: Arc::clone(&transport) as Arc<dyn GuiTransportServer>,
-        connections: None,
+        connections: Some(connections),
     });
     let listener = server
         .bind(TransportEndpoint::Local { address })

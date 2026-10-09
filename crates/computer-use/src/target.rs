@@ -27,10 +27,12 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use crate::approval::{normalize_origin, DispatchPermit, GrantKind, TargetAuthorizer, TargetIdentity};
+use crate::approval::{
+    normalize_origin, DispatchPermit, GrantKind, TargetAuthorizer, TargetIdentity,
+};
 use crate::MAX_IMAGE_EDGE;
 
 /// One-shot lease lifetime, same as the isolated-desktop observation.
@@ -234,10 +236,19 @@ macro_rules! opaque_handle {
             pub fn as_str(&self) -> &str {
                 &self.0
             }
+
+            /// Wraps a model-supplied string. This does not mean the registry
+            /// issued it; unknown strings still fail on use.
+            pub(crate) fn from_model(value: impl Into<String>) -> Self {
+                Self(value.into())
+            }
         }
     };
 }
-opaque_handle!(WindowHandle, "Host-issued handle for a bound target window.");
+opaque_handle!(
+    WindowHandle,
+    "Host-issued handle for a bound target window."
+);
 opaque_handle!(
     ObservationHandle,
     "Host-issued one-shot observation lease (60s TTL)."
@@ -1013,7 +1024,10 @@ impl PointerAction {
                 }
             }
         }
-        if let PointerAction::Scroll { delta_x, delta_y, .. } = self {
+        if let PointerAction::Scroll {
+            delta_x, delta_y, ..
+        } = self
+        {
             if !delta_x.is_finite() || !delta_y.is_finite() {
                 return Err(TargetError::Invalid("scroll deltas must be finite"));
             }
@@ -1048,6 +1062,18 @@ impl WindowMove {
         }
         Ok(())
     }
+}
+
+/// What a bounded frontmost-bundle query can prove. Unprovable is not
+/// evidence that the user is at the machine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActivityProof {
+    /// The queried bundle is the frontmost application.
+    Operating,
+    /// Some other bundle is frontmost, or the frontmost app has no bundle id.
+    Idle,
+    /// The workspace or frontmost application could not be read.
+    Unprovable,
 }
 
 /// Live native state supplied by the host; implemented by the macOS backend
@@ -1096,6 +1122,7 @@ impl NativeProbe for Box<dyn NativeProbe> {
 /// check denies, so the registry still records grants and bindings but no
 /// gated operation can pass. (CU-17: the GUI path never probes; this only
 /// keeps non-macOS hosts constructible.)
+#[derive(Clone, Copy, Debug, Default)]
 pub struct UnsupportedProbe;
 
 impl NativeProbe for UnsupportedProbe {
@@ -1130,6 +1157,9 @@ struct ObservationRecord {
     tree_revision: Option<u64>,
     created: Instant,
     consumed: bool,
+    /// AX read this observation was issued from, kept so a later element
+    /// lookup does not re-enter the backend and bind a newer tree.
+    tree: Option<AxTreeRead>,
 }
 
 struct ElementRecord {
@@ -1137,6 +1167,9 @@ struct ElementRecord {
     window: WindowHandle,
     scope: Scope,
     element_token: u64,
+    /// Child-index path from the read that issued this handle. The model
+    /// never sees it; dispatch re-resolves only this path.
+    path: Vec<u32>,
     tree_revision: u64,
     consumed: bool,
 }
@@ -1208,7 +1241,7 @@ pub struct TargetState {
 /// Authorization is checked before any probe call, so a denied, unknown or
 /// revoked target never reaches the native backend.
 pub struct TargetRegistry<P: NativeProbe> {
-    probe: P,
+    probe: Arc<P>,
     authorizer: TargetAuthorizer,
     windows: HashMap<String, WindowRecord>,
     observations: HashMap<String, ObservationRecord>,
@@ -1226,6 +1259,10 @@ pub struct TargetRegistry<P: NativeProbe> {
     /// approval can never slip between the terminal cleanup and the host
     /// registry removal, and no terminal-state record outlives the run.
     active: HashSet<Scope>,
+    /// Targets a run asked the user to approve. Not a grant and not an
+    /// occupancy record: the GUI list can show them before the user decides,
+    /// and only [Self::grant] marks one authorized.
+    requested: HashSet<(Scope, TargetIdentity)>,
 }
 
 impl<P: NativeProbe> TargetRegistry<P> {
@@ -1235,7 +1272,7 @@ impl<P: NativeProbe> TargetRegistry<P> {
 
     pub fn with_authorizer(probe: P, authorizer: TargetAuthorizer) -> Self {
         Self {
-            probe,
+            probe: Arc::new(probe),
             authorizer,
             windows: HashMap::new(),
             observations: HashMap::new(),
@@ -1243,6 +1280,7 @@ impl<P: NativeProbe> TargetRegistry<P> {
             occupied: HashMap::new(),
             user_paused: HashSet::new(),
             active: HashSet::new(),
+            requested: HashSet::new(),
         }
     }
 
@@ -1288,6 +1326,9 @@ impl<P: NativeProbe> TargetRegistry<P> {
         {
             self.occupied.remove(target.occupancy_anchor());
         }
+        // CU-10 #5：撤销同时移除待批登记，等待 GUI 审批的 bind/launch
+        // 立即失去等待谓词；随后的执行得到现有 NotAuthorized。
+        self.requested.remove(&(scope.clone(), target.clone()));
         self.authorizer.revoke(scope, target);
     }
 
@@ -1304,7 +1345,91 @@ impl<P: NativeProbe> TargetRegistry<P> {
     /// retained after the close.
     pub fn close_scope(&mut self, scope: &Scope) {
         self.active.remove(scope);
+        self.requested.retain(|(held, _)| held != scope);
         self.revoke_scope(scope);
+    }
+
+    /// Record that this run wants the user to approve an application target.
+    /// Does not grant, bind, or touch the backend. Website targets stay
+    /// fail-closed: there is no current-origin signal to pin them to.
+    /// Protected bundles are rejected here so they never appear as choices.
+    pub fn request_target(
+        &mut self,
+        scope: &Scope,
+        target: &TargetIdentity,
+    ) -> Result<(), TargetError> {
+        if !self.active.contains(scope) {
+            return Err(TargetError::ScopeClosed);
+        }
+        target.validate()?;
+        if matches!(target, TargetIdentity::Website { .. }) {
+            return Err(TargetError::Invalid(
+                "website targets have no current-origin signal and stay fail-closed",
+            ));
+        }
+        match self.authorizer.check(scope, target) {
+            Err(TargetError::ForbiddenTarget) => return Err(TargetError::ForbiddenTarget),
+            Err(TargetError::NotAuthorized) | Ok(()) => {}
+            Err(other) => return Err(other),
+        }
+        self.requested.insert((scope.clone(), target.clone()));
+        Ok(())
+    }
+
+    pub fn scope_is_active(&self, scope: &Scope) -> bool {
+        self.active.contains(scope)
+    }
+
+    /// CU-10 #5：某 scope 待批目标里 bundle id 全等匹配的应用目标。
+    /// 大小写折叠、origin 或其它身份重建都不参与；返回值供等待方做
+    /// 「恰好一条」判定。
+    pub fn requested_by_bundle(&self, scope: &Scope, bundle_id: &str) -> Vec<TargetIdentity> {
+        self.requested
+            .iter()
+            .filter(|(held, target)| {
+                held == scope
+                    && target.app().bundle_id.as_str() == bundle_id
+                    && matches!(target, TargetIdentity::Application { .. })
+            })
+            .map(|(_, target)| target.clone())
+            .collect()
+    }
+
+    pub fn active_scopes(&self) -> Vec<Scope> {
+        let mut scopes: Vec<Scope> = self.active.iter().cloned().collect();
+        scopes.sort_by(|left, right| {
+            (&left.workspace_id, &left.run_id).cmp(&(&right.workspace_id, &right.run_id))
+        });
+        scopes
+    }
+
+    pub fn dispatch_is_paused(&self, target: &TargetIdentity) -> bool {
+        self.user_paused.contains(target.occupancy_anchor())
+    }
+
+    pub fn grant_kind(&self, scope: &Scope, target: &TargetIdentity) -> Option<GrantKind> {
+        self.authorizer
+            .grants()
+            .find_map(|((held_scope, held_target), kind)| {
+                (held_scope == scope && held_target == target).then_some(*kind)
+            })
+    }
+
+    /// Bound target identity without probing. Unknown and cross-scope handles
+    /// fail before any backend access.
+    pub fn window_target(
+        &self,
+        window: &WindowHandle,
+        scope: &Scope,
+    ) -> Result<TargetIdentity, TargetError> {
+        let record = self
+            .windows
+            .get(window.as_str())
+            .ok_or(TargetError::UnknownHandle)?;
+        if &record.scope != scope {
+            return Err(TargetError::CrossRun);
+        }
+        Ok(record.target.clone())
     }
 
     /// CU-09 host signal: the user is operating this target's application.
@@ -1313,7 +1438,8 @@ impl<P: NativeProbe> TargetRegistry<P> {
     /// that cannot determine the user's intent keep the pause asserted
     /// (fail-closed) instead of competing for the target.
     pub fn pause_dispatch(&mut self, target: &TargetIdentity) {
-        self.user_paused.insert(target.occupancy_anchor().to_string());
+        self.user_paused
+            .insert(target.occupancy_anchor().to_string());
     }
 
     /// CU-09 host signal: the user yielded the target back; agent dispatch may
@@ -1373,6 +1499,23 @@ impl<P: NativeProbe> TargetRegistry<P> {
             }
             state.dispatch_paused = self.user_paused.contains(anchor);
         }
+        for (scope, target) in &self.requested {
+            if states
+                .iter()
+                .any(|state| &state.scope == scope && &state.target == target)
+            {
+                continue;
+            }
+            let anchor = target.occupancy_anchor();
+            states.push(TargetState {
+                target: target.clone(),
+                scope: scope.clone(),
+                grant: None,
+                window: None,
+                occupied_by: self.occupied.get(anchor).map(|(owner, _)| owner.clone()),
+                dispatch_paused: self.user_paused.contains(anchor),
+            });
+        }
         states.sort_by(|a, b| {
             (
                 a.scope.workspace_id.clone(),
@@ -1415,7 +1558,7 @@ impl<P: NativeProbe> TargetRegistry<P> {
         self.authorizer.check(scope, &record.target)?;
         self.occupancy_conflict(&record.target, scope)?;
         if let TargetIdentity::Website { origin, .. } = &record.target {
-            if !origin_matches(&self.probe, &record.window, origin) {
+            if !origin_matches(self.probe.as_ref(), &record.window, origin) {
                 return Err(TargetError::SiteChanged);
             }
         }
@@ -1435,16 +1578,28 @@ impl<P: NativeProbe> TargetRegistry<P> {
         instance: ProcessInstance,
         window: WindowIdentity,
     ) -> Result<WindowHandle, TargetError> {
+        let probe = Arc::clone(&self.probe);
+        self.bind_window_with(scope, target, instance, window, probe.as_ref())
+    }
+
+    pub fn bind_window_with<Q: NativeProbe>(
+        &mut self,
+        scope: &Scope,
+        target: TargetIdentity,
+        instance: ProcessInstance,
+        window: WindowIdentity,
+        probe: &Q,
+    ) -> Result<WindowHandle, TargetError> {
         self.authorizer.check(scope, &target)?;
         self.occupancy_conflict(&target, scope)?;
-        if !self.probe.process_instance_alive(&instance) {
+        if !probe.process_instance_alive(&instance) {
             return Err(TargetError::ProcessRestarted);
         }
         // A website binding pins the origin the window actually shows:
         // claiming a different origin than the current page is rejected
         // before the handle exists.
         if let TargetIdentity::Website { origin, .. } = &target {
-            if !origin_matches(&self.probe, &window, origin) {
+            if !origin_matches(probe, &window, origin) {
                 return Err(TargetError::SiteChanged);
             }
         }
@@ -1472,6 +1627,19 @@ impl<P: NativeProbe> TargetRegistry<P> {
         kind: ObservationKind,
         geometry: ObservationGeometry,
     ) -> Result<TargetObservation, TargetError> {
+        let probe = Arc::clone(&self.probe);
+        self.begin_observation_with(window, scope, environment, kind, geometry, probe.as_ref())
+    }
+
+    pub fn begin_observation_with<Q: NativeProbe>(
+        &mut self,
+        window: &WindowHandle,
+        scope: &Scope,
+        environment: Environment,
+        kind: ObservationKind,
+        geometry: ObservationGeometry,
+        probe: &Q,
+    ) -> Result<TargetObservation, TargetError> {
         let record = self
             .windows
             .get(window.as_str())
@@ -1486,10 +1654,11 @@ impl<P: NativeProbe> TargetRegistry<P> {
         // burn the user's single approval.
         self.authorizer.check(scope, &record.target)?;
         self.occupancy_conflict(&record.target, scope)?;
-        self.live(record)?;
+        self.live_with(record, probe)?;
         // The registered geometry must still be the window's live size:
         // a capture taken before a resize is born stale.
         self.size_current(
+            probe,
             &record.instance,
             &record.window,
             (geometry.window_width, geometry.window_height),
@@ -1518,6 +1687,7 @@ impl<P: NativeProbe> TargetRegistry<P> {
                 tree_revision,
                 created: Instant::now(),
                 consumed: false,
+                tree: None,
             },
         );
         Ok(observation)
@@ -1531,6 +1701,18 @@ impl<P: NativeProbe> TargetRegistry<P> {
         observation: &ObservationHandle,
         scope: &Scope,
         element_token: u64,
+    ) -> Result<ElementHandle, TargetError> {
+        self.issue_element_with_path(observation, scope, element_token, Vec::new())
+    }
+
+    /// Issue an element handle and remember the child-index path the backend
+    /// re-resolves. The path stays host-side.
+    pub fn issue_element_with_path(
+        &mut self,
+        observation: &ObservationHandle,
+        scope: &Scope,
+        element_token: u64,
+        path: Vec<u32>,
     ) -> Result<ElementHandle, TargetError> {
         let record = self
             .observations
@@ -1553,11 +1735,97 @@ impl<P: NativeProbe> TargetRegistry<P> {
                 window: record.window.clone(),
                 scope: scope.clone(),
                 element_token,
+                path,
                 tree_revision,
                 consumed: false,
             },
         );
         Ok(handle)
+    }
+
+    pub fn note_tree(
+        &mut self,
+        observation: &ObservationHandle,
+        scope: &Scope,
+        tree: AxTreeRead,
+    ) -> Result<(), TargetError> {
+        let record = self
+            .observations
+            .get_mut(observation.as_str())
+            .ok_or(TargetError::UnknownHandle)?;
+        if &record.scope != scope {
+            return Err(TargetError::CrossRun);
+        }
+        if record.tree_revision != Some(tree.tree_revision) {
+            return Err(TargetError::TreeChanged);
+        }
+        record.tree = Some(tree);
+        Ok(())
+    }
+
+    pub fn stored_tree(
+        &self,
+        observation: &ObservationHandle,
+        scope: &Scope,
+    ) -> Result<AxTreeRead, TargetError> {
+        let record = self
+            .observations
+            .get(observation.as_str())
+            .ok_or(TargetError::UnknownHandle)?;
+        if &record.scope != scope {
+            return Err(TargetError::CrossRun);
+        }
+        record.tree.clone().ok_or(TargetError::Invalid(
+            "element lookup needs the accessibility tree stored with this observation",
+        ))
+    }
+
+    /// Window this observation was issued for. Does not probe or consume.
+    pub fn observation_window(
+        &self,
+        observation: &ObservationHandle,
+        scope: &Scope,
+    ) -> Result<WindowHandle, TargetError> {
+        let record = self
+            .observations
+            .get(observation.as_str())
+            .ok_or(TargetError::UnknownHandle)?;
+        if &record.scope != scope {
+            return Err(TargetError::CrossRun);
+        }
+        Ok(record.window.clone())
+    }
+
+    pub fn element_path(
+        &self,
+        element: &ElementHandle,
+        scope: &Scope,
+    ) -> Result<Vec<u32>, TargetError> {
+        let record = self
+            .elements
+            .get(element.as_str())
+            .ok_or(TargetError::UnknownHandle)?;
+        if &record.scope != scope {
+            return Err(TargetError::CrossRun);
+        }
+        Ok(record.path.clone())
+    }
+
+    /// Target of an element handle without consuming it or probing.
+    pub(crate) fn element_target(
+        &self,
+        element: &ElementHandle,
+        scope: &Scope,
+    ) -> Result<TargetIdentity, TargetError> {
+        let record = self
+            .elements
+            .get(element.as_str())
+            .ok_or(TargetError::UnknownHandle)?;
+        if &record.scope != scope {
+            return Err(TargetError::CrossRun);
+        }
+        let window = record.window.clone();
+        self.window_target(&window, scope)
     }
 
     /// Liveness check without consuming anything (status, re-capture, AX
@@ -1566,6 +1834,17 @@ impl<P: NativeProbe> TargetRegistry<P> {
         &self,
         window: &WindowHandle,
         scope: &Scope,
+    ) -> Result<ValidatedWindow, TargetError> {
+        self.validate_window_with(window, scope, self.probe.as_ref())
+    }
+
+    /// Same ledger checks as [Self::validate_window], using facts read
+    /// while the host was not holding the registry lock.
+    pub fn validate_window_with<Q: NativeProbe>(
+        &self,
+        window: &WindowHandle,
+        scope: &Scope,
+        probe: &Q,
     ) -> Result<ValidatedWindow, TargetError> {
         let record = self
             .windows
@@ -1576,7 +1855,26 @@ impl<P: NativeProbe> TargetRegistry<P> {
         }
         self.authorizer.check(scope, &record.target)?;
         self.occupancy_conflict(&record.target, scope)?;
-        self.live(record)
+        self.live_with(record, probe)
+    }
+
+    /// Bound identity to re-validate. Authorization is checked first.
+    /// Nothing is probed or consumed.
+    pub fn window_probe_inputs(
+        &self,
+        window: &WindowHandle,
+        scope: &Scope,
+    ) -> Result<(ProcessInstance, WindowIdentity), TargetError> {
+        let record = self
+            .windows
+            .get(window.as_str())
+            .ok_or(TargetError::UnknownHandle)?;
+        if &record.scope != scope {
+            return Err(TargetError::CrossRun);
+        }
+        self.authorizer.check(scope, &record.target)?;
+        self.occupancy_conflict(&record.target, scope)?;
+        Ok((record.instance.clone(), record.window))
     }
 
     /// Consume a one-shot observation lease before dispatching one action
@@ -1621,15 +1919,14 @@ impl<P: NativeProbe> TargetRegistry<P> {
         if let Some(issued) = record.tree_revision {
             match self.probe.tree_revision(&window_record.window) {
                 None => return Err(TargetError::WindowReplaced),
-                Some(revision) if revision != issued => {
-                    return Err(TargetError::TreeChanged)
-                }
+                Some(revision) if revision != issued => return Err(TargetError::TreeChanged),
                 Some(_) => {}
             }
         }
         // A window resized since the observation stales it: coordinates
         // would no longer map onto the observed image.
         self.size_current(
+            self.probe.as_ref(),
             &window_record.instance,
             &window_record.window,
             (
@@ -1648,14 +1945,56 @@ impl<P: NativeProbe> TargetRegistry<P> {
         Ok(validated)
     }
 
-    /// Consume a one-shot element handle before dispatching one semantic
-    /// action. Consumes the parent observation as well, invalidating sibling
-    /// handles.
+    /// Ledger checks that precede an element probe. Does not probe or consume.
+    pub fn element_probe_inputs(
+        &self,
+        id: &ElementHandle,
+        scope: &Scope,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(ProcessInstance, WindowIdentity), TargetError> {
+        if cancelled() {
+            return Err(TargetError::Cancelled);
+        }
+        let record = self
+            .elements
+            .get(id.as_str())
+            .ok_or(TargetError::UnknownHandle)?;
+        if &record.scope != scope {
+            return Err(TargetError::CrossRun);
+        }
+        let parent = self
+            .observations
+            .get(record.observation.as_str())
+            .ok_or(TargetError::UnknownHandle)?;
+        if record.consumed || parent.consumed || parent.created.elapsed() > LEASE_TTL {
+            return Err(TargetError::StaleHandle);
+        }
+        let window_record = self
+            .windows
+            .get(record.window.as_str())
+            .ok_or(TargetError::UnknownHandle)?;
+        self.authorizer.check(scope, &window_record.target)?;
+        self.occupancy_conflict(&window_record.target, scope)?;
+        self.dispatch_paused(&window_record.target)?;
+        Ok((window_record.instance.clone(), window_record.window))
+    }
+
     pub fn consume_element(
         &mut self,
         id: &ElementHandle,
         scope: &Scope,
         cancelled: &dyn Fn() -> bool,
+    ) -> Result<ValidatedElement, TargetError> {
+        let probe = Arc::clone(&self.probe);
+        self.consume_element_with(id, scope, cancelled, probe.as_ref())
+    }
+
+    pub fn consume_element_with<Q: NativeProbe>(
+        &mut self,
+        id: &ElementHandle,
+        scope: &Scope,
+        cancelled: &dyn Fn() -> bool,
+        probe: &Q,
     ) -> Result<ValidatedElement, TargetError> {
         if cancelled() {
             return Err(TargetError::Cancelled);
@@ -1685,8 +2024,8 @@ impl<P: NativeProbe> TargetRegistry<P> {
         let dispatch_target = window_record.target.clone();
         self.occupancy_conflict(&dispatch_target, scope)?;
         self.dispatch_paused(&dispatch_target)?;
-        let window = self.live(window_record)?;
-        match self.probe.tree_revision(&window_record.window) {
+        let window = self.live_with(window_record, probe)?;
+        match probe.tree_revision(&window_record.window) {
             None => return Err(TargetError::WindowReplaced),
             Some(revision) if revision != record.tree_revision => {
                 return Err(TargetError::TreeChanged)
@@ -1696,6 +2035,7 @@ impl<P: NativeProbe> TargetRegistry<P> {
         // Same staleness rule as the parent observation: a resized window
         // invalidates the geometry every element handle was read against.
         self.size_current(
+            probe,
             &window_record.instance,
             &window_record.window,
             (
@@ -1734,6 +2074,17 @@ impl<P: NativeProbe> TargetRegistry<P> {
         scope: &Scope,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<ValidatedWindowDispatch, TargetError> {
+        let probe = Arc::clone(&self.probe);
+        self.consume_window_dispatch_with(window, scope, cancelled, probe.as_ref())
+    }
+
+    pub fn consume_window_dispatch_with<Q: NativeProbe>(
+        &mut self,
+        window: &WindowHandle,
+        scope: &Scope,
+        cancelled: &dyn Fn() -> bool,
+        probe: &Q,
+    ) -> Result<ValidatedWindowDispatch, TargetError> {
         if cancelled() {
             return Err(TargetError::Cancelled);
         }
@@ -1748,10 +2099,8 @@ impl<P: NativeProbe> TargetRegistry<P> {
         let dispatch_target = record.target.clone();
         self.occupancy_conflict(&dispatch_target, scope)?;
         self.dispatch_paused(&dispatch_target)?;
-        let window = self.live(record)?;
-        let dispatch_permit = self
-            .authorizer
-            .spend_for_dispatch(scope, &record.target)?;
+        let window = self.live_with(record, probe)?;
+        let dispatch_permit = self.authorizer.spend_for_dispatch(scope, &record.target)?;
         self.touch_occupancy(&dispatch_target, scope);
         Ok(ValidatedWindowDispatch {
             window,
@@ -1760,24 +2109,26 @@ impl<P: NativeProbe> TargetRegistry<P> {
     }
 
     fn live(&self, record: &WindowRecord) -> Result<ValidatedWindow, TargetError> {
-        if !self.probe.process_instance_alive(&record.instance) {
+        self.live_with(record, self.probe.as_ref())
+    }
+
+    fn live_with<Q: NativeProbe>(
+        &self,
+        record: &WindowRecord,
+        probe: &Q,
+    ) -> Result<ValidatedWindow, TargetError> {
+        if !probe.process_instance_alive(&record.instance) {
             return Err(TargetError::ProcessRestarted);
         }
-        match self
-            .probe
-            .window_generation(&record.instance, record.window.window_id)
-        {
+        match probe.window_generation(&record.instance, record.window.window_id) {
             None => return Err(TargetError::WindowReplaced),
             Some(generation) if generation != record.window.generation => {
                 return Err(TargetError::WindowReplaced)
             }
             Some(_) => {}
         }
-        // A website target stays valid only while the window keeps showing
-        // the authorized origin: same-window navigation away (or an
-        // undeterminable origin) rejects before observation or dispatch.
         if let TargetIdentity::Website { origin, .. } = &record.target {
-            if !origin_matches(&self.probe, &record.window, origin) {
+            if !origin_matches(probe, &record.window, origin) {
                 return Err(TargetError::SiteChanged);
             }
         }
@@ -1791,7 +2142,11 @@ impl<P: NativeProbe> TargetRegistry<P> {
 
     /// Check-only half of the occupancy gate, usable while record borrows are
     /// alive: a live foreign owner rejects with [TargetError::TargetOccupied].
-    fn occupancy_conflict(&self, target: &TargetIdentity, scope: &Scope) -> Result<(), TargetError> {
+    fn occupancy_conflict(
+        &self,
+        target: &TargetIdentity,
+        scope: &Scope,
+    ) -> Result<(), TargetError> {
         if let Some((owner, active)) = self.occupied.get(target.occupancy_anchor()) {
             if owner != scope && active.elapsed() <= LEASE_TTL {
                 return Err(TargetError::TargetOccupied);
@@ -1832,11 +2187,12 @@ impl<P: NativeProbe> TargetRegistry<P> {
     /// observation — image coordinates would map onto the wrong points.
     fn size_current(
         &self,
+        probe: &impl NativeProbe,
         instance: &ProcessInstance,
         window: &WindowIdentity,
         recorded: (f64, f64),
     ) -> Result<(), TargetError> {
-        match self.probe.window_size(instance, window.window_id) {
+        match probe.window_size(instance, window.window_id) {
             None => Err(TargetError::WindowReplaced),
             Some(current) if !size_matches(recorded, current) => Err(TargetError::StaleHandle),
             Some(_) => Ok(()),
@@ -2031,20 +2387,44 @@ mod tests {
                 );
                 assert_eq!(background_capability(family, AxRead, minimized), Supported);
                 // Pointer has no measured background support anywhere.
-                assert_eq!(background_capability(family, Pointer, minimized), Unsupported);
+                assert_eq!(
+                    background_capability(family, Pointer, minimized),
+                    Unsupported
+                );
             }
             // Window move/resize was only measured in background/occluded
             // states; minimized is unverified everywhere.
-            assert_eq!(background_capability(family, WindowResize, false), Supported);
-            assert_eq!(background_capability(family, WindowResize, true), Unverified);
+            assert_eq!(
+                background_capability(family, WindowResize, false),
+                Supported
+            );
+            assert_eq!(
+                background_capability(family, WindowResize, true),
+                Unverified
+            );
         }
         // AppKit targeted keys work in background/occluded, not minimized.
-        assert_eq!(background_capability(Appkit, TargetedKeys, false), Supported);
-        assert_eq!(background_capability(Appkit, TargetedKeys, true), Unsupported);
-        assert_eq!(background_capability(Chromium, TargetedKeys, false), Unsupported);
-        assert_eq!(background_capability(Browser, TargetedKeys, false), Unsupported);
+        assert_eq!(
+            background_capability(Appkit, TargetedKeys, false),
+            Supported
+        );
+        assert_eq!(
+            background_capability(Appkit, TargetedKeys, true),
+            Unsupported
+        );
+        assert_eq!(
+            background_capability(Chromium, TargetedKeys, false),
+            Unsupported
+        );
+        assert_eq!(
+            background_capability(Browser, TargetedKeys, false),
+            Unsupported
+        );
         // Semantic write splits by family; unverified is not supported.
-        assert_eq!(background_capability(Appkit, AxSemanticWrite, false), Supported);
+        assert_eq!(
+            background_capability(Appkit, AxSemanticWrite, false),
+            Supported
+        );
         assert_eq!(
             background_capability(Chromium, AxSemanticWrite, false),
             Unsupported
@@ -2060,15 +2440,30 @@ mod tests {
         assert_eq!(background_capability(Browser, AxPress, false), Supported);
         // Menu shortcuts do not route in background; menu-bar press is
         // unverified for Chromium/Browser.
-        assert_eq!(background_capability(Appkit, MenuShortcut, false), Unsupported);
-        assert_eq!(background_capability(Chromium, MenuShortcut, false), Unverified);
-        assert_eq!(background_capability(Appkit, MenubarPress, false), Unsupported);
+        assert_eq!(
+            background_capability(Appkit, MenuShortcut, false),
+            Unsupported
+        );
+        assert_eq!(
+            background_capability(Chromium, MenuShortcut, false),
+            Unverified
+        );
+        assert_eq!(
+            background_capability(Appkit, MenubarPress, false),
+            Unsupported
+        );
         // Chromium ignores AXPosition but honors AXSize; minimized move is
         // unverified even on AppKit.
         assert_eq!(background_capability(Appkit, WindowMove, false), Supported);
         assert_eq!(background_capability(Appkit, WindowMove, true), Unverified);
-        assert_eq!(background_capability(Chromium, WindowMove, false), Unsupported);
-        assert_eq!(background_capability(Browser, WindowMove, false), Unsupported);
+        assert_eq!(
+            background_capability(Chromium, WindowMove, false),
+            Unsupported
+        );
+        assert_eq!(
+            background_capability(Browser, WindowMove, false),
+            Unsupported
+        );
     }
 
     #[test]
@@ -2269,7 +2664,9 @@ mod tests {
     #[test]
     fn pointer_actions_validate_against_observed_bounds() {
         let point = |x, y| WindowPoint { x, y };
-        let click = PointerAction::Click { point: point(10.0, 20.0) };
+        let click = PointerAction::Click {
+            point: point(10.0, 20.0),
+        };
         assert_eq!(click.kind(), NativeActionKind::Pointer);
         assert!(click.validate(2560.0, 1440.0).is_ok());
         // Points share image_to_window's edge-excluded bounds; NaN and
@@ -2321,7 +2718,10 @@ mod tests {
 
     #[test]
     fn window_moves_require_finite_origins() {
-        let ok = WindowMove { x: -1300.0, y: 200.0 };
+        let ok = WindowMove {
+            x: -1300.0,
+            y: 200.0,
+        };
         assert_eq!(ok.kind(), NativeActionKind::WindowMove);
         assert!(ok.validate().is_ok());
         // Negative global coordinates are legal (a display left of the
@@ -2348,11 +2748,7 @@ mod tests {
         );
         // Cross-run rejection does not mint anything.
         assert_eq!(
-            registry.consume_window_dispatch(
-                &window,
-                &Scope::new("ws-1", "run-2"),
-                &|| false
-            ),
+            registry.consume_window_dispatch(&window, &Scope::new("ws-1", "run-2"), &|| false),
             Err(TargetError::CrossRun)
         );
         // Cancellation precedes the ledger: nothing is spent.
@@ -2385,7 +2781,12 @@ mod tests {
                 .grant(&scope(), &target(AppFamily::Appkit), GrantKind::Once)
                 .unwrap();
             let window = registry
-                .bind_window(&scope(), target(AppFamily::Appkit), instance(), window_identity())
+                .bind_window(
+                    &scope(),
+                    target(AppFamily::Appkit),
+                    instance(),
+                    window_identity(),
+                )
                 .unwrap();
             (registry, window)
         };
@@ -2400,9 +2801,11 @@ mod tests {
         // dispatch it authorized is blocked at the seam.
         registry.revoke(&scope(), &target(AppFamily::Appkit));
         assert_eq!(
-            registry
-                .authorizer
-                .consume_dispatch_permit(&scope(), &target(AppFamily::Appkit), &first.dispatch_permit),
+            registry.authorizer.consume_dispatch_permit(
+                &scope(),
+                &target(AppFamily::Appkit),
+                &first.dispatch_permit
+            ),
             Err(TargetError::NotAuthorized)
         );
     }
@@ -2470,7 +2873,9 @@ mod tests {
         let site_a = TargetIdentity::website(browser.clone(), "https://a.example").unwrap();
         let site_b = TargetIdentity::website(browser, "https://b.example").unwrap();
         registry.open_scope(&scope());
-        registry.grant(&scope(), &site_a, GrantKind::ForRun).unwrap();
+        registry
+            .grant(&scope(), &site_a, GrantKind::ForRun)
+            .unwrap();
         *registry.probe.origin.lock().unwrap() = Some("https://a.example".into());
         assert!(registry
             .bind_window(&scope(), site_a, instance(), window_identity())
@@ -2492,7 +2897,12 @@ mod tests {
             Err(TargetError::UnknownHandle)
         );
         assert!(registry
-            .bind_window(&other, target(AppFamily::Appkit), instance(), window_identity())
+            .bind_window(
+                &other,
+                target(AppFamily::Appkit),
+                instance(),
+                window_identity()
+            )
             .is_ok());
     }
 
@@ -2510,7 +2920,12 @@ mod tests {
             *active = Instant::now() - LEASE_TTL - Duration::from_secs(1);
         }
         assert!(registry
-            .bind_window(&other, target(AppFamily::Appkit), instance(), window_identity())
+            .bind_window(
+                &other,
+                target(AppFamily::Appkit),
+                instance(),
+                window_identity()
+            )
             .is_ok());
     }
 
@@ -2635,7 +3050,12 @@ mod tests {
             .grant(&other, &target(AppFamily::Appkit), GrantKind::ForRun)
             .unwrap();
         assert!(registry
-            .bind_window(&other, target(AppFamily::Appkit), instance(), window_identity())
+            .bind_window(
+                &other,
+                target(AppFamily::Appkit),
+                instance(),
+                window_identity()
+            )
             .is_ok());
     }
 
@@ -2681,20 +3101,14 @@ mod tests {
         assert!(parts[3].parse::<u64>().is_ok());
         // A same-pid handle from an earlier instance (different namespace,
         // same scope) must not hit this instance's records.
-        let previous: WindowHandle = serde_json::from_str(&format!(
-            "\"w-{}-1-1\"",
-            std::process::id()
-        ))
-        .unwrap();
+        let previous: WindowHandle =
+            serde_json::from_str(&format!("\"w-{}-1-1\"", std::process::id())).unwrap();
         assert_eq!(
             registry.validate_window(&previous, &scope()),
             Err(TargetError::UnknownHandle)
         );
-        let previous_observation: ObservationHandle = serde_json::from_str(&format!(
-            "\"o-{}-1-1\"",
-            std::process::id()
-        ))
-        .unwrap();
+        let previous_observation: ObservationHandle =
+            serde_json::from_str(&format!("\"o-{}-1-1\"", std::process::id())).unwrap();
         assert_eq!(
             registry.consume_observation(&previous_observation, &scope(), &|| false),
             Err(TargetError::UnknownHandle)
@@ -2831,17 +3245,17 @@ mod tests {
         let second = registry
             .issue_element(&observation.observation_id, &scope(), 22)
             .unwrap();
-        let validated = registry.consume_element(&first, &scope(), &|| false).unwrap();
+        let validated = registry
+            .consume_element(&first, &scope(), &|| false)
+            .unwrap();
         // The consume minted a single-use dispatch permit bound to this
         // scope and target: the first dispatch attempt retires it, so a
         // cloned validation result can never dispatch twice.
         let permit = validated.dispatch_permit.clone();
         let authorizer = registry.authorizer_mut();
-        assert!(
-            authorizer
-                .consume_dispatch_permit(&scope(), &target(AppFamily::Appkit), &permit)
-                .is_ok()
-        );
+        assert!(authorizer
+            .consume_dispatch_permit(&scope(), &target(AppFamily::Appkit), &permit)
+            .is_ok());
         assert_eq!(
             authorizer.consume_dispatch_permit(&scope(), &target(AppFamily::Appkit), &permit),
             Err(TargetError::NotAuthorized)
@@ -2980,7 +3394,9 @@ mod tests {
             Err(TargetError::Cancelled)
         );
         // A cancelled attempt consumed nothing.
-        registry.consume_element(&element, &scope(), &|| false).unwrap();
+        registry
+            .consume_element(&element, &scope(), &|| false)
+            .unwrap();
         let observation = capture(&mut registry, &window);
         registry
             .consume_observation(&observation.observation_id, &scope(), &|| false)
@@ -3392,13 +3808,19 @@ mod tests {
             node(&[0], "AXTextArea", None),
         ];
         let revision = ax_tree_revision(&nodes, AxTreeTruncation::default());
-        assert_eq!(revision, ax_tree_revision(&nodes, AxTreeTruncation::default()));
+        assert_eq!(
+            revision,
+            ax_tree_revision(&nodes, AxTreeTruncation::default())
+        );
         // Each of these emitted differences changes the fingerprint (the
         // 64-bit FNV-1a digest is a cheap change signal, not a
         // collision-proof — see the fn docs).
         let mut renamed = nodes.clone();
         renamed[0].name = Some("Other".to_string());
-        assert_ne!(revision, ax_tree_revision(&renamed, AxTreeTruncation::default()));
+        assert_ne!(
+            revision,
+            ax_tree_revision(&renamed, AxTreeTruncation::default())
+        );
         let mut unreadable = nodes.clone();
         unreadable[1].name_unreadable = true;
         assert_ne!(
@@ -3407,16 +3829,28 @@ mod tests {
         );
         let mut moved = nodes.clone();
         moved[1].frame = Some([0.0, 8.0, 100.0, 40.0]);
-        assert_ne!(revision, ax_tree_revision(&moved, AxTreeTruncation::default()));
+        assert_ne!(
+            revision,
+            ax_tree_revision(&moved, AxTreeTruncation::default())
+        );
         let mut focused = nodes.clone();
         focused[1].focused = Some(true);
-        assert_ne!(revision, ax_tree_revision(&focused, AxTreeTruncation::default()));
+        assert_ne!(
+            revision,
+            ax_tree_revision(&focused, AxTreeTruncation::default())
+        );
         let mut actions = nodes.clone();
         actions[1].actions.push("AXShowMenu".to_string());
-        assert_ne!(revision, ax_tree_revision(&actions, AxTreeTruncation::default()));
+        assert_ne!(
+            revision,
+            ax_tree_revision(&actions, AxTreeTruncation::default())
+        );
         let mut counts = nodes.clone();
         counts[0].children = 2;
-        assert_ne!(revision, ax_tree_revision(&counts, AxTreeTruncation::default()));
+        assert_ne!(
+            revision,
+            ax_tree_revision(&counts, AxTreeTruncation::default())
+        );
         assert_ne!(
             revision,
             ax_tree_revision(
@@ -3429,7 +3863,10 @@ mod tests {
         );
         let mut extra = nodes.clone();
         extra.push(node(&[1], "AXButton", Some("OK")));
-        assert_ne!(revision, ax_tree_revision(&extra, AxTreeTruncation::default()));
+        assert_ne!(
+            revision,
+            ax_tree_revision(&extra, AxTreeTruncation::default())
+        );
     }
 
     #[test]
@@ -3443,12 +3880,18 @@ mod tests {
         let complete = read(nodes.clone(), AxTreeTruncation::default());
         // Exactly one match in a complete tree issues.
         assert_eq!(
-            lookup_element(&complete, &ElementQuery::new(Some("AXTextArea"), None).unwrap()),
+            lookup_element(
+                &complete,
+                &ElementQuery::new(Some("AXTextArea"), None).unwrap()
+            ),
             ElementLookup::Unique { index: 3 }
         );
         // Several matches never resolve to the first.
         assert_eq!(
-            lookup_element(&complete, &ElementQuery::new(Some("AXButton"), None).unwrap()),
+            lookup_element(
+                &complete,
+                &ElementQuery::new(Some("AXButton"), None).unwrap()
+            ),
             ElementLookup::Ambiguous {
                 matches: 2,
                 tree_truncated: false
@@ -3461,7 +3904,10 @@ mod tests {
         );
         // Zero matches in a complete tree are a genuine absence.
         assert_eq!(
-            lookup_element(&complete, &ElementQuery::new(Some("AXSlider"), None).unwrap()),
+            lookup_element(
+                &complete,
+                &ElementQuery::new(Some("AXSlider"), None).unwrap()
+            ),
             ElementLookup::NoMatch {
                 tree_truncated: false
             }
@@ -3475,11 +3921,17 @@ mod tests {
             },
         );
         assert_eq!(
-            lookup_element(&truncated, &ElementQuery::new(Some("AXTextArea"), None).unwrap()),
+            lookup_element(
+                &truncated,
+                &ElementQuery::new(Some("AXTextArea"), None).unwrap()
+            ),
             ElementLookup::UnprovenUnique { index: 3 }
         );
         assert_eq!(
-            lookup_element(&truncated, &ElementQuery::new(Some("AXSlider"), None).unwrap()),
+            lookup_element(
+                &truncated,
+                &ElementQuery::new(Some("AXSlider"), None).unwrap()
+            ),
             ElementLookup::NoMatch {
                 tree_truncated: true
             }
@@ -3495,7 +3947,10 @@ mod tests {
             },
         );
         assert_eq!(
-            lookup_element(&names_lost, &ElementQuery::new(Some("AXTextArea"), None).unwrap()),
+            lookup_element(
+                &names_lost,
+                &ElementQuery::new(Some("AXTextArea"), None).unwrap()
+            ),
             ElementLookup::Unique { index: 3 }
         );
         assert_eq!(
@@ -3515,7 +3970,10 @@ mod tests {
         ));
         // An element without a name never matches a name query.
         assert_eq!(
-            lookup_element(&complete, &ElementQuery::new(Some("AXTextArea"), Some("x")).unwrap()),
+            lookup_element(
+                &complete,
+                &ElementQuery::new(Some("AXTextArea"), Some("x")).unwrap()
+            ),
             ElementLookup::NoMatch {
                 tree_truncated: false
             }
@@ -3541,9 +3999,10 @@ mod tests {
             .bind_window(&other, notes.clone(), instance(), window_identity())
             .unwrap();
         // The browser anchor is occupied by another scope and paused.
-        registry
- .occupied
-            .insert("com.example.browser".into(), (other.clone(), Instant::now()));
+        registry.occupied.insert(
+            "com.example.browser".into(),
+            (other.clone(), Instant::now()),
+        );
         registry.pause_dispatch(&site);
 
         let states = registry.target_states();

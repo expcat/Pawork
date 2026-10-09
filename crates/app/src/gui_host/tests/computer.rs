@@ -3,9 +3,9 @@
 use super::*;
 use pawork_domain::{EventId, EventSequence, ToolCallId, ToolResultContent};
 use pawork_protocol::{
-    ComputerAppFamily, ComputerAppIdentity, ComputerGrantKind, ComputerTargetIdentity, V1_26,
+    ComputerAppFamily, ComputerAppIdentity, ComputerGrantKind, ComputerTargetIdentity,
     MAX_COMPUTER_TARGET_LIST_TARGETS, MAX_OBSERVATION_LIST_RESPONSE_BYTES,
-    MAX_OBSERVATION_READ_BYTES,
+    MAX_OBSERVATION_READ_BYTES, V1_26,
 };
 
 /// 构造带图像 part 的 ToolExecutionCompleted 事件并落库。
@@ -43,15 +43,15 @@ async fn seed_observation(
                     text: "captured".into(),
                 },
             ))
-            .chain((0..image_count).map(|_| pawork_domain::ContentPart::Image(
-                pawork_domain::ImageContent {
+            .chain((0..image_count).map(|_| {
+                pawork_domain::ContentPart::Image(pawork_domain::ImageContent {
                     source: pawork_domain::ImageSource::Base64(
                         crate::services::extension::base64_encode(image_bytes),
                     ),
                     media_type: "image/png".into(),
                     alt_text: None,
-                },
-            )))
+                })
+            }))
             .collect(),
             is_error: false,
             metadata: serde_json::json!({
@@ -154,7 +154,13 @@ async fn adapter_other_session(adapter: &GuiHostAdapter) -> SessionId {
     core.create_session("other").await.expect("session")
 }
 
-fn observation_query(session: &SessionId, sequence: u64, part_index: u32, offset: u64, limit: u64) -> AppQuery {
+fn observation_query(
+    session: &SessionId,
+    sequence: u64,
+    part_index: u32,
+    offset: u64,
+    limit: u64,
+) -> AppQuery {
     AppQuery::ObservationImageRead {
         session_id: session.clone(),
         sequence,
@@ -238,15 +244,28 @@ async fn observation_failures_fail_closed() {
     seed_observation(&adapter, &session, "run-1", 2, Some(first), &[1, 2, 3], 1).await;
 
     async fn expect_code(adapter: &GuiHostAdapter, query: AppQuery, code: &str) {
-        let error = adapter.query(&query_envelope(query)).await.expect_err("rejected");
+        let error = adapter
+            .query(&query_envelope(query))
+            .await
+            .expect_err("rejected");
         assert_eq!(error.code, code, "{error:?}");
     }
     // 跨 session：他 session 的同号事件不在本 lineage。
     expect_code(&adapter, observation_query(&other, 3, 1, 0, 3), "not_found").await;
     // part_index 越界。
-    expect_code(&adapter, observation_query(&session, 3, 9, 0, 3), "not_found").await;
+    expect_code(
+        &adapter,
+        observation_query(&session, 3, 9, 0, 3),
+        "not_found",
+    )
+    .await;
     // limit 0 / 超限。
-    expect_code(&adapter, observation_query(&session, 3, 1, 0, 0), "invalid_query").await;
+    expect_code(
+        &adapter,
+        observation_query(&session, 3, 1, 0, 0),
+        "invalid_query",
+    )
+    .await;
     expect_code(
         &adapter,
         observation_query(&session, 3, 1, 0, MAX_OBSERVATION_READ_BYTES + 1),
@@ -254,7 +273,12 @@ async fn observation_failures_fail_closed() {
     )
     .await;
     // offset 越界（>= byte_length）。
-    expect_code(&adapter, observation_query(&session, 3, 1, 3, 1), "invalid_query").await;
+    expect_code(
+        &adapter,
+        observation_query(&session, 3, 1, 3, 1),
+        "invalid_query",
+    )
+    .await;
     // 旧 minor 发网前拒绝。
     let mut envelope = query_envelope(AppQuery::ObservationList {
         session_id: session.clone(),
@@ -284,8 +308,7 @@ async fn computer_targets_approve_revoke_and_run_lifecycle() {
         .read()
         .await
         .open_target_scope(&pawork_computer_use::target::Scope::new(
-            "ws-cu17",
-            "run-cu17",
+            "ws-cu17", "run-cu17",
         ));
     adapter.runs.register(
         ActiveGuiRun {
@@ -371,7 +394,10 @@ async fn computer_targets_approve_revoke_and_run_lifecycle() {
     assert_eq!(capabilities.len(), 10, "CU-02 ten-action matrix");
 
     // 幂等重授收敛；撤销后条目整体消失（无绑定无授权）。
-    adapter.command(&approve).await.expect("re-approve idempotent");
+    adapter
+        .command(&approve)
+        .await
+        .expect("re-approve idempotent");
     let revoke = command_envelope(AppCommand::ComputerTargetRevoke(
         pawork_protocol::ComputerTargetRevokeParams {
             session_id: session.clone(),
@@ -412,8 +438,7 @@ async fn computer_targets_approve_revoke_and_run_lifecycle() {
         .read()
         .await
         .close_target_scope(&pawork_computer_use::target::Scope::new(
-            "ws-cu17",
-            "run-cu17",
+            "ws-cu17", "run-cu17",
         ));
     let error = adapter
         .command(&command_envelope(AppCommand::ComputerTargetApprove(
@@ -438,6 +463,164 @@ async fn computer_targets_approve_revoke_and_run_lifecycle() {
         panic!("target list returns data");
     };
     assert_eq!(data["targets"], json!([]));
+}
+
+/// CLI 与子 run 不进 GUI 注册表。投影状态恰为 running、且同一 host 上的
+/// scope 仍开着时，approve / list / revoke 才看得到。父会话的授权不会
+/// 出现在另一个会话里。
+#[tokio::test]
+async fn computer_targets_follow_projection_runs_without_gui_registry() {
+    use pawork_domain::{MessageId, StopReason, TokenUsage};
+
+    let (adapter, _dir, session) = adapter_with_session().await;
+    let run = "run-cli";
+    append(
+        &adapter,
+        &session,
+        run,
+        1,
+        None,
+        EventId::from("evt-cli-start"),
+        AgentEvent::RunStarted {
+            trigger_message_id: MessageId::from("msg-cli"),
+        },
+    )
+    .await;
+    let wrong = pawork_computer_use::target::Scope::new("ws-unbound", run);
+    adapter.core.read().await.open_target_scope(&wrong);
+    let approve = |run_id: &str, session: &SessionId| {
+        command_envelope(AppCommand::ComputerTargetApprove(
+            pawork_protocol::ComputerTargetApproveParams {
+                session_id: session.clone(),
+                run_id: RunId::from(run_id),
+                target: application_target("com.example.App"),
+                kind: ComputerGrantKind::ForRun,
+            },
+        ))
+    };
+    let error = adapter
+        .command(&approve(run, &session))
+        .await
+        .expect_err("bound session cannot use ws-unbound");
+    assert_eq!(error.code, "unknown_run", "{error:?}");
+    adapter.core.read().await.close_target_scope(&wrong);
+
+    let scope = pawork_computer_use::target::Scope::new("ws-cu17", run);
+    adapter.core.read().await.open_target_scope(&scope);
+    adapter
+        .command(&approve(run, &session))
+        .await
+        .expect("projection run approves without a gui registry entry");
+    let response = adapter
+        .query(&query_envelope(AppQuery::ComputerTargetList {
+            session_id: session.clone(),
+        }))
+        .await
+        .expect("list");
+    let AppResponse::Data(data) = response else {
+        panic!("target list returns data");
+    };
+    assert_eq!(data["workspace_id"], "ws-cu17");
+    assert_eq!(data["targets"].as_array().expect("targets").len(), 1);
+
+    let child = adapter
+        .core
+        .read()
+        .await
+        .create_session("child")
+        .await
+        .expect("child");
+    let error = adapter
+        .command(&approve(run, &child))
+        .await
+        .expect_err("parent run is not the child's run");
+    assert_eq!(error.code, "unknown_run", "{error:?}");
+    let response = adapter
+        .query(&query_envelope(AppQuery::ComputerTargetList {
+            session_id: child.clone(),
+        }))
+        .await
+        .expect("child list");
+    let AppResponse::Data(child_data) = response else {
+        panic!("child list returns data");
+    };
+    assert_eq!(child_data["targets"], json!([]), "{child_data}");
+
+    let unbound_run = "run-unbound";
+    append(
+        &adapter,
+        &child,
+        unbound_run,
+        1,
+        None,
+        EventId::from("evt-child-start"),
+        AgentEvent::RunStarted {
+            trigger_message_id: MessageId::from("msg-child"),
+        },
+    )
+    .await;
+    let child_scope = pawork_computer_use::target::Scope::new("ws-unbound", unbound_run);
+    adapter.core.read().await.open_target_scope(&child_scope);
+    adapter
+        .command(&approve(unbound_run, &child))
+        .await
+        .expect("unbound session uses ws-unbound");
+    let response = adapter
+        .query(&query_envelope(AppQuery::ComputerTargetList {
+            session_id: session.clone(),
+        }))
+        .await
+        .expect("parent list after child grant");
+    let AppResponse::Data(data) = response else {
+        panic!("parent list returns data");
+    };
+    let parent_targets = data["targets"].as_array().expect("targets");
+    assert_eq!(parent_targets.len(), 1, "{data}");
+    assert_eq!(parent_targets[0]["scope"]["run_id"], run);
+    let response = adapter
+        .query(&query_envelope(AppQuery::ComputerTargetList {
+            session_id: child.clone(),
+        }))
+        .await
+        .expect("child list after its own grant");
+    let AppResponse::Data(child_data) = response else {
+        panic!("child list returns data");
+    };
+    assert_eq!(child_data["workspace_id"], "ws-unbound");
+    assert_eq!(child_data["targets"].as_array().expect("targets").len(), 1);
+    assert_eq!(child_data["targets"][0]["scope"]["run_id"], unbound_run);
+
+    adapter.core.read().await.close_target_scope(&scope);
+    let error = adapter
+        .command(&approve(run, &session))
+        .await
+        .expect_err("closed scope");
+    assert_eq!(error.code, "unknown_run", "{error:?}");
+
+    adapter.core.read().await.open_target_scope(&scope);
+    append(
+        &adapter,
+        &session,
+        run,
+        2,
+        Some(EventId::from("evt-cli-start")),
+        EventId::from("evt-cli-done"),
+        AgentEvent::RunCompleted {
+            stop_reason: StopReason::Completed,
+            usage: TokenUsage {
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+            },
+        },
+    )
+    .await;
+    let error = adapter
+        .command(&approve(run, &session))
+        .await
+        .expect_err("completed projection stays unauthorized");
+    assert_eq!(error.code, "unknown_run", "{error:?}");
 }
 
 /// 量出单条 entry 的真实序列化字节，按预算边界推导事件条目数——
@@ -468,7 +651,16 @@ async fn observation_list_budget_stops_at_event_boundary_and_resumes() {
     // 单事件贴近但不超过预算；两事件合计必然超预算 → 停在事件边界。
     // 余量吸收 part_index 位数随条数增长带来的每条字节差。
     let per_event = MAX_OBSERVATION_LIST_RESPONSE_BYTES / entry_bytes - 64;
-    seed_observation(&adapter, &session, "run-1", 4, Some(first.clone()), &[7], per_event).await;
+    seed_observation(
+        &adapter,
+        &session,
+        "run-1",
+        4,
+        Some(first.clone()),
+        &[7],
+        per_event,
+    )
+    .await;
     seed_observation(&adapter, &session, "run-1", 6, Some(first), &[7], per_event).await;
 
     let response = adapter
@@ -483,7 +675,11 @@ async fn observation_list_budget_stops_at_event_boundary_and_resumes() {
         panic!("observation list returns data");
     };
     let entries = page["entries"].as_array().expect("entries");
-    assert_eq!(entries.len(), per_event + 1, "first big event + probe entry");
+    assert_eq!(
+        entries.len(),
+        per_event + 1,
+        "first big event + probe entry"
+    );
     assert_eq!(page["complete"], json!(false), "budget stops the page");
     let next = page["next_sequence"].as_u64().expect("cursor");
 
@@ -677,8 +873,5 @@ async fn observation_entries_with_invalid_base64_fail_closed() {
         .await
         .expect_err("invalid base64 read rejected");
     assert_eq!(error.code, "app_error", "{error:?}");
-    assert!(
-        error.message.contains("not valid base64"),
-        "{error:?}"
-    );
+    assert!(error.message.contains("not valid base64"), "{error:?}");
 }

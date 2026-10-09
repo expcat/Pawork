@@ -39,6 +39,23 @@ fn run_request_id(_core: &AppCore) -> RequestId {
 
 pub(crate) struct RunService;
 
+/// Closes the native target scope when a turn leaves before the explicit
+/// terminal close. Disarm after that close so later usage accounting cannot
+/// observe a scope that should already be closed.
+struct CloseNativeScope<'a> {
+    core: &'a AppCore,
+    scope: pawork_computer_use::target::Scope,
+    armed: bool,
+}
+
+impl Drop for CloseNativeScope<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.core.close_target_scope(&self.scope);
+        }
+    }
+}
+
 impl RunService {
     /// resume / 计划 / 审批收口共用的追补事件入口（persist-first）。
     /// 返回构造并落库的 envelope，供调用方在持久化成功后补广播。
@@ -89,7 +106,7 @@ impl RunService {
             pawork_engine::now_timestamp().as_unix_millis()
         ));
         self.chat_turn_with_run_id(
-            core, run_id, session_id, messages, render, cancel, None, None,
+            core, run_id, session_id, messages, render, cancel, None, None, false,
         )
         .await
     }
@@ -106,6 +123,9 @@ impl RunService {
         cancel: CancellationToken,
         web_search: Option<bool>,
         goal_budget: Option<u64>,
+        // CU-10 #5：本 Run 的 bind/launch 是否等待 GUI 目标审批（显式
+        // opt-in 的 CLI 客户端经 GUI Host 运行时为 true）。
+        wait_target_approval: bool,
     ) -> Result<ModelResponseSummary, AppError> {
         let request_id = run_request_id(core);
         let trigger = messages.last_mut().ok_or(AppError::EmptyTurn)?;
@@ -370,6 +390,8 @@ impl RunService {
             token_estimator: Some(core.session_estimator.clone()),
             checkpoints: core.checkpoints.clone(),
             workspace_roots: run_workspace.roots.clone(),
+            wait_target_approval,
+            native: core.native.clone(),
         };
         let task_id = match core.tasks_start_agent(&cancel) {
             Ok(task_id) => Some(task_id),
@@ -417,6 +439,16 @@ impl RunService {
             .start_task_usage(usage_log.clone())
             .await
             .map_err(|e| AppError::ControlPlane(e.to_string()))?;
+        let native_scope = pawork_computer_use::target::Scope::new(
+            loop_ctx.workspace_id.as_str(),
+            run_id.as_str(),
+        );
+        core.open_target_scope(&native_scope);
+        let mut close_native_scope = CloseNativeScope {
+            core,
+            scope: native_scope.clone(),
+            armed: true,
+        };
         let result = run_session(
             provider.as_ref(),
             request,
@@ -439,10 +471,8 @@ impl RunService {
         // CU-17：授权随 run 消亡（CU-16 契约）——目标级 grant、句柄与
         // 占用一并清理并关闭 scope（终态后到达的 approve 拒绝）；
         // GUI 断连不影响已进入 Host 的 Run 的终态清理。
-        core.close_target_scope(&pawork_computer_use::target::Scope::new(
-            loop_ctx.workspace_id.as_str(),
-            run_id.as_str(),
-        ));
+        core.close_target_scope(&native_scope);
+        close_native_scope.armed = false;
         let usage = match &result {
             Ok(summary) => Some(summary.usage.clone()),
             Err(_) => core.projected_run_usage(session_id, &run_id).await,
@@ -586,6 +616,8 @@ impl RunService {
             token_estimator: Some(core.session_estimator.clone()),
             checkpoints: core.checkpoints.clone(),
             workspace_roots: run_workspace.roots.clone(),
+            wait_target_approval: false,
+            native: core.native.clone(),
         };
         Ok(run_manual_compaction(
             provider.as_ref(),
@@ -629,10 +661,14 @@ async fn emit_tasks_finish_degrade(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
 
     use pawork_domain::{
-        AgentEvent, CancellationToken, ContentPart, MessageRole, ProviderStreamEvent, StopReason,
+        AgentEvent, AgentEventEnvelope, ApprovalDecision, CancellationToken, CanonicalModelRequest,
+        ContentPart, MessageRole, ModelDefinition, ModelProvider, ModelResponseSummary,
+        ProviderError, ProviderErrorKind, ProviderEventSink, ProviderId, ProviderStreamEvent,
+        StopReason, TokenUsage, ToolCallId,
     };
     use pawork_storage::session::{SessionStore, DEFAULT_BRANCH_ID};
     use pawork_testkit::{MockProvider, MockScript};
@@ -964,6 +1000,12 @@ mod tests {
         ])
         .with_id(pawork_domain::ProviderId::from("mock"));
         let (core, _dir, computer) = vision_gate_core("mock-text", false, provider.clone()).await;
+        assert!(
+            core.descriptors
+                .iter()
+                .any(|descriptor| descriptor.name == "computer_native"),
+            "builtin tools must register computer_native before the vision gate"
+        );
         let session = core.create_session("vision gate").await.expect("create");
         let sink = RecordingEvents::default();
         core.chat_turn(
@@ -978,10 +1020,13 @@ mod tests {
         let calls = provider.calls();
         assert!(!calls.is_empty());
         assert!(
-            calls
-                .iter()
-                .all(|call| !call.tool_names.iter().any(|name| name == "computer")),
-            "text model must not see the computer tool: {:?}",
+            calls.iter().all(|call| {
+                !call
+                    .tool_names
+                    .iter()
+                    .any(|name| name == "computer" || name == "computer_native")
+            }),
+            "text model must not see computer or computer_native: {:?}",
             calls[0].tool_names
         );
         assert_eq!(
@@ -1594,5 +1639,1818 @@ mod tests {
         assert_eq!(cancelled, 1, "run 终态为 RunCancelled: {events:?}");
         assert_eq!(failed, 0, "取消不得谎报 RunFailed: {events:?}");
         core.shutdown().await.expect("shutdown");
+    }
+
+    const NATIVE_BUNDLE: &str = "com.example.notes";
+    const NATIVE_JPEG: [u8; 4] = [0xFF, 0xD8, 0xFF, 0xD9];
+
+    struct ApproveNative;
+
+    #[async_trait::async_trait]
+    impl crate::ApprovalPromptHost for ApproveNative {
+        async fn decide(
+            &self,
+            _ask: &crate::ApprovalAsk,
+            _cancel: CancellationToken,
+        ) -> pawork_domain::ApprovalDecision {
+            pawork_domain::ApprovalDecision::ApprovedOnce
+        }
+    }
+
+    /// request 与 bind 各放行一次，第三次（move_window）拒绝。
+    struct DenyMoveWindow {
+        asks: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::ApprovalPromptHost for DenyMoveWindow {
+        async fn decide(
+            &self,
+            ask: &crate::ApprovalAsk,
+            _cancel: CancellationToken,
+        ) -> ApprovalDecision {
+            assert_eq!(ask.tool_name, "computer_native");
+            match self.asks.fetch_add(1, Ordering::SeqCst) {
+                0 | 1 => ApprovalDecision::ApprovedOnce,
+                2 => ApprovalDecision::Denied,
+                _ => panic!("computer_native asked more than three times"),
+            }
+        }
+    }
+
+    #[derive(Clone)]
+    struct EngineSurface(Arc<EngineState>);
+
+    struct EngineState {
+        captures: std::sync::atomic::AtomicUsize,
+        moves: std::sync::atomic::AtomicUsize,
+    }
+
+    impl EngineSurface {
+        fn new() -> Self {
+            Self(Arc::new(EngineState {
+                captures: std::sync::atomic::AtomicUsize::new(0),
+                moves: std::sync::atomic::AtomicUsize::new(0),
+            }))
+        }
+
+        fn captures(&self) -> usize {
+            self.0.captures.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        fn moves(&self) -> usize {
+            self.0.moves.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    fn native_identity() -> pawork_computer_use::target::AppIdentity {
+        pawork_computer_use::target::AppIdentity {
+            bundle_id: NATIVE_BUNDLE.into(),
+            family: pawork_computer_use::target::AppFamily::Appkit,
+        }
+    }
+
+    fn native_instance() -> pawork_computer_use::target::ProcessInstance {
+        pawork_computer_use::target::ProcessInstance {
+            pid: 42,
+            start_token: 7,
+        }
+    }
+
+    fn native_target() -> pawork_computer_use::approval::TargetIdentity {
+        pawork_computer_use::approval::TargetIdentity::application(native_identity())
+    }
+
+    fn live_instance(instance: &pawork_computer_use::target::ProcessInstance) -> bool {
+        instance.pid == 42 && instance.start_token == 7
+    }
+
+    impl pawork_computer_use::target::NativeProbe for EngineSurface {
+        fn process_instance_alive(
+            &self,
+            instance: &pawork_computer_use::target::ProcessInstance,
+        ) -> bool {
+            live_instance(instance)
+        }
+
+        fn window_generation(
+            &self,
+            instance: &pawork_computer_use::target::ProcessInstance,
+            window_id: u64,
+        ) -> Option<u64> {
+            (live_instance(instance) && window_id == 7).then_some(1)
+        }
+
+        fn tree_revision(
+            &self,
+            window: &pawork_computer_use::target::WindowIdentity,
+        ) -> Option<u64> {
+            (window.window_id == 7 && window.generation == 1).then_some(1)
+        }
+
+        fn current_origin(
+            &self,
+            _: &pawork_computer_use::target::WindowIdentity,
+        ) -> Option<String> {
+            None
+        }
+
+        fn window_size(
+            &self,
+            instance: &pawork_computer_use::target::ProcessInstance,
+            window_id: u64,
+        ) -> Option<(f64, f64)> {
+            (live_instance(instance) && window_id == 7).then_some((200.0, 100.0))
+        }
+    }
+
+    impl pawork_computer_use::NativeSurface for EngineSurface {
+        fn activity(&self, _: &str) -> pawork_computer_use::target::ActivityProof {
+            pawork_computer_use::target::ActivityProof::Idle
+        }
+
+        fn discover(&self) -> Vec<pawork_computer_use::AppSnapshot> {
+            vec![pawork_computer_use::AppSnapshot {
+                identity: native_identity(),
+                instance: native_instance(),
+                localized_name: "Notes".into(),
+                window_count: 1,
+            }]
+        }
+
+        fn resolve(&self, bundle_id: &str) -> Option<pawork_computer_use::target::AppIdentity> {
+            bundle_id
+                .eq_ignore_ascii_case(NATIVE_BUNDLE)
+                .then(native_identity)
+        }
+
+        fn list_windows(
+            &self,
+            app: &pawork_computer_use::target::AppIdentity,
+            instance: &pawork_computer_use::target::ProcessInstance,
+            cancelled: &dyn Fn() -> bool,
+        ) -> Result<
+            Vec<pawork_computer_use::WindowSnapshot>,
+            pawork_computer_use::target::TargetError,
+        > {
+            if cancelled() {
+                return Err(pawork_computer_use::target::TargetError::Cancelled);
+            }
+            if app.bundle_id.eq_ignore_ascii_case(NATIVE_BUNDLE) && live_instance(instance) {
+                Ok(vec![pawork_computer_use::WindowSnapshot {
+                    window: pawork_computer_use::target::WindowIdentity {
+                        window_id: 7,
+                        generation: 1,
+                    },
+                    width: 200.0,
+                    height: 100.0,
+                    title: None,
+                }])
+            } else {
+                Ok(Vec::new())
+            }
+        }
+
+        fn launch(
+            &self,
+            _: &pawork_computer_use::target::AppIdentity,
+            cancelled: &dyn Fn() -> bool,
+        ) -> Result<
+            pawork_computer_use::target::ProcessInstance,
+            pawork_computer_use::target::TargetError,
+        > {
+            if cancelled() {
+                return Err(pawork_computer_use::target::TargetError::Cancelled);
+            }
+            Ok(native_instance())
+        }
+
+        fn capture(
+            &self,
+            _: &pawork_computer_use::target::ValidatedWindow,
+            cancelled: &dyn Fn() -> bool,
+        ) -> Result<pawork_computer_use::CapturedFrame, pawork_computer_use::target::TargetError>
+        {
+            self.0
+                .captures
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if cancelled() {
+                return Err(pawork_computer_use::target::TargetError::Cancelled);
+            }
+            Ok(pawork_computer_use::CapturedFrame {
+                image_width: 2,
+                image_height: 1,
+                window_width: 200.0,
+                window_height: 100.0,
+                jpeg: NATIVE_JPEG.to_vec(),
+            })
+        }
+
+        fn read_tree(
+            &self,
+            _: &pawork_computer_use::target::ValidatedWindow,
+            _: &dyn Fn() -> bool,
+        ) -> Result<pawork_computer_use::target::AxTreeRead, pawork_computer_use::target::TargetError>
+        {
+            Err(pawork_computer_use::target::TargetError::ProbeUnavailable(
+                "engine test does not read a tree".into(),
+            ))
+        }
+
+        fn semantic(
+            &self,
+            _: &pawork_computer_use::target::ValidatedElement,
+            _: &[u32],
+            _: &pawork_computer_use::target::SemanticAction,
+            _: &dyn Fn() -> bool,
+        ) -> Result<
+            pawork_computer_use::target::SemanticOutcome,
+            pawork_computer_use::target::TargetError,
+        > {
+            Err(pawork_computer_use::target::TargetError::ProbeUnavailable(
+                "engine test does not dispatch semantic input".into(),
+            ))
+        }
+
+        fn targeted(
+            &self,
+            _: &pawork_computer_use::target::ValidatedElement,
+            _: &[u32],
+            _: &pawork_computer_use::target::TargetedInput,
+            _: &dyn Fn() -> bool,
+        ) -> Result<
+            pawork_computer_use::target::TargetedOutcome,
+            pawork_computer_use::target::TargetError,
+        > {
+            Err(pawork_computer_use::target::TargetError::ProbeUnavailable(
+                "engine test does not dispatch targeted input".into(),
+            ))
+        }
+
+        fn move_window(
+            &self,
+            _: &pawork_computer_use::target::ValidatedWindowDispatch,
+            _: &pawork_computer_use::target::WindowMove,
+            cancelled: &dyn Fn() -> bool,
+        ) -> Result<
+            pawork_computer_use::target::SemanticOutcome,
+            pawork_computer_use::target::TargetError,
+        > {
+            if cancelled() {
+                return Err(pawork_computer_use::target::TargetError::Cancelled);
+            }
+            self.0
+                .moves
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(pawork_computer_use::target::SemanticOutcome::Dispatched)
+        }
+    }
+
+    struct NativeEngineRun {
+        core: Arc<tokio::sync::RwLock<AppCore>>,
+        adapter: crate::gui_host::GuiHostAdapter,
+        _dir: tempfile::TempDir,
+        surface: EngineSurface,
+        session: pawork_domain::SessionId,
+        sink: Arc<RecordingEvents>,
+        control: Arc<dyn pawork_computer_use::NativeControl>,
+        scope: pawork_computer_use::target::Scope,
+    }
+
+    struct ApprovalGate {
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+    }
+
+    struct ReleaseOnDrop(Arc<ApprovalGate>);
+
+    impl Drop for ReleaseOnDrop {
+        fn drop(&mut self) {
+            self.0.release.notify_one();
+        }
+    }
+
+    struct NativeEngineProvider {
+        /// in-process 直跑 harness 用它把轮次停在 bind 前；wire 驱动由
+        /// Host 的目标审批等待 seam 持住，传 None 即不在 Provider 层等待。
+        gate: Option<Arc<ApprovalGate>>,
+        round: AtomicUsize,
+        offered: Mutex<Vec<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ModelProvider for NativeEngineProvider {
+        fn id(&self) -> ProviderId {
+            ProviderId::from("mock")
+        }
+
+        async fn list_models(
+            &self,
+            _credential: Option<&pawork_domain::ResolvedCredential>,
+        ) -> Result<Vec<ModelDefinition>, ProviderError> {
+            Ok(Vec::new())
+        }
+
+        async fn stream(
+            &self,
+            request: &CanonicalModelRequest,
+            sink: &dyn ProviderEventSink,
+            cancel: CancellationToken,
+        ) -> Result<ModelResponseSummary, ProviderError> {
+            self.offered
+                .lock()
+                .expect("offered")
+                .push(request.tools.iter().map(|tool| tool.name.clone()).collect());
+            let round = self.round.fetch_add(1, Ordering::SeqCst);
+            match round {
+                0 => {
+                    emit_tool_round(
+                        sink,
+                        "native-request",
+                        serde_json::json!({"action": "request", "bundle_id": NATIVE_BUNDLE}),
+                    )
+                    .await
+                }
+                1 => {
+                    if let Some(gate) = self.gate.as_ref() {
+                        let waiting = gate.release.notified();
+                        tokio::pin!(waiting);
+                        waiting.as_mut().enable();
+                        gate.entered.notify_one();
+                        tokio::select! {
+                            _ = &mut waiting => {}
+                            _ = cancel.cancelled() => {
+                                return Err(ProviderError::cancelled(
+                                    "native engine approval wait cancelled",
+                                ));
+                            }
+                        }
+                    }
+                    emit_tool_round(
+                        sink,
+                        "native-bind",
+                        serde_json::json!({"action": "bind", "bundle_id": NATIVE_BUNDLE}),
+                    )
+                    .await
+                }
+                2 => {
+                    let window = host_window_id(request).map_err(|error| {
+                        ProviderError::new(ProviderErrorKind::InvalidRequest, error)
+                    })?;
+                    emit_tool_round(
+                        sink,
+                        "native-move",
+                        serde_json::json!({
+                            "action": "move_window",
+                            "window": window,
+                            "x": 12.0,
+                            "y": 8.0
+                        }),
+                    )
+                    .await
+                }
+                3 => {
+                    sink.emit(ProviderStreamEvent::TextDelta("saw the window".into()))
+                        .await?;
+                    sink.emit(ProviderStreamEvent::ResponseCompleted(
+                        StopReason::Completed,
+                    ))
+                    .await?;
+                    Ok(response_summary(StopReason::Completed))
+                }
+                _ => Err(ProviderError::new(
+                    ProviderErrorKind::StreamInterrupted,
+                    "native engine provider script exhausted",
+                )),
+            }
+        }
+    }
+
+    fn response_summary(stop_reason: StopReason) -> ModelResponseSummary {
+        ModelResponseSummary {
+            stop_reason,
+            usage: TokenUsage::default(),
+            response_id: None,
+            provider_metadata: serde_json::Value::Null,
+        }
+    }
+
+    async fn emit_tool_round(
+        sink: &dyn ProviderEventSink,
+        id: &str,
+        arguments: serde_json::Value,
+    ) -> Result<ModelResponseSummary, ProviderError> {
+        let id = ToolCallId::from(id);
+        sink.emit(ProviderStreamEvent::ToolCallStarted {
+            id: id.clone(),
+            name: "computer_native".into(),
+        })
+        .await?;
+        sink.emit(ProviderStreamEvent::ToolCallArgumentsDelta {
+            id: id.clone(),
+            json: serde_json::to_string(&arguments).expect("tool arguments serialize"),
+        })
+        .await?;
+        sink.emit(ProviderStreamEvent::ToolCallCompleted { id })
+            .await?;
+        sink.emit(ProviderStreamEvent::ResponseCompleted(StopReason::ToolUse))
+            .await?;
+        Ok(response_summary(StopReason::ToolUse))
+    }
+
+    fn is_host_handle(id: &str, prefix: &str) -> bool {
+        let Some(rest) = id
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.strip_prefix('-'))
+        else {
+            return false;
+        };
+        let parts: Vec<&str> = rest.split('-').collect();
+        parts.len() == 3
+            && parts
+                .iter()
+                .all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit()))
+    }
+
+    fn host_window_id(request: &CanonicalModelRequest) -> Result<String, String> {
+        let mut found = None;
+        for message in &request.messages {
+            if message.role != MessageRole::Tool {
+                continue;
+            }
+            for part in &message.content {
+                let ContentPart::ToolResult(result) = part else {
+                    continue;
+                };
+                let Some(metadata_id) = result
+                    .metadata
+                    .get("window_id")
+                    .and_then(|value| value.as_str())
+                else {
+                    continue;
+                };
+                if !is_host_handle(metadata_id, "w") {
+                    continue;
+                }
+                let line = match result.content.first() {
+                    Some(ContentPart::Text(text_part)) => {
+                        text_part.text.lines().next().unwrap_or("")
+                    }
+                    _ => return Err("bind tool result is missing text".into()),
+                };
+                let parsed: serde_json::Value = serde_json::from_str(line)
+                    .map_err(|error| format!("bind tool text is not json: {error}"))?;
+                let text_window = parsed
+                    .get("window_id")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                if text_window != metadata_id {
+                    return Err(format!(
+                        "bind window id metadata {metadata_id} disagrees with text {text_window}"
+                    ));
+                }
+                found = Some(metadata_id.to_string());
+            }
+        }
+        found.ok_or_else(|| "bind tool result did not include a host window id".into())
+    }
+
+    fn jpeg_at(content: &[ContentPart]) -> Vec<u8> {
+        let ContentPart::Image(image) = content.get(1).expect("content part 1") else {
+            panic!("content part 1 must be an image, got {content:?}");
+        };
+        let pawork_domain::ImageSource::Base64(encoded) = &image.source else {
+            panic!("content part 1 must be inline base64");
+        };
+        assert_eq!(image.media_type, "image/jpeg");
+        let bytes = crate::services::extension::base64_decode(encoded).expect("decode jpeg");
+        assert_eq!(bytes, NATIVE_JPEG);
+        bytes
+    }
+
+    fn tool_message_jpeg(message: &pawork_domain::Message) -> Vec<u8> {
+        assert_eq!(message.role, MessageRole::Tool);
+        let ContentPart::ToolResult(result) =
+            message.content.first().expect("tool message content")
+        else {
+            panic!("tool message must carry one ToolResult, got {message:?}");
+        };
+        jpeg_at(&result.content)
+    }
+
+    struct NativeEngineCore {
+        core: Arc<tokio::sync::RwLock<AppCore>>,
+        adapter: crate::gui_host::GuiHostAdapter,
+        _dir: tempfile::TempDir,
+        surface: EngineSurface,
+        control: Arc<dyn pawork_computer_use::NativeControl>,
+        provider: Arc<NativeEngineProvider>,
+    }
+
+    /// EngineSurface + NativeEngineProvider 的共享装配：in-process 直跑
+    /// （run_computer_native_engine）与 wire 驱动（native_wire_harness）
+    /// 复用同一套表面、Provider 脚本与审批配置，不维护第二套镜像。
+    async fn native_engine_core(
+        gate: Option<Arc<ApprovalGate>>,
+        approval_host: Arc<dyn crate::ApprovalPromptHost>,
+        connections: Option<Arc<pawork_gui_server::ConnectionManager>>,
+    ) -> NativeEngineCore {
+        let surface = EngineSurface::new();
+        let host = Arc::new(pawork_computer_use::NativeHost::new(surface.clone()));
+        let control: Arc<dyn pawork_computer_use::NativeControl> = host;
+        let performer: Arc<dyn pawork_computer_use::NativePerform> = control.clone();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (store, _) = SessionStore::open(dir.path().join("session.db"))
+            .await
+            .expect("store");
+        let mut registry = pawork_models::ModelRegistry::empty();
+        registry
+            .register(pawork_models::CatalogEntry {
+                id: pawork_domain::ModelId::from("mock-native-vision"),
+                provider: pawork_domain::ProviderId::from("mock"),
+                display_name: "mock-native-vision".into(),
+                context_window_tokens: 0,
+                max_output_tokens: 0,
+                capabilities: pawork_domain::ModelCapabilities {
+                    text: true,
+                    image_input: true,
+                    tool_calls: true,
+                    ..pawork_domain::ModelCapabilities::default()
+                },
+                pricing: None,
+                aliases: Vec::new(),
+            })
+            .expect("register vision model");
+        let placeholder = MockProvider::new(MockScript::new().text("placeholder").complete())
+            .with_id(pawork_domain::ProviderId::from("mock"));
+        let mut core = AppCore::from_parts_with_protocol(
+            Arc::new(placeholder),
+            None,
+            pawork_domain::ModelId::from("mock-native-vision"),
+            pawork_domain::ProviderId::from("mock"),
+            crate::protocol::AdapterProtocol::ChatCompletions,
+            Some(store),
+            registry,
+        );
+        core.native = control.clone();
+        assert!(
+            Arc::ptr_eq(&core.native, &control),
+            "the turn must execute on AppCore.native"
+        );
+        let provider = Arc::new(NativeEngineProvider {
+            gate,
+            round: AtomicUsize::new(0),
+            offered: Mutex::new(Vec::new()),
+        });
+        core.provider = Arc::clone(&provider) as Arc<dyn ModelProvider>;
+        assert!(!core.provider_pending);
+        assert!(!core.provider_stale);
+        // ReadOnly 会在询问宿主前拒绝。attach 会按当前审批快照重装 scheduler。
+        core.configure_approval(crate::ApprovalMode::AskForWrites, true, approval_host);
+        core.attach_workspace(dir.path()).expect("attach");
+        assert_eq!(core.workspace_id().as_str(), "ws-default");
+        let tool: Arc<dyn pawork_domain::AgentTool> =
+            Arc::new(pawork_tools::NativeComputerTool::new(performer));
+        core.scheduler = Arc::new(
+            core.scheduler
+                .with_tools([tool])
+                .expect("replace only computer_native"),
+        );
+        let locked = Arc::new(tokio::sync::RwLock::new(core));
+        let mut adapter = crate::gui_host::GuiHostAdapter::from_locked(
+            Arc::clone(&locked),
+            Arc::new(crate::GuiApprovalHost::new()),
+        );
+        if let Some(connections) = connections {
+            adapter = adapter.with_connections(connections);
+        }
+        NativeEngineCore {
+            core: locked,
+            adapter,
+            _dir: dir,
+            surface,
+            control,
+            provider,
+        }
+    }
+
+    async fn run_computer_native_engine(approve: bool) -> NativeEngineRun {
+        let gate = Arc::new(ApprovalGate {
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        });
+        let approval_host: Arc<dyn crate::ApprovalPromptHost> = if approve {
+            Arc::new(ApproveNative)
+        } else {
+            Arc::new(DenyMoveWindow {
+                asks: AtomicUsize::new(0),
+            })
+        };
+        let parts = native_engine_core(Some(Arc::clone(&gate)), approval_host, None).await;
+        let scope = pawork_computer_use::target::Scope::new("ws-default", "run-native");
+        let session = parts
+            .core
+            .read()
+            .await
+            .create_session("native engine")
+            .await
+            .expect("session");
+        let sink = Arc::new(RecordingEvents::default());
+        // from_locked 与本轮共用 AppCore，且不替换工具审批宿主。
+        // new / with_approvals 会 set_approval_host，把 ApproveNative 换掉。
+        let entered = gate.entered.notified();
+        tokio::pin!(entered);
+        entered.as_mut().enable();
+        let release_on_drop = ReleaseOnDrop(Arc::clone(&gate));
+        let core_for_turn = Arc::clone(&parts.core);
+        let sink_for_turn = Arc::clone(&sink);
+        let session_for_turn = session.clone();
+        // Tokio RwLock 不可重入。轮次任务持读锁停在 provider.stream；
+        // 目标批准在测试任务上再取一把读锁。
+        let turn = tokio::spawn(async move {
+            let guard = core_for_turn.read().await;
+            guard
+                .chat_turn_with_run_id(
+                    pawork_domain::RunId::from("run-native"),
+                    &session_for_turn,
+                    vec![user_hello()],
+                    &*sink_for_turn as &dyn pawork_engine::AgentEventSink,
+                    CancellationToken::new(),
+                    None,
+                )
+                .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(30), entered)
+            .await
+            .expect("provider did not reach the bind round");
+        assert!(
+            parts
+                .control
+                .active_scopes()
+                .iter()
+                .any(|open| open == &scope),
+            "the turn opens ws-default/run-native before bind"
+        );
+        assert_eq!(
+            parts.control.grant_kind(&scope, &native_target()),
+            None,
+            "request records a choice and does not grant"
+        );
+        assert!(
+            sink.0
+                .lock()
+                .expect("events")
+                .iter()
+                .any(|envelope| { matches!(envelope.payload, AgentEvent::RunStarted { .. }) }),
+            "RunStarted is persisted before the provider loop"
+        );
+        let receipt = approve_running_target(&parts.adapter, &session).await;
+        assert_eq!(receipt["kind"], "for_run", "{receipt}");
+        assert_eq!(receipt["target"]["kind"], "application", "{receipt}");
+        assert_eq!(
+            receipt["target"]["app"]["bundle_id"], NATIVE_BUNDLE,
+            "{receipt}"
+        );
+        assert_eq!(
+            parts.control.grant_kind(&scope, &native_target()),
+            Some(pawork_computer_use::approval::GrantKind::ForRun),
+            "GuiHostAdapter grants ForRun on ws-default/run-native"
+        );
+        drop(release_on_drop);
+        let joined = tokio::time::timeout(std::time::Duration::from_secs(30), turn)
+            .await
+            .expect("native engine turn timed out");
+        joined
+            .expect("native engine task")
+            .expect("native engine turn");
+        let calls = parts.provider.offered.lock().expect("offered").clone();
+        assert!(
+            calls.len() == 4
+                && calls
+                    .iter()
+                    .all(|names| { names.iter().any(|name| name == "computer_native") }),
+            "vision model must be offered computer_native: {calls:?}"
+        );
+        let NativeEngineCore {
+            core,
+            adapter,
+            _dir,
+            surface,
+            control,
+            provider: _,
+        } = parts;
+        NativeEngineRun {
+            core,
+            adapter,
+            _dir,
+            surface,
+            session,
+            sink,
+            control,
+            scope,
+        }
+    }
+
+    /// CU-10：视觉模型的 computer_native 截图走 AgentTool、Scheduler 和 Engine。
+    /// 一次真实 Run：request → GuiHostAdapter ForRun → bind → move_window。
+    /// 观察 JPEG 落在 move 结果的 content part 1；resume 和 GUI 读取只消费它。
+    #[tokio::test]
+    async fn computer_native_engine_persists_screenshot_for_gui_read() {
+        let run = run_computer_native_engine(true).await;
+        use pawork_gui_server::GuiHost;
+        assert_eq!(run.surface.moves(), 1, "move_window dispatches once");
+        assert_eq!(
+            run.surface.captures(),
+            1,
+            "for-run observation captures once"
+        );
+        let envelopes = run.sink.0.lock().expect("events").clone();
+        let completed = move_completed(&envelopes);
+        assert_move_observation(completed);
+        let move_id = envelopes
+            .iter()
+            .find_map(|envelope| match &envelope.payload {
+                AgentEvent::ToolExecutionCompleted { tool_call_id, .. }
+                    if tool_action(&envelopes, tool_call_id) == "move_window" =>
+                {
+                    Some(tool_call_id)
+                }
+                _ => None,
+            });
+        let move_window = tool_arguments(&envelopes, move_id.expect("move id"))["window"]
+            .as_str()
+            .expect("move window argument")
+            .to_string();
+        assert_eq!(
+            move_window,
+            completed.metadata["window_id"]
+                .as_str()
+                .expect("result window")
+        );
+        tool_message_jpeg(image_tool_message(&envelopes));
+        let messages = {
+            let core = run.core.read().await;
+            core.resume_messages(&run.session).await.expect("resume")
+        };
+        let tool_messages: Vec<_> = messages
+            .iter()
+            .filter(|message| message.role == MessageRole::Tool)
+            .collect();
+        assert!(
+            tool_messages.len() >= 3,
+            "resume keeps request, bind, and move"
+        );
+        assert!(!message_has_image(tool_messages[0]));
+        assert!(!message_has_image(tool_messages[1]));
+        tool_message_jpeg(
+            tool_messages
+                .into_iter()
+                .find(|message| message_has_image(message))
+                .expect("resumed move image"),
+        );
+
+        let listed = run
+            .adapter
+            .query(&pawork_protocol::AppQueryEnvelope {
+                api_version: pawork_protocol::API_VERSION,
+                request_id: pawork_domain::QueryId::from("query-native-list"),
+                source: pawork_protocol::CommandSource::Automation,
+                identity: pawork_protocol::ActorIdentity::System,
+                issued_at: pawork_domain::Timestamp::from_unix_millis(1),
+                query: pawork_protocol::AppQuery::ObservationList {
+                    session_id: run.session.clone(),
+                    after_sequence: None,
+                    limit: None,
+                },
+            })
+            .await
+            .expect("observation list");
+        let pawork_protocol::AppResponse::Data(data) = listed else {
+            panic!("observation list returns data: {listed:?}");
+        };
+        let entries = data["entries"].as_array().expect("entries");
+        assert_eq!(entries.len(), 1, "one persisted screenshot: {data}");
+        let entry = &entries[0];
+        assert_eq!(entry["tool_name"], "computer_native");
+        assert_eq!(entry["part_index"], 1);
+        assert_eq!(entry["media_type"], "image/jpeg");
+        assert_eq!(entry["byte_length"], NATIVE_JPEG.len());
+        let sequence = entry["sequence"].as_u64().expect("sequence");
+        let read = run
+            .adapter
+            .query(&pawork_protocol::AppQueryEnvelope {
+                api_version: pawork_protocol::API_VERSION,
+                request_id: pawork_domain::QueryId::from("query-native-read"),
+                source: pawork_protocol::CommandSource::Automation,
+                identity: pawork_protocol::ActorIdentity::System,
+                issued_at: pawork_domain::Timestamp::from_unix_millis(1),
+                query: pawork_protocol::AppQuery::ObservationImageRead {
+                    session_id: run.session.clone(),
+                    sequence,
+                    part_index: 1,
+                    offset: 0,
+                    limit: 64,
+                },
+            })
+            .await
+            .expect("observation image read");
+        let pawork_protocol::AppResponse::Data(image) = read else {
+            panic!("observation read returns data: {read:?}");
+        };
+        assert_eq!(image["eof"], true);
+        let encoded = image["data"].as_str().expect("base64");
+        assert_eq!(
+            crate::services::extension::base64_decode(encoded).expect("decode read"),
+            NATIVE_JPEG
+        );
+        assert_eq!(
+            run.surface.moves(),
+            1,
+            "gui observation reads must not move again"
+        );
+        assert_eq!(
+            run.surface.captures(),
+            1,
+            "gui observation reads must not capture again"
+        );
+        assert!(
+            !run.control
+                .active_scopes()
+                .iter()
+                .any(|open| open == &run.scope),
+            "turn end leaves the native scope inactive"
+        );
+        assert_eq!(
+            run.control.grant_kind(&run.scope, &native_target()),
+            None,
+            "turn end drops the native grant"
+        );
+        // try_unwrap 要求 Core 只剩 adapter 这一份；_dir 活到 shutdown 结束。
+        drop(run.core);
+        run.adapter.shutdown().await.expect("shutdown");
+    }
+
+    /// CU-10：request 与 bind 获批后拒绝 move_window。拒绝发生在执行前，
+    /// 不产生 move、capture、该调用的 ToolExecutionStarted 或持久化图像。
+    #[tokio::test]
+    async fn computer_native_engine_denial_does_not_capture() {
+        let run = run_computer_native_engine(false).await;
+        assert_eq!(run.surface.moves(), 0, "denied move must not dispatch");
+        assert_eq!(run.surface.captures(), 0, "denied call must not capture");
+        assert!(
+            !run.control
+                .active_scopes()
+                .iter()
+                .any(|open| open == &run.scope),
+            "turn end leaves the native scope inactive"
+        );
+        assert_eq!(
+            run.control.grant_kind(&run.scope, &native_target()),
+            None,
+            "turn end drops the native grant"
+        );
+        let envelopes = run.sink.0.lock().expect("events").clone();
+        let completions = ordered_completions(&envelopes);
+        let actions: Vec<_> = completions
+            .iter()
+            .map(|(action, _)| action.as_str())
+            .collect();
+        assert_eq!(actions.first().copied(), Some("request"), "{actions:?}");
+        assert_eq!(actions.get(1).copied(), Some("bind"), "{actions:?}");
+        assert!(
+            completions.iter().all(|(action, result)| {
+                action != "move_window"
+                    || result
+                        .metadata
+                        .get("outcome")
+                        .and_then(|value| value.as_str())
+                        != Some("dispatched")
+            }),
+            "denied move must not dispatch: {actions:?}"
+        );
+        let bind_window = completions[1].1.metadata["window_id"]
+            .as_str()
+            .expect("bind window");
+        assert!(is_host_handle(bind_window, "w"), "{bind_window}");
+        let approvals: Vec<_> = envelopes
+            .iter()
+            .filter_map(|envelope| match &envelope.payload {
+                AgentEvent::ToolApprovalResponded {
+                    tool_call_id,
+                    decision,
+                    ..
+                } => Some((
+                    tool_action(&envelopes, tool_call_id),
+                    decision.clone(),
+                    tool_call_id.clone(),
+                )),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(approvals.len(), 3, "{approvals:?}");
+        assert_eq!(approvals[0].0, "request");
+        assert_eq!(approvals[0].1, ApprovalDecision::ApprovedOnce);
+        assert_eq!(approvals[1].0, "bind");
+        assert_eq!(approvals[1].1, ApprovalDecision::ApprovedOnce);
+        assert_eq!(approvals[2].0, "move_window");
+        assert_eq!(approvals[2].1, ApprovalDecision::Denied);
+        let move_window = tool_arguments(&envelopes, &approvals[2].2)["window"]
+            .as_str()
+            .expect("move window argument")
+            .to_string();
+        assert_eq!(move_window, bind_window);
+        assert!(
+            envelopes.iter().any(|envelope| {
+                matches!(
+                    &envelope.payload,
+                    AgentEvent::ToolExecutionStarted { tool_call_id }
+                        if tool_call_id == &approvals[0].2
+                )
+            }),
+            "request still executes"
+        );
+        assert!(
+            envelopes.iter().any(|envelope| {
+                matches!(
+                    &envelope.payload,
+                    AgentEvent::ToolExecutionStarted { tool_call_id }
+                        if tool_call_id == &approvals[1].2
+                )
+            }),
+            "bind still executes"
+        );
+        assert!(
+            envelopes.iter().all(|envelope| {
+                !matches!(
+                    &envelope.payload,
+                    AgentEvent::ToolExecutionStarted { tool_call_id }
+                        if tool_call_id == &approvals[2].2
+                )
+            }),
+            "denied move_window must not start execution"
+        );
+        assert!(
+            envelopes.iter().all(|envelope| match &envelope.payload {
+                AgentEvent::ToolExecutionCompleted { result, .. } => {
+                    !result
+                        .content
+                        .iter()
+                        .any(|part| matches!(part, ContentPart::Image(_)))
+                }
+                AgentEvent::MessageCommitted { message } => !message.content.iter().any(|part| {
+                    match part {
+                        ContentPart::Image(_) => true,
+                        ContentPart::ToolResult(result) => result
+                            .content
+                            .iter()
+                            .any(|inner| matches!(inner, ContentPart::Image(_))),
+                        _ => false,
+                    }
+                }),
+                _ => true,
+            }),
+            "denial must not persist a screenshot"
+        );
+        drop(run.core);
+        run.adapter.shutdown().await.expect("shutdown");
+    }
+
+    async fn approve_running_target(
+        adapter: &crate::gui_host::GuiHostAdapter,
+        session: &pawork_domain::SessionId,
+    ) -> serde_json::Value {
+        use pawork_gui_server::GuiHost;
+        let envelope = pawork_protocol::AppCommandEnvelope {
+            api_version: pawork_protocol::API_VERSION,
+            command_id: pawork_domain::CommandId::from("cmd-native-approve"),
+            source: pawork_protocol::CommandSource::LocalGui {
+                client_id: pawork_domain::GuiClientId::from("native-engine"),
+            },
+            identity: pawork_protocol::ActorIdentity::System,
+            expected_revision: None,
+            idempotency_key: None,
+            issued_at: pawork_domain::Timestamp::from_unix_millis(1),
+            command: pawork_protocol::AppCommand::ComputerTargetApprove(
+                pawork_protocol::ComputerTargetApproveParams {
+                    session_id: session.clone(),
+                    run_id: pawork_domain::RunId::from("run-native"),
+                    target: pawork_protocol::ComputerTargetIdentity::Application {
+                        app: pawork_protocol::ComputerAppIdentity {
+                            bundle_id: NATIVE_BUNDLE.into(),
+                            family: pawork_protocol::ComputerAppFamily::Appkit,
+                        },
+                    },
+                    kind: pawork_protocol::ComputerGrantKind::ForRun,
+                },
+            ),
+        };
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            adapter.command(&envelope),
+        )
+        .await
+        .expect("target approval timed out")
+        .expect("target approval");
+        let pawork_protocol::AppResponse::Data(receipt) = response else {
+            panic!("target approval returns data: {response:?}");
+        };
+        receipt
+    }
+
+    fn tool_arguments(envelopes: &[AgentEventEnvelope], id: &ToolCallId) -> serde_json::Value {
+        let mut json = String::new();
+        for envelope in envelopes {
+            if let AgentEvent::ToolCallArgumentsDelta {
+                tool_call_id,
+                json_delta,
+            } = &envelope.payload
+            {
+                if tool_call_id == id {
+                    json.push_str(json_delta);
+                }
+            }
+        }
+        serde_json::from_str(&json).unwrap_or(serde_json::Value::Null)
+    }
+
+    fn tool_action(envelopes: &[AgentEventEnvelope], id: &ToolCallId) -> String {
+        tool_arguments(envelopes, id)
+            .get("action")
+            .and_then(|action| action.as_str())
+            .unwrap_or("")
+            .to_string()
+    }
+
+    fn ordered_completions(
+        envelopes: &[AgentEventEnvelope],
+    ) -> Vec<(String, &pawork_domain::ToolResultContent)> {
+        envelopes
+            .iter()
+            .filter_map(|envelope| match &envelope.payload {
+                AgentEvent::ToolExecutionCompleted {
+                    tool_call_id,
+                    result,
+                } => Some((tool_action(envelopes, tool_call_id), result)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn move_completed(envelopes: &[AgentEventEnvelope]) -> &pawork_domain::ToolResultContent {
+        let actions: Vec<String> = ordered_completions(envelopes)
+            .into_iter()
+            .map(|(action, _)| action)
+            .collect();
+        assert!(
+            actions.len() >= 3,
+            "request and bind complete before move: {actions:?}"
+        );
+        assert_eq!(actions[0], "request", "{actions:?}");
+        assert_eq!(actions[1], "bind", "{actions:?}");
+        let index = actions
+            .iter()
+            .position(|action| action == "move_window")
+            .expect("move_window completion");
+        assert!(
+            index >= 2,
+            "move completion must follow request and bind: {actions:?}"
+        );
+        envelopes
+            .iter()
+            .find_map(|envelope| match &envelope.payload {
+                AgentEvent::ToolExecutionCompleted {
+                    tool_call_id,
+                    result,
+                } if tool_action(envelopes, tool_call_id) == "move_window" => Some(result),
+                _ => None,
+            })
+            .expect("move_window completion")
+    }
+
+    fn assert_move_observation(result: &pawork_domain::ToolResultContent) {
+        let text = match result.content.first() {
+            Some(ContentPart::Text(text)) => text.text.as_str(),
+            other => panic!("move result must start with text, got {other:?}"),
+        };
+        assert!(
+            text.contains("\"input_dispatched\":true"),
+            "tool_result json text, not input_dispatched=true: {text}"
+        );
+        assert_eq!(result.metadata["input_dispatched"], true);
+        assert_eq!(result.metadata["outcome"], "dispatched");
+        let observation = result.metadata["observation"]
+            .as_str()
+            .expect("observation id");
+        assert!(
+            is_host_handle(observation, "o"),
+            "observation {observation}"
+        );
+        let window = result.metadata["window_id"].as_str().expect("window id");
+        assert!(is_host_handle(window, "w"), "window {window}");
+        jpeg_at(&result.content);
+    }
+
+    fn message_has_image(message: &pawork_domain::Message) -> bool {
+        message.content.iter().any(|part| match part {
+            ContentPart::Image(_) => true,
+            ContentPart::ToolResult(result) => result
+                .content
+                .iter()
+                .any(|inner| matches!(inner, ContentPart::Image(_))),
+            _ => false,
+        })
+    }
+
+    fn image_tool_message(envelopes: &[AgentEventEnvelope]) -> &pawork_domain::Message {
+        let mut seen = 0usize;
+        let mut found = None;
+        for envelope in envelopes {
+            let AgentEvent::MessageCommitted { message } = &envelope.payload else {
+                continue;
+            };
+            if message.role != MessageRole::Tool {
+                continue;
+            }
+            if message_has_image(message) {
+                assert!(seen >= 2, "image tool message must follow request and bind");
+                found = Some(message);
+            }
+            seen += 1;
+        }
+        found.expect("move tool message")
+    }
+
+    // ------------------------------------------------------------------
+    // CU-10 #5 wire 驱动：真实 GuiServer + GuiClient 的产品链证据。
+    // 复用上面的 EngineSurface / NativeEngineProvider；RunStart 经握手名
+    // 恰为 pawork-cli 的真实客户端发出，目标批准经第二个 GUI 客户端走
+    // wire，断线恢复与取消也在同一条连接路径上验证。
+    // ------------------------------------------------------------------
+    use pawork_client::{ClientConfig, ClientError, GuiClient};
+    use pawork_domain::{RunId, SessionId};
+    use pawork_protocol::{
+        ActorIdentity, AppCommand, AppEvent, AppQuery, AppResponse, CommandSource,
+        ResumeDisposition, RunState, TimelineItemKind, TimelinePage,
+    };
+    use pawork_transport::{
+        ConnectOptions, GuiConnection, GuiListener, GuiTransportClient, MemoryTransport,
+        TransportEndpoint,
+    };
+
+    struct NativeWireHarness {
+        core: Arc<tokio::sync::RwLock<AppCore>>,
+        adapter: crate::gui_host::GuiHostAdapter,
+        _dir: tempfile::TempDir,
+        surface: EngineSurface,
+        control: Arc<dyn pawork_computer_use::NativeControl>,
+        provider: Arc<NativeEngineProvider>,
+        connections: Arc<pawork_gui_server::ConnectionManager>,
+        transport: Arc<MemoryTransport>,
+        listener: Arc<dyn GuiListener>,
+        channel: String,
+        accepted: Vec<Box<dyn GuiConnection>>,
+    }
+
+    static WIRE_CHANNEL_NEXT: AtomicUsize = AtomicUsize::new(1);
+
+    async fn native_wire_harness(label: &str) -> NativeWireHarness {
+        let connections = Arc::new(pawork_gui_server::ConnectionManager::new());
+        let parts = native_engine_core(
+            None,
+            Arc::new(ApproveNative),
+            Some(Arc::clone(&connections)),
+        )
+        .await;
+        let channel = format!(
+            "cu10-native-wire-{label}-{}",
+            WIRE_CHANNEL_NEXT.fetch_add(1, Ordering::Relaxed)
+        );
+        let transport = Arc::new(MemoryTransport::new());
+        let server = pawork_gui_server::GuiServer::new(pawork_gui_server::GuiServerConfig {
+            host: Arc::new(parts.adapter.clone()),
+            handshake: pawork_protocol::HandshakeService::new(
+                pawork_gui_server::GuiHost::instance_id(&parts.adapter),
+                pawork_protocol::SUPPORTED_API_VERSIONS.to_vec(),
+                vec![pawork_protocol::GuiCapability::Events],
+            ),
+            transport: transport.clone(),
+            connections: Some(Arc::clone(&connections)),
+        });
+        let listener = server
+            .bind(TransportEndpoint::Memory {
+                channel: channel.clone(),
+            })
+            .await
+            .expect("bind memory transport");
+        drop(server);
+        NativeWireHarness {
+            core: parts.core,
+            adapter: parts.adapter,
+            _dir: parts._dir,
+            surface: parts.surface,
+            control: parts.control,
+            provider: parts.provider,
+            connections,
+            transport,
+            listener: Arc::from(listener),
+            channel,
+            accepted: Vec::new(),
+        }
+    }
+
+    impl NativeWireHarness {
+        fn endpoint(&self) -> TransportEndpoint {
+            TransportEndpoint::Memory {
+                channel: self.channel.clone(),
+            }
+        }
+
+        fn connect_options(name: &str) -> ConnectOptions {
+            ConnectOptions {
+                timeout_ms: 5_000,
+                client_label: Some(name.into()),
+                max_frame_bytes: 1024 * 1024,
+            }
+        }
+
+        fn client_config(name: &str) -> ClientConfig {
+            ClientConfig {
+                client_name: name.into(),
+                ..ClientConfig::default()
+            }
+        }
+
+        async fn connect_wire(&mut self, name: &str) -> GuiClient {
+            let accept = {
+                let listener = Arc::clone(&self.listener);
+                tokio::spawn(async move { listener.accept().await })
+            };
+            let transport: Arc<dyn GuiTransportClient> = self.transport.clone();
+            let client = GuiClient::connect_with_config(
+                transport,
+                self.endpoint(),
+                Self::connect_options(name),
+                None,
+                Self::client_config(name),
+            )
+            .await
+            .expect("wire connect + handshake");
+            let connection = accept.await.expect("accept task").expect("wire accept");
+            self.accepted.push(connection);
+            client
+        }
+
+        async fn connect_wire_resume(
+            &mut self,
+            name: &str,
+            last_acked: pawork_protocol::GlobalSequence,
+        ) -> (GuiClient, Option<pawork_client::ResumeOutcome>) {
+            let accept = {
+                let listener = Arc::clone(&self.listener);
+                tokio::spawn(async move { listener.accept().await })
+            };
+            let transport: Arc<dyn GuiTransportClient> = self.transport.clone();
+            let (client, outcome) = GuiClient::connect_with_resume_config(
+                transport,
+                self.endpoint(),
+                Self::connect_options(name),
+                None,
+                Some(last_acked),
+                Self::client_config(name),
+            )
+            .await
+            .expect("wire reconnect + resume");
+            let connection = accept.await.expect("accept task").expect("wire accept");
+            self.accepted.push(connection);
+            (client, outcome)
+        }
+
+        async fn finish(self) {
+            let NativeWireHarness {
+                core,
+                adapter,
+                _dir,
+                surface: _,
+                control: _,
+                provider: _,
+                connections: _,
+                transport: _,
+                listener,
+                channel: _,
+                accepted,
+            } = self;
+            // close 只是停止信号；listener / accepted 对象本身持
+            // Inner→host→adapter 副本，必须显式 drop 才解除 core 引用。
+            for connection in accepted {
+                let _ = connection.close().await;
+            }
+            let _ = listener.close().await;
+            drop(listener);
+            // 客户端已断开、泵任务异步退出；给一个有界收敛窗口。
+            for _ in 0..200 {
+                if Arc::strong_count(&core) == 2 {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            assert_eq!(
+                Arc::strong_count(&core),
+                2,
+                "listener/connection holders must release the core lock before shutdown"
+            );
+            drop(core);
+            adapter.shutdown().await.expect("adapter shutdown");
+            drop(_dir);
+        }
+    }
+
+    fn wire_source(client: &GuiClient) -> CommandSource {
+        // 服务端会在入站时盖章为 LocalGui{client_id}，这里按 CLI 真实
+        // 调用形状传 RemoteGui。
+        CommandSource::RemoteGui {
+            client_id: client.client_id().clone(),
+            connection_id: client.connection_id().clone(),
+        }
+    }
+
+    fn wire_identity() -> ActorIdentity {
+        ActorIdentity::LocalUser {
+            actor_id: pawork_domain::ActorId::from("pawork-cli"),
+            display_name: None,
+        }
+    }
+
+    async fn wire_session(client: &GuiClient, title: &str) -> SessionId {
+        let envelope = client
+            .command(
+                AppCommand::SessionCreate {
+                    workspace_id: Some(pawork_domain::WorkspaceId::from("ws-default")),
+                    title: Some(title.into()),
+                },
+                wire_source(client),
+                wire_identity(),
+            )
+            .await
+            .expect("wire SessionCreate");
+        match envelope.response {
+            AppResponse::Data(data) => SessionId::from(
+                data.get("session_id")
+                    .and_then(serde_json::Value::as_str)
+                    .expect("session_id in SessionCreate data"),
+            ),
+            other => panic!("wire SessionCreate should return Data, got {other:?}"),
+        }
+    }
+
+    async fn wire_run_start(client: &GuiClient, session: &SessionId, prompt: &str) -> RunId {
+        let envelope = client
+            .command(
+                AppCommand::RunStart {
+                    session_id: session.clone(),
+                    user_message: prompt.into(),
+                    model: None,
+                    provider: None,
+                    profile: None,
+                    effort: None,
+                    attachment_ids: Vec::new(),
+                    web_search: None,
+                    video_urls: Vec::new(),
+                },
+                wire_source(client),
+                wire_identity(),
+            )
+            .await
+            .expect("wire RunStart");
+        match envelope.response {
+            AppResponse::Accepted {
+                run_id: Some(run_id),
+                ..
+            } => run_id,
+            other => panic!("wire RunStart should return Accepted with run_id, got {other:?}"),
+        }
+    }
+
+    async fn wire_approve_target(
+        gui: &GuiClient,
+        session: &SessionId,
+        run: &RunId,
+    ) -> serde_json::Value {
+        let envelope = gui
+            .command(
+                AppCommand::ComputerTargetApprove(pawork_protocol::ComputerTargetApproveParams {
+                    session_id: session.clone(),
+                    run_id: run.clone(),
+                    target: pawork_protocol::ComputerTargetIdentity::Application {
+                        app: pawork_protocol::ComputerAppIdentity {
+                            bundle_id: NATIVE_BUNDLE.into(),
+                            family: pawork_protocol::ComputerAppFamily::Appkit,
+                        },
+                    },
+                    kind: pawork_protocol::ComputerGrantKind::ForRun,
+                }),
+                wire_source(gui),
+                wire_identity(),
+            )
+            .await
+            .expect("wire ComputerTargetApprove");
+        match envelope.response {
+            AppResponse::Data(receipt) => receipt,
+            other => panic!("wire ComputerTargetApprove should return Data, got {other:?}"),
+        }
+    }
+
+    fn wire_terminal(run: &RunId, event: &AppEvent) -> Option<RunState> {
+        match event {
+            AppEvent::RunChanged { run_id, state } if run_id == run => matches!(
+                state,
+                RunState::Completed | RunState::Cancelled | RunState::Failed
+            )
+            .then(|| state.clone()),
+            _ => None,
+        }
+    }
+
+    async fn wire_ack_until(
+        client: &GuiClient,
+        timeout: std::time::Duration,
+        mut predicate: impl FnMut(&AppEvent) -> bool,
+        what: &str,
+    ) {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
+                panic!("wire event wait timed out: {what}");
+            };
+            match client.next_event_timeout(remaining).await {
+                Ok(envelope) => {
+                    client.ack(envelope.global_sequence).await.expect("ack");
+                    if predicate(&envelope.payload) {
+                        return;
+                    }
+                }
+                Err(ClientError::Timeout { .. }) => panic!("wire event wait timed out: {what}"),
+                Err(error) => panic!("wire event stream failed: {error}"),
+            }
+        }
+    }
+
+    async fn wire_ack_terminal(client: &GuiClient, run: &RunId) -> RunState {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
+                panic!("run {} did not reach a terminal state", run.as_str());
+            };
+            match client.next_event_timeout(remaining).await {
+                Ok(envelope) => {
+                    client.ack(envelope.global_sequence).await.expect("ack");
+                    if let Some(state) = wire_terminal(run, &envelope.payload) {
+                        return state;
+                    }
+                }
+                Err(ClientError::Timeout { .. }) => {
+                    panic!("run {} did not reach a terminal state", run.as_str())
+                }
+                Err(error) => panic!("wire event stream failed: {error}"),
+            }
+        }
+    }
+
+    /// 等待 seam 证据：request 已完成、目标未批准时，bind 不得产生第二个
+    /// ToolCompleted，run 也不得进入终态（无等待会立刻 NotAuthorized 失败）。
+    async fn wire_assert_paused_before_approval(client: &GuiClient, run: &RunId) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(300);
+        loop {
+            let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
+                return;
+            };
+            match client.next_event_timeout(remaining).await {
+                Ok(envelope) => {
+                    client.ack(envelope.global_sequence).await.expect("ack");
+                    if let Some(state) = wire_terminal(run, &envelope.payload) {
+                        panic!("run reached {state:?} before target approval");
+                    }
+                    if matches!(
+                        &envelope.payload,
+                        AppEvent::ToolCompleted { run_id, .. } if run_id == run
+                    ) {
+                        panic!("bind must wait for GUI target approval over the wire");
+                    }
+                }
+                Err(ClientError::Timeout { .. }) => return,
+                Err(error) => panic!("wire event stream failed during approval wait: {error}"),
+            }
+        }
+    }
+
+    async fn wire_timeline_contains(
+        client: &GuiClient,
+        session: &SessionId,
+        run: &RunId,
+        kind: TimelineItemKind,
+    ) -> bool {
+        let mut after: Option<u64> = None;
+        for _ in 0..100 {
+            let envelope = client
+                .query(
+                    AppQuery::SessionGet {
+                        session_id: session.clone(),
+                        timeline_after_sequence: after,
+                        timeline_limit: Some(200),
+                    },
+                    wire_source(client),
+                    wire_identity(),
+                )
+                .await
+                .expect("wire timeline query");
+            let data = match envelope.response {
+                AppResponse::Data(data) => data,
+                other => panic!("wire SessionGet should return Data, got {other:?}"),
+            };
+            let page: TimelinePage =
+                serde_json::from_value(data.get("timeline_page").cloned().expect("timeline_page"))
+                    .expect("timeline page decodes");
+            if page
+                .items
+                .iter()
+                .any(|item| item.run_id.as_deref() == Some(run.as_str()) && item.kind == kind)
+            {
+                return true;
+            }
+            if page.complete {
+                return false;
+            }
+            match page.next_sequence {
+                Some(next) if after.map(|current| next > current).unwrap_or(true) => {
+                    after = Some(next);
+                }
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    async fn wire_observation_data(client: &GuiClient, session: &SessionId) -> serde_json::Value {
+        let envelope = client
+            .query(
+                AppQuery::ObservationList {
+                    session_id: session.clone(),
+                    after_sequence: None,
+                    limit: None,
+                },
+                wire_source(client),
+                wire_identity(),
+            )
+            .await
+            .expect("wire ObservationList");
+        match envelope.response {
+            AppResponse::Data(data) => data,
+            other => panic!("wire ObservationList should return Data, got {other:?}"),
+        }
+    }
+
+    fn first_tool_completed(run: &RunId) -> impl FnMut(&AppEvent) -> bool + '_ {
+        move |event| {
+            matches!(
+                event,
+                AppEvent::ToolCompleted {
+                    run_id, success: true, ..
+                } if run_id == run
+            )
+        }
+    }
+
+    /// CU-10 #5 产品链主路径：握手名恰为 pawork-cli 的真实 GuiClient 经
+    /// GuiServer 发 RunStart → request 落地 → bind 在等待 seam 挂住 →
+    /// 第二个 GUI 客户端经 wire 批准目标 → bind + move_window 各一次 →
+    /// Completed；input_dispatched 事实与截图持久化，ObservationList /
+    /// Timeline 经 wire 可读，终态后 scope 收口。
+    #[tokio::test]
+    async fn computer_native_wire_cli_run_completes_after_gui_target_approval() {
+        let mut harness = native_wire_harness("approve").await;
+        let cli = harness.connect_wire("pawork-cli").await;
+        let registered = harness
+            .connections
+            .session(cli.client_id())
+            .expect("cli handshake registers a connection session");
+        assert_eq!(registered.name, "pawork-cli");
+        cli.subscribe_all().await.expect("wire subscribe");
+        let session = wire_session(&cli, "cu10 wire native").await;
+        let run = wire_run_start(&cli, &session, "move the notes window").await;
+        wire_ack_until(
+            &cli,
+            std::time::Duration::from_secs(30),
+            first_tool_completed(&run),
+            "request tool completes over the wire",
+        )
+        .await;
+        wire_assert_paused_before_approval(&cli, &run).await;
+        let gui = harness.connect_wire("pawork-test-desktop").await;
+        let receipt = wire_approve_target(&gui, &session, &run).await;
+        assert_eq!(receipt["kind"], "for_run", "{receipt}");
+        assert_eq!(
+            receipt["target"]["app"]["bundle_id"], NATIVE_BUNDLE,
+            "{receipt}"
+        );
+        let state = wire_ack_terminal(&cli, &run).await;
+        assert!(
+            matches!(state, RunState::Completed),
+            "terminal state: {state:?}"
+        );
+        assert_eq!(harness.surface.moves(), 1, "move_window dispatches once");
+        assert_eq!(
+            harness.surface.captures(),
+            1,
+            "for-run observation captures once"
+        );
+        let calls = harness.provider.offered.lock().expect("offered").clone();
+        assert!(
+            calls.len() == 4
+                && calls
+                    .iter()
+                    .all(|names| names.iter().any(|name| name == "computer_native")),
+            "wire run must offer computer_native on every round: {calls:?}"
+        );
+        let messages = harness
+            .core
+            .read()
+            .await
+            .resume_messages(&session)
+            .await
+            .expect("resume messages");
+        let dispatched = messages
+            .iter()
+            .filter(|message| message.role == MessageRole::Tool)
+            .filter_map(|message| match message.content.first() {
+                Some(ContentPart::ToolResult(result)) => Some(result),
+                _ => None,
+            })
+            .find(|result| {
+                result
+                    .metadata
+                    .get("input_dispatched")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(true)
+            })
+            .expect("move tool result persists the input_dispatched fact");
+        jpeg_at(&dispatched.content);
+        let observations = wire_observation_data(&cli, &session).await;
+        let entries = observations["entries"].as_array().expect("entries");
+        let entry = entries
+            .iter()
+            .find(|entry| entry["run_id"].as_str() == Some(run.as_str()))
+            .expect("observation entry for the wire run");
+        assert_eq!(entry["media_type"], "image/jpeg");
+        assert_eq!(
+            entry["byte_length"].as_u64(),
+            Some(NATIVE_JPEG.len() as u64)
+        );
+        assert!(
+            wire_timeline_contains(&cli, &session, &run, TimelineItemKind::RunCompleted).await,
+            "timeline must carry RunCompleted for the wire run"
+        );
+        let scope = pawork_computer_use::target::Scope::new("ws-default", run.as_str());
+        assert!(
+            !harness
+                .control
+                .active_scopes()
+                .iter()
+                .any(|open| open == &scope),
+            "terminal closes the wire run scope"
+        );
+        assert_eq!(
+            harness.control.grant_kind(&scope, &native_target()),
+            None,
+            "terminal drops the grant"
+        );
+        cli.disconnect().await.expect("cli disconnect");
+        gui.disconnect().await.expect("gui disconnect");
+        harness.finish().await;
+    }
+
+    /// CU-10 #5 断线恢复：CLI 在等待目标审批时断开（不发 RunCancel），
+    /// Run 继续推进；GUI 经 wire 批准并观测到 Completed；CLI 以
+    /// last_acked 重连，Resume 补发错过的事件，Timeline 找到同一 run。
+    #[tokio::test]
+    async fn computer_native_wire_cli_resume_recovers_terminal_after_disconnect() {
+        let mut harness = native_wire_harness("resume").await;
+        let cli = harness.connect_wire("pawork-cli").await;
+        cli.subscribe_all().await.expect("wire subscribe");
+        let session = wire_session(&cli, "cu10 wire resume").await;
+        let run = wire_run_start(&cli, &session, "move the notes window after reconnect").await;
+        wire_ack_until(
+            &cli,
+            std::time::Duration::from_secs(30),
+            first_tool_completed(&run),
+            "request completes before disconnect",
+        )
+        .await;
+        let last_acked = cli.last_acked_sequence();
+        cli.disconnect().await.expect("cli disconnect");
+        let gui = harness.connect_wire("pawork-test-desktop").await;
+        gui.subscribe_all().await.expect("gui subscribe");
+        let receipt = wire_approve_target(&gui, &session, &run).await;
+        assert_eq!(receipt["kind"], "for_run", "{receipt}");
+        let state = wire_ack_terminal(&gui, &run).await;
+        assert!(
+            matches!(state, RunState::Completed),
+            "gui observes Completed: {state:?}"
+        );
+        let (cli2, outcome) = harness.connect_wire_resume("pawork-cli", last_acked).await;
+        let outcome = outcome.expect("resume executes with last_acked");
+        match outcome.disposition {
+            ResumeDisposition::Replay { .. } => {
+                assert!(
+                    outcome.replayed.iter().any(|envelope| {
+                        matches!(
+                            &envelope.payload,
+                            AppEvent::RunChanged {
+                                run_id,
+                                state: RunState::Completed,
+                            } if run_id == &run
+                        )
+                    }),
+                    "replay must carry the missed terminal for {}",
+                    run.as_str()
+                );
+            }
+            other => panic!("resume should replay missed events, got {other:?}"),
+        }
+        assert!(
+            wire_timeline_contains(&cli2, &session, &run, TimelineItemKind::RunCompleted).await,
+            "timeline must carry RunCompleted for the resumed run"
+        );
+        assert_eq!(harness.surface.moves(), 1, "resume must not re-execute");
+        cli2.disconnect().await.expect("reconnect disconnect");
+        gui.disconnect().await.expect("gui disconnect");
+        harness.finish().await;
+    }
+
+    /// CU-10 #5 取消语义：CLI 在 bind 等待目标审批时发 RunCancel，run 以
+    /// Cancelled 收口，不产生任何 move / capture，timeline 记录 RunCancelled。
+    #[tokio::test]
+    async fn computer_native_wire_cancel_while_waiting_approval_zeros_dispatch() {
+        let mut harness = native_wire_harness("cancel").await;
+        let cli = harness.connect_wire("pawork-cli").await;
+        cli.subscribe_all().await.expect("wire subscribe");
+        let session = wire_session(&cli, "cu10 wire cancel").await;
+        let run = wire_run_start(&cli, &session, "cancel before any dispatch").await;
+        wire_ack_until(
+            &cli,
+            std::time::Duration::from_secs(30),
+            first_tool_completed(&run),
+            "request completes before cancel",
+        )
+        .await;
+        wire_assert_paused_before_approval(&cli, &run).await;
+        let envelope = cli
+            .command(
+                AppCommand::RunCancel {
+                    run_id: run.clone(),
+                },
+                wire_source(&cli),
+                wire_identity(),
+            )
+            .await
+            .expect("wire RunCancel");
+        assert!(
+            matches!(envelope.response, AppResponse::Accepted { .. }),
+            "RunCancel accepted: {:?}",
+            envelope.response
+        );
+        let state = wire_ack_terminal(&cli, &run).await;
+        assert!(
+            matches!(state, RunState::Cancelled),
+            "terminal state: {state:?}"
+        );
+        assert_eq!(
+            harness.surface.moves(),
+            0,
+            "cancelled run must not move a window"
+        );
+        assert_eq!(
+            harness.surface.captures(),
+            0,
+            "cancelled run must not capture"
+        );
+        assert!(
+            wire_timeline_contains(&cli, &session, &run, TimelineItemKind::RunCancelled).await,
+            "timeline must carry RunCancelled for the cancelled run"
+        );
+        let scope = pawork_computer_use::target::Scope::new("ws-default", run.as_str());
+        assert!(
+            !harness
+                .control
+                .active_scopes()
+                .iter()
+                .any(|open| open == &scope),
+            "terminal closes the wire run scope"
+        );
+        assert_eq!(
+            harness.control.grant_kind(&scope, &native_target()),
+            None,
+            "terminal drops the grant"
+        );
+        cli.disconnect().await.expect("cli disconnect");
+        harness.finish().await;
     }
 }

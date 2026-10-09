@@ -110,6 +110,9 @@ pub struct GuiHostAdapter {
     pub(crate) auth_flights: handlers::settings::AuthFlights,
     /// GUI 1.22：本机附件分块暂存。字节只在内存，不落盘、不进命令账本。
     pub(crate) attachments: Arc<Mutex<handlers::attachments::AttachmentStore>>,
+    /// CU-10 #5：GuiServer 的连接登记（握手名查询用）。None = 本进程内
+    /// Adapter（json / 测试）没有 GuiServer 注入，等待开关恒 false。
+    pub(crate) connections: Option<Arc<pawork_gui_server::ConnectionManager>>,
 }
 
 impl GuiHostAdapter {
@@ -173,7 +176,18 @@ impl GuiHostAdapter {
             browser: Arc::new(browser_tool::BrowserBroker::default()),
             auth_flights: Arc::new(Mutex::new(HashMap::new())),
             attachments: Arc::new(Mutex::new(handlers::attachments::AttachmentStore::new())),
+            connections: None,
         }
+    }
+
+    /// CU-10 #5：注入 GuiServer 共享的连接登记，供 RunStart 按盖章后的
+    /// client_id 查握手名（仅开关等待，不授身份）。
+    pub fn with_connections(
+        mut self,
+        connections: Arc<pawork_gui_server::ConnectionManager>,
+    ) -> Self {
+        self.connections = Some(connections);
+        self
     }
 
     pub fn bus(&self) -> Arc<GuiEventBus> {
@@ -750,7 +764,9 @@ fn query_observation_image_read<'a>(
     adapter: &'a GuiHostAdapter,
     envelope: &'a AppQueryEnvelope,
 ) -> BoxFuture<'a, Result<AppResponse, GuiHostError>> {
-    Box::pin(handlers::computer::observation_image_read(adapter, envelope))
+    Box::pin(handlers::computer::observation_image_read(
+        adapter, envelope,
+    ))
 }
 
 fn query_computer_target_list<'a>(

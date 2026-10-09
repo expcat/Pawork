@@ -17,6 +17,8 @@
 
 2026-09-21 用户要求无项目附件并确认继续：Desktop 可读取系统选择器中用户显式选定的普通文件，经 GUI 1.22 上传文件名与字节；Host 不接收本机绝对路径，不注册父目录，不扩大工具工作区权限。模型文件工具继续遵循 `workspace_id + relative_path`。
 
+CU-10 显式共享 Host：`pawork chat/run --gui-host` 是已有 `pawork gui serve` 的认证客户端，本进程不装配 Core；实际执行仍由与 Core 同进程的 `pawork` Host 承载。它复用 GUI Connection Protocol、同一目标授权台账与持久事件链，不增加正式宿主入口或跨进程授权同步台账。未指定标志时沿用原 CLI 执行模式，Host 不可达时明确失败。
+
 违反以上任意一条须先向用户确认。破坏式改动写入本文与对应 Spec，golden 先行。
 
 ---

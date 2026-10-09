@@ -221,13 +221,21 @@ fn next_permit_token() -> String {
 /// handle use (element handle since CU-06, window dispatch since CU-08)
 /// to the one dispatch that consume released: the permit travels inside
 /// [crate::target::ValidatedElement] / [crate::target::ValidatedWindowDispatch],
-/// and the first dispatch attempt — whatever its later outcome — retires
-/// it, so a cloned validation result can never dispatch twice. The token
+/// and the first dispatch attempt arms it. A second attempt does not
+/// dispatch, and [TargetAuthorizer::retire_inflight] drops the ticket
+/// after the platform call. The token
 /// is crate-private: outside code can carry a permit but can never mint
 /// or forge one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DispatchPermit {
     pub(crate) token: String,
+}
+
+/// One consuming handle use tracked until the platform call finishes.
+#[derive(Debug)]
+struct DispatchTicket {
+    generation: u64,
+    armed: bool,
 }
 
 /// Host-side ledger of target grants. The only issuer is the host after an
@@ -243,15 +251,18 @@ pub struct TargetAuthorizer {
     /// Bundle ids that can never be authorized, lowercase.
     protected: HashSet<String>,
     grants: HashMap<(Scope, TargetIdentity), GrantKind>,
-    /// Outstanding single-use dispatch permits, keyed by the scope and
-    /// target their consume was authorized for plus the permit token.
-    /// `spend_for_dispatch` mints one permit per consuming handle use;
-    /// `consume_dispatch_permit` removes it on the first dispatch
-    /// attempt, so one consume releases exactly one dispatch.
-    /// `revoke` / `revoke_scope` drop outstanding permits, so a
-    /// revocation between consume and dispatch still blocks the
-    /// dispatch.
-    dispatch_permits: HashSet<(Scope, TargetIdentity, String)>,
+    /// One in-flight ticket per consuming handle use. `spend_for_dispatch`
+    /// records the target generation with `armed: false`. The first
+    /// `consume_dispatch_permit` arms that ticket and leaves it in place.
+    /// A second consume, a wrong key, or a stale generation is denied and
+    /// does not retire it. `retire_inflight` removes it after the platform
+    /// call. `grant`, `revoke`, and `revoke_scope` bump the generation and
+    /// drop the target's tickets, so a replaced grant cannot authorize a
+    /// call that is already in flight.
+    dispatch_permits: HashMap<(Scope, TargetIdentity, String), DispatchTicket>,
+    /// Monotonic generation per scope and target. A ticket is current only
+    /// while its recorded generation still matches.
+    generations: HashMap<(Scope, TargetIdentity), u64>,
 }
 
 // Compile-time regression for the ledger-duplication finding: if Clone is
@@ -292,7 +303,8 @@ impl TargetAuthorizer {
                 )
                 .collect(),
             grants: HashMap::new(),
-            dispatch_permits: HashSet::new(),
+            dispatch_permits: HashMap::new(),
+            generations: HashMap::new(),
         }
     }
 
@@ -319,22 +331,22 @@ impl TargetAuthorizer {
         if self.is_protected(target.app().bundle_id.as_str()) {
             return Err(TargetError::ForbiddenTarget);
         }
+        self.bump_target(scope, target);
         self.grants.insert((scope.clone(), target.clone()), kind);
         Ok(())
     }
 
     /// Revoke one target's grant; later gated operations on it are
-    /// denied, including the dispatch a spent one-shot had released.
+    /// denied, including a dispatch whose ticket was already armed.
     pub fn revoke(&mut self, scope: &Scope, target: &TargetIdentity) {
         self.grants.remove(&(scope.clone(), target.clone()));
-        self.dispatch_permits
-            .retain(|(held_scope, held_target, _)| held_scope != scope || held_target != target);
+        self.bump_target(scope, target);
     }
 
     /// Drop every grant of a run (run teardown). Other runs keep theirs.
     pub fn revoke_scope(&mut self, scope: &Scope) {
         self.grants.retain(|(held, _), _| held != scope);
-        self.dispatch_permits.retain(|(held, _, _)| held != scope);
+        self.bump_scope(scope);
     }
 
     /// Non-consuming presence check: protected targets are always rejected;
@@ -377,19 +389,21 @@ impl TargetAuthorizer {
         let permit = DispatchPermit {
             token: next_permit_token(),
         };
-        self.dispatch_permits
-            .insert((scope.clone(), target.clone(), permit.token.clone()));
+        self.dispatch_permits.insert(
+            (scope.clone(), target.clone(), permit.token.clone()),
+            DispatchTicket {
+                generation: self.generation(scope, target),
+                armed: false,
+            },
+        );
         Ok(permit)
     }
 
-    /// Dispatch-side authorization: atomically retires the permit the
-    /// consuming handle minted for this scope and target. The
-    /// first dispatch attempt consumes the permit whether the dispatch
-    /// later succeeds or not — a repeated attempt with the same
-    /// (cloned) validation result is [TargetError::NotAuthorized].
-    /// Protected targets are always rejected, and a revocation since
-    /// the consume removed the permit, so a revoked grant blocks its
-    /// in-flight dispatch here.
+    /// Arm the ticket minted for this scope and target. The first call
+    /// leaves it current; a repeated attempt, a wrong key, a missing
+    /// ticket, or a stale generation is [TargetError::NotAuthorized] and
+    /// does not retire the first ticket. Protected targets are always
+    /// rejected. Revocation bumps the generation and drops the ticket.
     pub fn consume_dispatch_permit(
         &mut self,
         scope: &Scope,
@@ -400,13 +414,87 @@ impl TargetAuthorizer {
         if self.is_protected(target.app().bundle_id.as_str()) {
             return Err(TargetError::ForbiddenTarget);
         }
-        if self
+        let current = self.generation(scope, target);
+        let key = (scope.clone(), target.clone(), permit.token.clone());
+        let Some(ticket) = self.dispatch_permits.get_mut(&key) else {
+            return Err(TargetError::NotAuthorized);
+        };
+        if ticket.armed || ticket.generation != current {
+            return Err(TargetError::NotAuthorized);
+        }
+        ticket.armed = true;
+        Ok(())
+    }
+
+    /// The armed ticket is still the one `permit` minted for this scope
+    /// and target. An unarmed, missing, or stale ticket is
+    /// [TargetError::NotAuthorized].
+    pub fn inflight_current(
+        &self,
+        scope: &Scope,
+        target: &TargetIdentity,
+        permit: &DispatchPermit,
+    ) -> Result<(), TargetError> {
+        target.validate()?;
+        if self.is_protected(target.app().bundle_id.as_str()) {
+            return Err(TargetError::ForbiddenTarget);
+        }
+        let ticket = self
             .dispatch_permits
-            .remove(&(scope.clone(), target.clone(), permit.token.clone()))
-        {
+            .get(&(scope.clone(), target.clone(), permit.token.clone()))
+            .ok_or(TargetError::NotAuthorized)?;
+        if ticket.armed && ticket.generation == self.generation(scope, target) {
             Ok(())
         } else {
             Err(TargetError::NotAuthorized)
+        }
+    }
+
+    /// Drop one in-flight ticket after its platform call returns.
+    pub fn retire_inflight(
+        &mut self,
+        scope: &Scope,
+        target: &TargetIdentity,
+        permit: &DispatchPermit,
+    ) {
+        self.dispatch_permits
+            .remove(&(scope.clone(), target.clone(), permit.token.clone()));
+    }
+
+    fn generation(&self, scope: &Scope, target: &TargetIdentity) -> u64 {
+        self.generations
+            .get(&(scope.clone(), target.clone()))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    fn bump_target(&mut self, scope: &Scope, target: &TargetIdentity) {
+        let key = (scope.clone(), target.clone());
+        let next = self
+            .generations
+            .get(&key)
+            .copied()
+            .unwrap_or(0)
+            .wrapping_add(1);
+        self.generations.insert(key, next);
+        self.dispatch_permits
+            .retain(|(held_scope, held_target, _), _| held_scope != scope || held_target != target);
+    }
+
+    fn bump_scope(&mut self, scope: &Scope) {
+        let mut targets = HashSet::new();
+        for ((held_scope, held_target), _) in &self.generations {
+            if held_scope == scope {
+                targets.insert(held_target.clone());
+            }
+        }
+        for (held_scope, held_target, _) in self.dispatch_permits.keys() {
+            if held_scope == scope {
+                targets.insert(held_target.clone());
+            }
+        }
+        for target in targets {
+            self.bump_target(scope, &target);
         }
     }
 }
@@ -684,15 +772,30 @@ mod tests {
             authorizer.consume_dispatch_permit(&scope(), &site("https://example.com"), &permit),
             Err(TargetError::NotAuthorized)
         );
-        // The first real attempt retires the permit: a repeated dispatch
-        // from a cloned validation result is denied.
+        // The first consume arms the ticket. The one-shot grant is already
+        // spent, and a second consume does not retire that ticket.
         assert!(
             authorizer
                 .consume_dispatch_permit(&scope(), &editor(), &permit)
                 .is_ok()
         );
+        assert!(authorizer
+            .inflight_current(&scope(), &editor(), &permit)
+            .is_ok());
+        assert_eq!(
+            authorizer.check(&scope(), &editor()),
+            Err(TargetError::NotAuthorized)
+        );
         assert_eq!(
             authorizer.consume_dispatch_permit(&scope(), &editor(), &permit),
+            Err(TargetError::NotAuthorized)
+        );
+        assert!(authorizer
+            .inflight_current(&scope(), &editor(), &permit)
+            .is_ok());
+        authorizer.revoke(&scope(), &editor());
+        assert_eq!(
+            authorizer.inflight_current(&scope(), &editor(), &permit),
             Err(TargetError::NotAuthorized)
         );
         // A plain observation spend mints no permit: an observation
@@ -745,6 +848,33 @@ mod tests {
                     .is_ok()
             );
         }
+        assert!(authorizer.check(&scope(), &editor()).is_ok());
+        let armed = authorizer.spend_for_dispatch(&scope(), &editor()).unwrap();
+        assert!(authorizer
+            .consume_dispatch_permit(&scope(), &editor(), &armed)
+            .is_ok());
+        assert!(authorizer
+            .inflight_current(&scope(), &editor(), &armed)
+            .is_ok());
+        authorizer.revoke(&scope(), &editor());
+        authorizer
+            .grant(&scope(), &editor(), GrantKind::ForRun)
+            .unwrap();
+        assert_eq!(
+            authorizer.inflight_current(&scope(), &editor(), &armed),
+            Err(TargetError::NotAuthorized)
+        );
+        assert_eq!(
+            authorizer.consume_dispatch_permit(&scope(), &editor(), &armed),
+            Err(TargetError::NotAuthorized)
+        );
+        let fresh = authorizer.spend_for_dispatch(&scope(), &editor()).unwrap();
+        assert!(authorizer
+            .consume_dispatch_permit(&scope(), &editor(), &fresh)
+            .is_ok());
+        assert!(authorizer
+            .inflight_current(&scope(), &editor(), &fresh)
+            .is_ok());
         assert!(authorizer.check(&scope(), &editor()).is_ok());
     }
 

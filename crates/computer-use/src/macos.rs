@@ -96,10 +96,10 @@ use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
 use core_foundation::number::{CFNumber, CFNumberRef};
 use core_foundation::string::{CFString, CFStringRef};
-use core_graphics::event::{CGEvent, CGEventFlags, CGEventType, CGKeyCode};
-use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::access::ScreenCaptureAccess;
 use core_graphics::display::CGMainDisplayID;
+use core_graphics::event::{CGEvent, CGEventFlags, CGEventType, CGKeyCode};
+use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::geometry::CGPoint;
 use core_graphics::window as cgwindow;
 use image::{codecs::jpeg::JpegEncoder, imageops::FilterType, RgbImage};
@@ -109,8 +109,8 @@ use objc::{class, msg_send, sel, sel_impl};
 
 use crate::approval::{TargetAuthorizer, TargetIdentity};
 use crate::target::{
-    ax_tree_revision, require_background, AppFamily, AppIdentity, AxTreeNode, AxTreeRead,
-    AxTreeTruncation, KeyModifiers, NativeProbe, PointerAction, ProcessInstance, Scope,
+    ax_tree_revision, require_background, ActivityProof, AppFamily, AppIdentity, AxTreeNode,
+    AxTreeRead, AxTreeTruncation, KeyModifiers, NativeProbe, PointerAction, ProcessInstance, Scope,
     SemanticAction, SemanticOutcome, TargetError, TargetedInput, TargetedKey, TargetedOutcome,
     ValidatedElement, ValidatedObservation, ValidatedWindow, ValidatedWindowDispatch,
     WindowIdentity, WindowMove, AX_TREE_BOUNDS,
@@ -141,9 +141,7 @@ impl WindowGenerations {
     fn sync(&mut self, current: &HashSet<u32>) {
         self.generations.retain(|id, _| current.contains(id));
         for id in current {
-            if let std::collections::hash_map::Entry::Vacant(entry) =
-                self.generations.entry(*id)
-            {
+            if let std::collections::hash_map::Entry::Vacant(entry) = self.generations.entry(*id) {
                 self.next += 1;
                 entry.insert(self.next);
             }
@@ -285,6 +283,31 @@ impl MacosNative {
         }
     }
 
+    /// Frontmost-bundle proof only. A nil workspace or application is
+    /// unprovable, not a claim that the user is active. A nil bundle id is
+    /// idle. Matching is case-insensitive and nothing about keystrokes is kept.
+    pub fn target_activity(&self, bundle_id: &str) -> ActivityProof {
+        autoreleasepool(|| unsafe {
+            let ws: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
+            if ws.is_null() {
+                return ActivityProof::Unprovable;
+            }
+            let app: *mut Object = msg_send![ws, frontmostApplication];
+            if app.is_null() {
+                return ActivityProof::Unprovable;
+            }
+            let bundle: *mut Object = msg_send![app, bundleIdentifier];
+            if bundle.is_null() {
+                return ActivityProof::Idle;
+            }
+            if rs_str(bundle).eq_ignore_ascii_case(bundle_id) {
+                ActivityProof::Operating
+            } else {
+                ActivityProof::Idle
+            }
+        })
+    }
+
     /// Resolve an installed application's identity (bundle id + classified
     /// family) without launching it. This is how the host names a launch
     /// target: identities come from discovery or this resolution, never
@@ -387,6 +410,22 @@ impl MacosNative {
     ) -> Result<Vec<DiscoveredWindow>, TargetError> {
         // Authorization precedes every AX read and every title read.
         authorizer.check(scope, &TargetIdentity::application(identity.clone()))?;
+        self.list_windows_detached(identity, instance, include_titles, &|| false)
+    }
+
+    /// Window list after the caller already checked the grant. The registry
+    /// lock must not be held across this call: AX window proof can stall,
+    /// and a concurrent revoke has to land before the result is adopted.
+    pub(crate) fn list_windows_detached(
+        &self,
+        identity: &AppIdentity,
+        instance: &ProcessInstance,
+        include_titles: bool,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<DiscoveredWindow>, TargetError> {
+        if cancelled() {
+            return Err(TargetError::Cancelled);
+        }
         if !self.process_instance_alive(instance) {
             return Err(TargetError::ProcessRestarted);
         }
@@ -418,7 +457,11 @@ impl MacosNative {
                             generation: ledger.generation(w.id)?,
                         },
                         bounds: w.bounds,
-                        title: if include_titles { w.title.clone() } else { None },
+                        title: if include_titles {
+                            w.title.clone()
+                        } else {
+                            None
+                        },
                     })
                 })
                 .collect::<Vec<DiscoveredWindow>>())
@@ -438,6 +481,19 @@ impl MacosNative {
         identity: &AppIdentity,
     ) -> Result<ProcessInstance, LaunchError> {
         authorizer.check(scope, &TargetIdentity::application(identity.clone()))?;
+        self.launch_detached(identity, &|| false)
+    }
+
+    /// Launch after the caller already checked the grant. Do not hold the
+    /// registry lock across LaunchServices.
+    pub(crate) fn launch_detached(
+        &self,
+        identity: &AppIdentity,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<ProcessInstance, LaunchError> {
+        if cancelled() {
+            return Err(LaunchError::Failed("cancelled before launch".to_string()));
+        }
         launch(identity)
     }
 
@@ -464,6 +520,22 @@ impl MacosNative {
         validated: &ValidatedWindow,
     ) -> Result<WindowCapture, TargetError> {
         authorizer.check(&validated.scope, &validated.target)?;
+        self.capture_window_detached(validated, &|| false)
+    }
+
+    /// Screenshot after the caller already checked the grant. The registry
+    /// lock must not be held: ScreenCaptureKit waits up to 10 seconds, and
+    /// revoke or takeover has to update the ledger while this runs.
+    /// [cancelled] is checked before the capture seam and does not invent a
+    /// frame when it fires.
+    pub(crate) fn capture_window_detached(
+        &self,
+        validated: &ValidatedWindow,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<WindowCapture, TargetError> {
+        if cancelled() {
+            return Err(TargetError::Cancelled);
+        }
         if !self.process_instance_alive(&validated.instance) {
             return Err(TargetError::ProcessRestarted);
         }
@@ -486,6 +558,10 @@ impl MacosNative {
         if !ScreenCaptureAccess.preflight() {
             return Err(TargetError::PermissionMissing("screen recording"));
         }
+        // A revoke during the liveness proof must not reach the capture seam.
+        if cancelled() {
+            return Err(TargetError::Cancelled);
+        }
         #[cfg(test)]
         CAPTURE_SYSTEM_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let image = sck::capture(
@@ -495,12 +571,14 @@ impl MacosNative {
             proven.bounds.width,
             proven.bounds.height,
         )?;
-        let rgb = bgra_to_rgb(&image.bgra, image.width, image.height, image.stride).ok_or_else(|| {
-            TargetError::ProbeUnavailable("captured image has inconsistent pixels".to_string())
-        })?;
-        let raw = RgbImage::from_raw(image.width as u32, image.height as u32, rgb).ok_or_else(|| {
-            TargetError::ProbeUnavailable("captured image size mismatch".to_string())
-        })?;
+        let rgb =
+            bgra_to_rgb(&image.bgra, image.width, image.height, image.stride).ok_or_else(|| {
+                TargetError::ProbeUnavailable("captured image has inconsistent pixels".to_string())
+            })?;
+        let raw =
+            RgbImage::from_raw(image.width as u32, image.height as u32, rgb).ok_or_else(|| {
+                TargetError::ProbeUnavailable("captured image size mismatch".to_string())
+            })?;
         let (jpeg, image_width, image_height) = jpeg_within_budget(&raw)?;
         Ok(WindowCapture {
             window: validated.window,
@@ -550,6 +628,19 @@ impl MacosNative {
         validated: &ValidatedWindow,
     ) -> Result<AxTreeRead, TargetError> {
         authorizer.check(&validated.scope, &validated.target)?;
+        self.read_ax_tree_detached(validated, &|| false)
+    }
+
+    /// Tree read after the caller already checked the grant. Do not hold the
+    /// registry lock across this call.
+    pub(crate) fn read_ax_tree_detached(
+        &self,
+        validated: &ValidatedWindow,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<AxTreeRead, TargetError> {
+        if cancelled() {
+            return Err(TargetError::Cancelled);
+        }
         if !self.process_instance_alive(&validated.instance) {
             return Err(TargetError::ProcessRestarted);
         }
@@ -653,6 +744,21 @@ impl MacosNative {
             &validated.window.target,
             &validated.dispatch_permit,
         )?;
+        self.semantic_action_detached(validated, path, action, cancelled)
+    }
+
+    /// Semantic dispatch after the caller already retired the permit.
+    /// Do not hold the registry lock across this call.
+    pub(crate) fn semantic_action_detached(
+        &self,
+        validated: &ValidatedElement,
+        path: &[u32],
+        action: &SemanticAction,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<SemanticOutcome, TargetError> {
+        if cancelled() {
+            return Err(TargetError::Cancelled);
+        }
         action.validate()?;
         if !self.process_instance_alive(&validated.window.instance) {
             return Err(TargetError::ProcessRestarted);
@@ -824,6 +930,21 @@ impl MacosNative {
             &validated.window.target,
             &validated.dispatch_permit,
         )?;
+        self.targeted_input_detached(validated, path, input, cancelled)
+    }
+
+    /// Targeted input after the caller already retired the permit.
+    /// Do not hold the registry lock across this call.
+    pub(crate) fn targeted_input_detached(
+        &self,
+        validated: &ValidatedElement,
+        path: &[u32],
+        input: &TargetedInput,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<TargetedOutcome, TargetError> {
+        if cancelled() {
+            return Err(TargetError::Cancelled);
+        }
         input.validate()?;
         if !self.process_instance_alive(&validated.window.instance) {
             return Err(TargetError::ProcessRestarted);
@@ -836,11 +957,7 @@ impl MacosNative {
         // single AX call or a single posted event. The minimized half of
         // the same cell needs the live window element and runs below,
         // before any event is planned.
-        require_background(
-            validated.window.target.app().family,
-            input.kind(),
-            false,
-        )?;
+        require_background(validated.window.target.app().family, input.kind(), false)?;
         match ax_preflight() {
             AxPreflight::Trusted => {}
             AxPreflight::NotTrusted => {
@@ -919,9 +1036,10 @@ impl MacosNative {
         {
             return Err(TargetError::NotFocused);
         }
-        // The first posted event is the point of no return; cancellation
-        // is honored up to here, and the loop below keeps the sequence
-        // balanced whatever happens after.
+        // Planning, the event source, and the first group's events still
+        // happen after this check. Every group, including the first, checks
+        // cancellation again after it is built and before it posts. A
+        // pressed sequence still releases.
         if cancelled() {
             return Err(TargetError::Cancelled);
         }
@@ -1017,11 +1135,7 @@ impl MacosNative {
         // The terminal rejection: no pointer action is proven for any
         // family, minimized or not, so the gate needs no live window
         // read — nothing is ever dispatched past this point.
-        require_background(
-            validated.window.target.app().family,
-            action.kind(),
-            false,
-        )
+        require_background(validated.window.target.app().family, action.kind(), false)
     }
 
     /// Move a bound window to a new global origin through the AX
@@ -1062,6 +1176,20 @@ impl MacosNative {
             &validated.window.target,
             &validated.dispatch_permit,
         )?;
+        self.move_window_detached(validated, origin, cancelled)
+    }
+
+    /// Window move after the caller already retired the permit.
+    /// Do not hold the registry lock across this call.
+    pub(crate) fn move_window_detached(
+        &self,
+        validated: &ValidatedWindowDispatch,
+        origin: &WindowMove,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<SemanticOutcome, TargetError> {
+        if cancelled() {
+            return Err(TargetError::Cancelled);
+        }
         origin.validate()?;
         if !self.process_instance_alive(&validated.window.instance) {
             return Err(TargetError::ProcessRestarted);
@@ -1070,11 +1198,7 @@ impl MacosNative {
             &validated.window.target.app().bundle_id,
             validated.window.instance.pid as i32,
         )?;
-        require_background(
-            validated.window.target.app().family,
-            origin.kind(),
-            false,
-        )?;
+        require_background(validated.window.target.app().family, origin.kind(), false)?;
         match ax_preflight() {
             AxPreflight::Trusted => {}
             AxPreflight::NotTrusted => {
@@ -1142,9 +1266,14 @@ impl MacosNative {
             return Err(TargetError::Cancelled);
         }
         autoreleasepool(|| unsafe {
-            let point = CGPoint { x: origin.x, y: origin.y };
-            let value =
-                value_create(K_AX_VALUE_TYPE_CGPOINT, &point as *const CGPoint as *const c_void);
+            let point = CGPoint {
+                x: origin.x,
+                y: origin.y,
+            };
+            let value = value_create(
+                K_AX_VALUE_TYPE_CGPOINT,
+                &point as *const CGPoint as *const c_void,
+            );
             if value.is_null() {
                 return Err(TargetError::ProbeUnavailable(
                     "AXValueCreate returned null".to_string(),
@@ -1388,8 +1517,7 @@ fn ns_app_terminated(pid: i32) -> Option<bool> {
 
 /// Test-only proof that denied launches never reach LaunchServices.
 #[cfg(test)]
-static LAUNCH_SYSTEM_CALLS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+static LAUNCH_SYSTEM_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Test-only proof that denied captures never reach ScreenCaptureKit.
 #[cfg(test)]
@@ -2139,16 +2267,14 @@ fn window_proven_alive(windows: &[RawWindow], ax: &[AxWindow], pid: i32, w: &Raw
         return false;
     }
     // No AX candidate of this group may match a CG window outside it.
-    !ax.iter()
-        .filter(|a| frame_eq(&a.frame, &frame))
-        .any(|a| {
-            windows.iter().any(|x| {
-                x.owner_pid == pid
-                    && x.layer == 0
-                    && frame_eq(&bounds_frame(&x.bounds), &a.frame)
-                    && !frame_matches(&x.bounds, &frame)
-            })
+    !ax.iter().filter(|a| frame_eq(&a.frame, &frame)).any(|a| {
+        windows.iter().any(|x| {
+            x.owner_pid == pid
+                && x.layer == 0
+                && frame_eq(&bounds_frame(&x.bounds), &a.frame)
+                && !frame_matches(&x.bounds, &frame)
         })
+    })
 }
 
 // ---------- bounded accessibility tree read (CU-05) ----------
@@ -2306,8 +2432,9 @@ fn ax_secure(role: &str, subrole: Option<&str>, subrole_read_failed: bool) -> bo
 /// the read — an unbounded AX call is never issued) and the clock is
 /// re-checked afterwards.
 fn ax_enable_full_tree(pid: i32, deadline: Instant) -> Result<(), TargetError> {
-    let f = axf()
-        .ok_or_else(|| TargetError::ProbeUnavailable("HIServices symbols unavailable".to_string()))?;
+    let f = axf().ok_or_else(|| {
+        TargetError::ProbeUnavailable("HIServices symbols unavailable".to_string())
+    })?;
     let (Some(set_attribute), Some(set_timeout)) = (f.set_attribute, f.set_messaging_timeout)
     else {
         // No way to ask for the full tree: Chromium reads stay chrome-only
@@ -2406,7 +2533,8 @@ fn resolve_window_element(
 /// emitted tree is never a partial truth.
 struct TreeWalk<'a> {
     f: &'a AxFns,
-    copy_values: unsafe extern "C" fn(*mut c_void, CFStringRef, i64, i64, *mut *const c_void) -> i32,
+    copy_values:
+        unsafe extern "C" fn(*mut c_void, CFStringRef, i64, i64, *mut *const c_void) -> i32,
     value_count: unsafe extern "C" fn(*mut c_void, CFStringRef, *mut i64) -> i32,
     action_names: unsafe extern "C" fn(*mut c_void, *mut *const c_void) -> i32,
     budget: ReadBudget,
@@ -2437,7 +2565,9 @@ impl TreeWalk<'_> {
         // classified, so its absence or failure fails the read.
         let role = self
             .budget
-            .call(element, || unsafe { ax_attr_string(self.f, element, "AXRole", 64) })
+            .call(element, || unsafe {
+                ax_attr_string(self.f, element, "AXRole", 64)
+            })
             .map_err(budget_target_error)?
             .map_err(ax_tree_read_error)?
             .map(|(role, _)| role)
@@ -2447,14 +2577,15 @@ impl TreeWalk<'_> {
         // AXSubrole read; a failed identification stays conservative and
         // no name is read.
         let secure = if role == "AXTextField" {
-            match self
-                .budget
-                .call(element, || unsafe { ax_attr_string(self.f, element, "AXSubrole", 64) })
-            {
+            match self.budget.call(element, || unsafe {
+                ax_attr_string(self.f, element, "AXSubrole", 64)
+            }) {
                 Err(budget) => return Err(budget_target_error(budget)),
-                Ok(Ok(subrole)) => {
-                    ax_secure(&role, subrole.as_ref().map(|(text, _)| text.as_str()), false)
-                }
+                Ok(Ok(subrole)) => ax_secure(
+                    &role,
+                    subrole.as_ref().map(|(text, _)| text.as_str()),
+                    false,
+                ),
                 Ok(Err(_)) => ax_secure(&role, None, true),
             }
         } else {
@@ -2497,12 +2628,16 @@ impl TreeWalk<'_> {
         // the read.
         let enabled = self
             .budget
-            .call(element, || unsafe { ax_attr_bool(self.f, element, "AXEnabled") })
+            .call(element, || unsafe {
+                ax_attr_bool(self.f, element, "AXEnabled")
+            })
             .map_err(budget_target_error)?
             .unwrap_or(None);
         let focused = self
             .budget
-            .call(element, || unsafe { ax_attr_bool(self.f, element, "AXFocused") })
+            .call(element, || unsafe {
+                ax_attr_bool(self.f, element, "AXFocused")
+            })
             .map_err(budget_target_error)?
             .unwrap_or(None);
         let frame = self.read_frame(element)?;
@@ -2748,8 +2883,9 @@ impl TreeWalk<'_> {
 /// timeout the per-call budget relies on: when they are missing the read
 /// refuses instead of walking unbounded.
 fn tree_symbols() -> Result<&'static AxFns, TargetError> {
-    let f = axf()
-        .ok_or_else(|| TargetError::ProbeUnavailable("HIServices symbols unavailable".to_string()))?;
+    let f = axf().ok_or_else(|| {
+        TargetError::ProbeUnavailable("HIServices symbols unavailable".to_string())
+    })?;
     if f.copy_attribute_values.is_none()
         || f.attribute_value_count.is_none()
         || f.copy_action_names.is_none()
@@ -3125,8 +3261,13 @@ fn selection_present(
 ) -> Result<bool, TargetError> {
     budget.arm(element.0).map_err(budget_target_error)?;
     let mut raw: *const c_void = ptr::null();
-    let err =
-        unsafe { (f.copy_attribute)(element.0, nsstr("AXSelectedTextRange") as CFStringRef, &mut raw) };
+    let err = unsafe {
+        (f.copy_attribute)(
+            element.0,
+            nsstr("AXSelectedTextRange") as CFStringRef,
+            &mut raw,
+        )
+    };
     let clock = budget.check();
     if err != 0 || raw.is_null() {
         if !raw.is_null() {
@@ -3261,7 +3402,7 @@ fn targeted_event_plan(input: &TargetedInput) -> Vec<PlannedStep> {
                             accumulated |= *flags;
                             (*keycode, accumulated)
                         })
-                    .collect(),
+                        .collect(),
                 ));
             }
             plan.push(PlannedStep::KeyTap {
@@ -3387,9 +3528,15 @@ fn post_events(pid: libc::pid_t, events: &[CGEvent]) -> usize {
 }
 
 /// Post the whole plan, checking cancellation, target liveness and the
-/// binding recheck between balanced steps. The first step always posts
-/// (entry cancellation was checked by the caller); every later step may
-/// abort. The release promise is structural: a modifier press group
+/// binding recheck between balanced steps. Every group, including the
+/// first, is built and then checked
+/// again before it posts. The caller's entry check is not the last one:
+/// planning and event creation sit between it and the post, so a stop
+/// that flips there must not reach the seam. Nothing posted yet is a
+/// plain error and does not emit a held release; anything already posted
+/// still releases and returns Partial. The plan's closing ModsUp stays
+/// outside this check. The release promise is structural: a modifier
+/// press group
 /// posts only after its matching release events are created and held, so
 /// whatever stops the input later — cancellation, a dead process, a
 /// failed binding recheck, a creation failure on a later step — can
@@ -3425,6 +3572,20 @@ fn post_targeted_plan(
         events_posted: posted,
         events_total: total,
         cause,
+    };
+    // After this group's events exist and before they post, including
+    // index 0. ModsUp never reaches it. Nothing posted yet does not
+    // emit a held release.
+    let cancelled_before_post = |posted: &mut usize, held: &mut Option<Vec<CGEvent>>| {
+        if !cancelled() {
+            return None;
+        }
+        if *posted == 0 {
+            held.take();
+            return Some(Err(TargetError::Cancelled));
+        }
+        release_held(posted, held);
+        Some(Ok(partial(*posted, TargetError::Cancelled)))
     };
     let mut posted = 0usize;
     for (index, step) in plan.iter().enumerate() {
@@ -3472,6 +3633,10 @@ fn post_targeted_plan(
                     create_flags_changed_events(source, &up_specs),
                 ) {
                     (Ok(down), Ok(up)) => {
+                        if let Some(stopped) = cancelled_before_post(&mut posted, &mut held_release)
+                        {
+                            return stopped;
+                        }
                         posted += post_events(pid, &down);
                         held_release = Some(up);
                         if index + 1 < plan.len() {
@@ -3502,6 +3667,9 @@ fn post_targeted_plan(
         };
         match built {
             Ok(events) => {
+                if let Some(stopped) = cancelled_before_post(&mut posted, &mut held_release) {
+                    return stopped;
+                }
                 posted += post_events(pid, &events);
             }
             Err(cause) => {
@@ -3937,8 +4105,9 @@ mod sck {
         width_pt: f64,
         height_pt: f64,
     ) -> Result<SckImage, CaptureFailure> {
-        let (width_px, height_px) = capture_pixel_size(width_pt, height_pt)
-            .ok_or_else(|| CaptureFailure::Unavailable("window has degenerate bounds".to_string()))?;
+        let (width_px, height_px) = capture_pixel_size(width_pt, height_pt).ok_or_else(|| {
+            CaptureFailure::Unavailable("window has degenerate bounds".to_string())
+        })?;
         autoreleasepool(|| unsafe {
             let content = shareable_content()?;
             let window = find_window(content, pid, window_id);
@@ -3998,7 +4167,9 @@ mod sck {
             let (image, error) = waited?;
             // deliver guarantees an error never carries an owned pointer.
             if let Some(description) = error {
-                return Err(CaptureFailure::Unavailable(format!("capture: {description}")));
+                return Err(CaptureFailure::Unavailable(format!(
+                    "capture: {description}"
+                )));
             }
             if image == 0 {
                 return Err(CaptureFailure::Unavailable(
@@ -4017,9 +4188,9 @@ mod sck {
 mod tests {
     use super::*;
     use crate::approval::{DispatchPermit, GrantKind};
-    use crate::target::{Environment, TargetObservation};
     use crate::target::MAX_SEMANTIC_TEXT_CHARS;
-    use crate::target::{MAX_TARGETED_TEXT_CHARS, TargetedKeyPress};
+    use crate::target::{Environment, TargetObservation};
+    use crate::target::{TargetedKeyPress, MAX_TARGETED_TEXT_CHARS};
 
     fn scope() -> Scope {
         Scope::new("ws", "run")
@@ -4176,8 +4347,7 @@ mod tests {
     fn completion_releases_results_arriving_after_timeout() {
         // Counting disposer: every orphaned result is released exactly
         // once, and a normally delivered result never is.
-        static RELEASED: std::sync::atomic::AtomicUsize =
-            std::sync::atomic::AtomicUsize::new(0);
+        static RELEASED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         unsafe fn count_release(pointer: usize) {
             assert_ne!(pointer, 0);
             RELEASED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -4380,7 +4550,10 @@ mod tests {
         // not every AX window carries an id, so exact matching is off and
         // the closed group (2 == 2) validates both entries.
         let windows = vec![cg_window(1, 7, frame), cg_window(2, 7, frame)];
-        let ax = vec![AxWindow { id: Some(1), frame }, AxWindow { id: None, frame }];
+        let ax = vec![
+            AxWindow { id: Some(1), frame },
+            AxWindow { id: None, frame },
+        ];
         assert!(window_proven_alive(&windows, &ax, 7, &windows[0]));
         assert!(window_proven_alive(&windows, &ax, 7, &windows[1]));
     }
@@ -4404,7 +4577,16 @@ mod tests {
         assert!(!window_proven_alive(&windows, &ax, 7, &windows[0]));
         assert!(!window_proven_alive(&windows, &ax, 7, &windows[1]));
         // Without overlap each group closes on its own and both validate.
-        let ax = vec![AxWindow { id: None, frame: ghost }, AxWindow { id: None, frame: live }];
+        let ax = vec![
+            AxWindow {
+                id: None,
+                frame: ghost,
+            },
+            AxWindow {
+                id: None,
+                frame: live,
+            },
+        ];
         assert!(window_proven_alive(&windows, &ax, 7, &windows[0]));
         assert!(window_proven_alive(&windows, &ax, 7, &windows[1]));
     }
@@ -4609,9 +4791,7 @@ mod tests {
         // text on a dead process is Invalid, not ProcessRestarted. Every
         // attempt retires its permit, so each case mints a fresh one.
         let over_bound = SemanticAction::SetValue("x".repeat(MAX_SEMANTIC_TEXT_CHARS + 1));
-        let permit = authorizer
-            .spend_for_dispatch(&scope(), &target)
-            .unwrap();
+        let permit = authorizer.spend_for_dispatch(&scope(), &target).unwrap();
         assert_eq!(
             native.semantic_action(
                 &mut authorizer,
@@ -4625,11 +4805,15 @@ mod tests {
             ))
         );
         // A dead process instance: rejected before identity and the seam.
-        let permit = authorizer
-            .spend_for_dispatch(&scope(), &target)
-            .unwrap();
+        let permit = authorizer.spend_for_dispatch(&scope(), &target).unwrap();
         assert_eq!(
-            native.semantic_action(&mut authorizer, &validated(dead, permit), &[], &press, &|| false),
+            native.semantic_action(
+                &mut authorizer,
+                &validated(dead, permit),
+                &[],
+                &press,
+                &|| false
+            ),
             Err(TargetError::ProcessRestarted)
         );
         // A live process whose bundle id does not match the granted
@@ -4643,11 +4827,15 @@ mod tests {
             start_token: process_start_token(std::process::id() as i32)
                 .expect("own process start token"),
         };
-        let permit = authorizer
-            .spend_for_dispatch(&scope(), &target)
-            .unwrap();
+        let permit = authorizer.spend_for_dispatch(&scope(), &target).unwrap();
         assert_eq!(
-            native.semantic_action(&mut authorizer, &validated(own, permit), &[], &press, &|| false),
+            native.semantic_action(
+                &mut authorizer,
+                &validated(own, permit),
+                &[],
+                &press,
+                &|| false
+            ),
             Err(TargetError::Invalid(
                 "process instance does not belong to the authorized identity"
             ))
@@ -4661,9 +4849,7 @@ mod tests {
         authorizer
             .grant(&scope(), &target, GrantKind::Once)
             .unwrap();
-        let permit = authorizer
-            .spend_for_dispatch(&scope(), &target)
-            .unwrap();
+        let permit = authorizer.spend_for_dispatch(&scope(), &target).unwrap();
         assert_eq!(
             authorizer.check(&scope(), &target),
             Err(TargetError::NotAuthorized)
@@ -4684,9 +4870,7 @@ mod tests {
         authorizer
             .grant(&scope(), &target, GrantKind::Once)
             .unwrap();
-        let revoked = authorizer
-            .spend_for_dispatch(&scope(), &target)
-            .unwrap();
+        let revoked = authorizer.spend_for_dispatch(&scope(), &target).unwrap();
         authorizer.revoke(&scope(), &target);
         assert_eq!(
             native.semantic_action(
@@ -4772,9 +4956,7 @@ mod tests {
         assert!(chunks
             .iter()
             .all(|units| units.len() <= MAX_EVENT_UTF16_UNITS));
-        assert!(chunks
-            .iter()
-            .all(|units| String::from_utf16(units).is_ok()));
+        assert!(chunks.iter().all(|units| String::from_utf16(units).is_ok()));
         let reassembled: String = chunks
             .iter()
             .map(|units| String::from_utf16(units).unwrap())
@@ -4889,9 +5071,7 @@ mod tests {
         // text on a dead process is Invalid, not ProcessRestarted. Every
         // attempt retires its permit, so each case mints a fresh one.
         let over_bound = TargetedInput::InsertText("x".repeat(MAX_TARGETED_TEXT_CHARS + 1));
-        let permit = authorizer
-            .spend_for_dispatch(&scope(), &target)
-            .unwrap();
+        let permit = authorizer.spend_for_dispatch(&scope(), &target).unwrap();
         assert_eq!(
             native.targeted_input(
                 &mut authorizer,
@@ -4905,9 +5085,7 @@ mod tests {
             ))
         );
         // A dead process instance: rejected before identity and the seam.
-        let permit = authorizer
-            .spend_for_dispatch(&scope(), &target)
-            .unwrap();
+        let permit = authorizer.spend_for_dispatch(&scope(), &target).unwrap();
         assert_eq!(
             native.targeted_input(
                 &mut authorizer,
@@ -4929,9 +5107,7 @@ mod tests {
             start_token: process_start_token(std::process::id() as i32)
                 .expect("own process start token"),
         };
-        let permit = authorizer
-            .spend_for_dispatch(&scope(), &target)
-            .unwrap();
+        let permit = authorizer.spend_for_dispatch(&scope(), &target).unwrap();
         assert_eq!(
             native.targeted_input(
                 &mut authorizer,
@@ -4953,9 +5129,7 @@ mod tests {
         authorizer
             .grant(&scope(), &target, GrantKind::Once)
             .unwrap();
-        let permit = authorizer
-            .spend_for_dispatch(&scope(), &target)
-            .unwrap();
+        let permit = authorizer.spend_for_dispatch(&scope(), &target).unwrap();
         assert_eq!(
             authorizer.check(&scope(), &target),
             Err(TargetError::NotAuthorized)
@@ -4976,9 +5150,7 @@ mod tests {
         authorizer
             .grant(&scope(), &target, GrantKind::Once)
             .unwrap();
-        let revoked = authorizer
-            .spend_for_dispatch(&scope(), &target)
-            .unwrap();
+        let revoked = authorizer.spend_for_dispatch(&scope(), &target).unwrap();
         authorizer.revoke(&scope(), &target);
         assert_eq!(
             native.targeted_input(
@@ -5075,13 +5247,13 @@ mod tests {
             "shift must lift clean"
         );
         drop(posted_flags);
+        // Production plans put ModsDown first. A stop that is already
+        // true after that group is built must not post the press, and
+        // must not emit the release of a press that never went out.
+        // A missed gate would post the press and then the later release.
         assert_eq!(
             post_targeted_plan(&source, own_pid, &combo, &|| true, &|| true, &|| None),
-            Ok(TargetedOutcome::Partial {
-                events_posted: 2,
-                events_total: 4,
-                cause: TargetError::Cancelled,
-            })
+            Err(TargetError::Cancelled)
         );
         // A dead target between steps reports ProcessRestarted with the
         // same release discipline.
@@ -5106,16 +5278,31 @@ mod tests {
                 cause: TargetError::NotFocused,
             })
         );
-        // A text plan aborted between chunks has no pressed state to
-        // release: the partial count is exactly what was posted.
         let text_plan = targeted_event_plan(&TargetedInput::InsertText("x".repeat(25)));
+        // The first chunk is built after the caller's entry check. A stop
+        // already true must not post it. A missed gate would post that
+        // chunk and then stop.
         assert_eq!(
             post_targeted_plan(&source, own_pid, &text_plan, &|| true, &|| true, &|| None),
-            Ok(TargetedOutcome::Partial {
-                events_posted: 2,
-                events_total: 6,
-                cause: TargetError::Cancelled,
-            })
+            Err(TargetError::Cancelled)
+        );
+        // One production text chunk and one bare key are a single group.
+        // Skipping the pre-post check returns Dispatched, not Partial.
+        let one_chunk = targeted_event_plan(&TargetedInput::InsertText("x".into()));
+        assert_eq!(one_chunk.len(), 1);
+        assert_eq!(
+            post_targeted_plan(&source, own_pid, &one_chunk, &|| true, &|| true, &|| None),
+            Err(TargetError::Cancelled)
+        );
+        let bare_key = targeted_event_plan(&TargetedInput::KeyPress(TargetedKeyPress {
+            key: TargetedKey::Left,
+            modifiers: KeyModifiers::none(),
+        }));
+        assert_eq!(bare_key.len(), 1);
+        assert!(matches!(bare_key[0], PlannedStep::KeyTap { .. }));
+        assert_eq!(
+            post_targeted_plan(&source, own_pid, &bare_key, &|| true, &|| true, &|| None),
+            Err(TargetError::Cancelled)
         );
         // Creation-failure discipline (injected at the shared creation
         // seam; the combo's creation order is press #1, held release #2,
@@ -5123,9 +5310,8 @@ mod tests {
         // anything pressed is a plain error with zero events; once a
         // press has posted, the pre-built release still goes out and the
         // result is an honest Partial.
-        let create_failed = || {
-            TargetError::ProbeUnavailable("CGEventCreateKeyboardEvent failed".to_string())
-        };
+        let create_failed =
+            || TargetError::ProbeUnavailable("CGEventCreateKeyboardEvent failed".to_string());
         TARGETED_CREATE_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
         TARGETED_CREATE_FAIL_AT.store(1, std::sync::atomic::Ordering::SeqCst);
         assert_eq!(
@@ -5173,9 +5359,70 @@ mod tests {
         );
         TARGETED_CREATE_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
         TARGETED_CREATE_FAIL_AT.store(0, std::sync::atomic::Ordering::SeqCst);
+        // A stop that flips inside the binding recheck, which itself
+        // returns clean, must not post the group just built. Index 0
+        // still posts. A missed gate would post the next text chunk
+        // (4), the key tap (then the later release, 4), or the modifier
+        // press. An empty first group posts nothing, so the same stop
+        // is a plain error and does not emit a held release.
+        let post_with_stop_in_recheck = |plan: &[PlannedStep]| {
+            let stop = std::cell::Cell::new(false);
+            let rechecks = std::cell::Cell::new(0usize);
+            let outcome =
+                post_targeted_plan(&source, own_pid, plan, &|| true, &|| stop.get(), &|| {
+                    rechecks.set(rechecks.get() + 1);
+                    stop.set(true);
+                    None
+                });
+            assert_eq!(rechecks.get(), 1, "binding recheck did not run once");
+            outcome
+        };
+        assert_eq!(
+            post_with_stop_in_recheck(&text_plan),
+            Ok(TargetedOutcome::Partial {
+                events_posted: 2,
+                events_total: 6,
+                cause: TargetError::Cancelled,
+            })
+        );
+        assert_eq!(
+            post_with_stop_in_recheck(&combo),
+            Ok(TargetedOutcome::Partial {
+                events_posted: 2,
+                events_total: 4,
+                cause: TargetError::Cancelled,
+            })
+        );
+        let shift_down = [(56, shift)];
+        let text_then_mod = vec![
+            PlannedStep::TextChunk(vec![120]),
+            PlannedStep::ModsDown(shift_down.to_vec()),
+            PlannedStep::ModsUp(release_specs(&shift_down)),
+        ];
+        assert_eq!(
+            post_with_stop_in_recheck(&text_then_mod),
+            Ok(TargetedOutcome::Partial {
+                events_posted: 2,
+                events_total: 4,
+                cause: TargetError::Cancelled,
+            })
+        );
+        let empty_mod_then_text = vec![
+            PlannedStep::ModsDown(vec![]),
+            PlannedStep::TextChunk(vec![120]),
+            PlannedStep::ModsUp(vec![]),
+        ];
+        assert_eq!(
+            post_with_stop_in_recheck(&empty_mod_then_text),
+            Err(TargetError::Cancelled)
+        );
+        // Call order: full combo 4, shift+ctrl 6, cancelled combo 0,
+        // dead target 2, NotFocused 2, cancelled 25-char text 0,
+        // cancelled one-chunk text 0, cancelled bare key 0, create
+        // failures 0/0/2, text create failures 0/2, recheck 2/2/2/0.
         assert_eq!(
             TARGETED_POST_SYSTEM_CALLS.load(std::sync::atomic::Ordering::SeqCst),
-            calls_before + 4 + 6 + 2 + 2 + 2 + 2 + 0 + 0 + 2 + 0 + 2,
+            calls_before + 4 + 6 + 0 + 2 + 2 + 0 + 0 + 0 + 0 + 0 + 2 + 0 + 2 + 2 + 2 + 2 + 0,
             "the posting path posted an unexpected number of events"
         );
     }
@@ -5241,10 +5488,7 @@ mod tests {
         // Payload validity precedes the process check: an out-of-bounds
         // point on a dead process is OutOfBounds, not ProcessRestarted.
         let out_of_bounds = PointerAction::Click {
-            point: crate::target::WindowPoint {
-                x: 1600.0,
-                y: 10.0,
-            },
+            point: crate::target::WindowPoint { x: 1600.0, y: 10.0 },
         };
         assert_eq!(
             native.pointer_action(&mut authorizer, &validated, &out_of_bounds, &|| false),
@@ -5316,8 +5560,8 @@ mod tests {
             pid: 99_999_999,
             start_token: 1,
         };
-        let validated = |instance: ProcessInstance, permit: DispatchPermit| {
-            ValidatedWindowDispatch {
+        let validated =
+            |instance: ProcessInstance, permit: DispatchPermit| ValidatedWindowDispatch {
                 window: ValidatedWindow {
                     target: target.clone(),
                     instance,
@@ -5325,8 +5569,7 @@ mod tests {
                     scope: scope(),
                 },
                 dispatch_permit: permit,
-            }
-        };
+            };
         let move_to = WindowMove { x: 100.0, y: 100.0 };
         // A forged permit is rejected before any OS access, even though
         // no grant was ever spent for it.
@@ -5348,7 +5591,10 @@ mod tests {
         // Payload validity precedes even the process check: a NaN origin
         // on a dead process is Invalid, not ProcessRestarted. Every
         // attempt retires its permit, so each case mints a fresh one.
-        let nan_origin = WindowMove { x: f64::NAN, y: 0.0 };
+        let nan_origin = WindowMove {
+            x: f64::NAN,
+            y: 0.0,
+        };
         let permit = authorizer.spend_for_dispatch(&scope(), &target).unwrap();
         assert_eq!(
             native.move_window(
@@ -5382,12 +5628,9 @@ mod tests {
         };
         let permit = authorizer.spend_for_dispatch(&scope(), &target).unwrap();
         assert_eq!(
-            native.move_window(
-                &mut authorizer,
-                &validated(own, permit),
-                &move_to,
-                &|| false
-            ),
+            native.move_window(&mut authorizer, &validated(own, permit), &move_to, &|| {
+                false
+            }),
             Err(TargetError::Invalid(
                 "process instance does not belong to the authorized identity"
             ))
@@ -5588,7 +5831,11 @@ mod tests {
         assert!(ax_secure("AXTextField", Some("AXSecureTextField"), false));
         // Ordinary text field (no subrole, or a non-secure one).
         assert!(!ax_secure("AXTextField", None, false));
-        assert!(!ax_secure("AXTextField", Some("AXStandardTextField"), false));
+        assert!(!ax_secure(
+            "AXTextField",
+            Some("AXStandardTextField"),
+            false
+        ));
         // A failed subrole identification is conservative: secure.
         assert!(ax_secure("AXTextField", None, true));
         assert!(ax_secure("AXTextField", Some("AXSecureTextField"), true));
@@ -5625,7 +5872,9 @@ mod tests {
         assert_eq!(budget.call(ptr::null_mut(), || "second"), Ok("second"));
         let recorded = RECORDED.lock().unwrap();
         assert_eq!(recorded.len(), 2, "recorded {recorded:?}");
-        assert!(recorded.iter().all(|seconds| *seconds > 0.0 && *seconds <= 30.0));
+        assert!(recorded
+            .iter()
+            .all(|seconds| *seconds > 0.0 && *seconds <= 30.0));
         // A later call never inherits a stale (larger) budget.
         assert!(recorded[0] >= recorded[1]);
     }

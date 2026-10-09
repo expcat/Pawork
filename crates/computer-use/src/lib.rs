@@ -9,8 +9,14 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 pub mod approval;
+pub mod native_host;
 mod rfb;
 pub mod target;
+
+pub use native_host::{
+    AppSnapshot, CapturedFrame, HostSurface, NativeControl, NativeHost, NativeOutput,
+    NativePerform, NativeRequest, NativeSurface, ProbeSnapshot, WindowSnapshot,
+};
 
 /// macOS native backend (CU-03): application/window discovery, window
 /// generation tracking and activation-free launching by bundle identity.
@@ -376,14 +382,11 @@ impl Computer {
         // the actual state; when that capture fails the dispatch already
         // happened and is reported as fact with the failure — never erased
         // by an error and never retried here.
-        let (observation, jpeg, observation_failure) = match self.capture_observation(
-            scope,
-            cancelled,
-            Some(dispatch_generation),
-        ) {
-            Ok((observation, jpeg)) => (Some(observation), Some(jpeg), None),
-            Err(error) => (None, None, Some(error.to_string())),
-        };
+        let (observation, jpeg, observation_failure) =
+            match self.capture_observation(scope, cancelled, Some(dispatch_generation)) {
+                Ok((observation, jpeg)) => (Some(observation), Some(jpeg), None),
+                Err(error) => (None, None, Some(error.to_string())),
+            };
         Ok(Output {
             observation,
             permissions: None,
@@ -905,9 +908,7 @@ mod tests {
                 claim_state(&mut state, "run-1").unwrap();
             }
         }));
-        let output = c
-            .execute("run-1", click(id, 640.0), &|| false)
-            .unwrap();
+        let output = c.execute("run-1", click(id, 640.0), &|| false).unwrap();
         // The click was dispatched; the observation failed honestly and
         // no lease was stored for the superseded generation.
         assert_eq!(backend.positions.lock().unwrap().len(), 1);

@@ -54,6 +54,8 @@ Desktop 四层：`ui` → `controller`（只调 `GuiClient`）→ `projection`�
 
 断线：`ConnectionManager` 心跳清理连接（host idle 30s；desktop 独立任务每 15s 发 heartbeat），**不**取消进行中的 Run。Resume：`Replay` / `SnapshotRequired` / `UpToDate`（`ResumeDisposition`）。Timeline 投影 reducer 在 `protocol::projection`，host 与 desktop 同源。
 
+CU-10 显式 CLI 客户端：`pawork chat/run --gui-host` → `GuiClient` 认证（握手名 `pawork-cli`）→ 已有 `pawork gui serve` 的 RunStart → 同一 `Core.native`。GuiServer 与 Adapter 共享 ConnectionManager，Host 仅对该名字的 Run 固定等批开关；名称不产生授权。模型 request 后，bind/launch 在 Policy 与通用审批之后、scheduler 前等待同 scope / bundle 的真实目标审批，GUI grant/revoke/close 唤醒，取消短周期检查。CLI 观察原 run_id 的 live / Resume / 持久 Timeline，断线不取消、不重派发；显式 Ctrl-C 经 RunCancel 等待终态。范围及验证状态见 [CU-10](../plan/cu-10-action-observe.md)。
+
 GUI 1.22 本机附件：系统文件选择器 → Desktop 有界读取显式选定文件 → `GuiClient.command(AttachmentUpload)`（64 KiB 分块）→ Host 按鉴权客户端 / 会话暂存 → `RunStart.attachment_ids` 校验并消费为 Text / Image part → 正常消息持久化与模型能力校验。无需 workspace，不给 Host 传本机路径；文本附件标记为不可信参考资料。`RunStart.web_search` 只覆盖本轮托管搜索，缺省沿用 Global，不改变配置。
 
 Headless / ACP：

@@ -68,6 +68,7 @@ pawork-providers = { path = "../providers", features = ["anthropic"] }
 pawork-storage = { path = "../storage" }
 pawork-testkit = { path = "../testkit" }
 pawork-transport = { path = "../transport", features = ["local", "memory"] }
+pawork-client = { path = "../client" }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
 
 [[test]]

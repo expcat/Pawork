@@ -1512,10 +1512,260 @@ async fn cancel_during_long_tool_emits_run_cancelled_without_completing_tools() 
     assert_eq!(last, Some("RunCancelled"));
 }
 
+#[tokio::test]
+async fn cancelled_batch_with_dispatch_fact_pairs_all_invocations() {
+    let provider = RecordingProvider::new(MockProvider::sequence(vec![MockScript::new()
+        .tool_call("call-0", serde_json::json!({"n": 0}))
+        .tool_call("call-1", serde_json::json!({"n": 1}))
+        .tool_call("call-2", serde_json::json!({"n": 2}))
+        .tool_call("call-3", serde_json::json!({"n": 3}))
+        .tool_call("call-4", serde_json::json!({"n": 4}))
+        .complete_with(StopReason::ToolUse)]));
+    let ctx = CancelledFactBatchCtx::new();
+    let sink = RecordingEvents::default();
+
+    let error = run_session(
+        &provider,
+        sample_request((0..5).map(|n| ToolDefinition {
+            name: format!("call-{n}"),
+            description: "cancelled batch call".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }).collect()),
+        sample_turn(),
+        &sink,
+        CancellationToken::new(),
+        &ctx,
+        DEFAULT_MAX_TOOL_ROUNDS,
+        TurnContext::default(),
+    )
+    .await
+    .expect_err("cancelled");
+    assert!(matches!(
+        error,
+        EngineError::Provider(ref err)
+            if err.kind == pawork_domain::ProviderErrorKind::Cancelled
+    ));
+
+    let events = sink.snapshot();
+    let completed: Vec<pawork_domain::ToolResultContent> = events
+        .iter()
+        .filter_map(|envelope| match &envelope.payload {
+            AgentEvent::ToolExecutionCompleted { result, .. } => Some(result.clone()),
+            _ => None,
+        })
+        .collect();
+    // 整批配对：五条 Completed 按 invocation 顺序，覆盖 OR 两臂与三条反例。
+    let names: Vec<&str> = completed
+        .iter()
+        .map(|result| result.tool_name.as_deref().unwrap_or_default())
+        .collect();
+    assert_eq!(names, ["call-0", "call-1", "call-2", "call-3", "call-4"]);
+    // call-0 只靠 success=true 保留：无派发标记、非错误、metadata 不改写。
+    assert!(!completed[0].is_error);
+    assert!(!completed[0].metadata.get("input_dispatched").is_some());
+    // call-1 靠严格布尔 input_dispatched=true 保留，原 metadata 不改写。
+    assert!(completed[1].is_error);
+    assert_eq!(
+        completed[1].metadata.get("input_dispatched"),
+        Some(&serde_json::json!(true))
+    );
+    assert_eq!(
+        completed[1]
+            .metadata
+            .get("sandbox")
+            .and_then(|s| s.get("fallback")),
+        Some(&serde_json::json!(true))
+    );
+    // call-2 Denied 保持拒绝 Text；call-3 缺 raw、call-4 字符串非事实，
+    // 均为显式取消 Text，content 非空。
+    let text = |index: usize| {
+        completed[index]
+            .content
+            .iter()
+            .filter_map(|part| match part {
+                ContentPart::Text(text) => Some(text.text.as_str()),
+                _ => None,
+            })
+            .collect::<String>()
+    };
+    assert_eq!(text(2), "tool call denied by user");
+    assert_eq!(text(3), "tool call cancelled with no dispatch fact");
+    assert_eq!(text(4), "tool call cancelled with no dispatch fact");
+    assert!(!completed[2].content.is_empty());
+    assert!(!completed[3].content.is_empty());
+    assert!(!completed[4].content.is_empty());
+
+    // 恰好一条 sandbox.fallback Diagnostic，紧跟 call-1 的 Completed、
+    // 在 call-2 的 Completed 之前；唯一 MessageCommitted.tool 在其之后。
+    let completed_indexes: Vec<usize> = events
+        .iter()
+        .enumerate()
+        .filter(|(_, envelope)| {
+            matches!(envelope.payload, AgentEvent::ToolExecutionCompleted { .. })
+        })
+        .map(|(index, _)| index)
+        .collect();
+    let diagnostic_indexes: Vec<usize> = events
+        .iter()
+        .enumerate()
+        .filter(|(_, envelope)| {
+            matches!(
+                &envelope.payload,
+                AgentEvent::Diagnostic { code, .. } if code == "sandbox.fallback"
+            )
+        })
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(diagnostic_indexes.len(), 1);
+    assert!(diagnostic_indexes[0] > completed_indexes[1]);
+    assert!(diagnostic_indexes[0] < completed_indexes[2]);
+    let committed_index = events
+        .iter()
+        .enumerate()
+        .find(|(_, envelope)| {
+            matches!(
+                &envelope.payload,
+                AgentEvent::MessageCommitted { message }
+                    if message.role == MessageRole::Tool
+            )
+        })
+        .map(|(index, _)| index)
+        .expect("one tool MessageCommitted");
+    assert!(committed_index > *completed_indexes.last().expect("five completed"));
+    assert!(committed_index > diagnostic_indexes[0]);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|envelope| {
+                matches!(
+                    &envelope.payload,
+                    AgentEvent::MessageCommitted { message }
+                        if message.role == MessageRole::Tool
+                )
+            })
+            .count(),
+        1
+    );
+
+    // 终态与请求锚点：RunCancelled 收口、无二次 Provider 请求。
+    let types = sink.types();
+    assert!(types.contains(&"RunCancelled"));
+    assert!(!types.contains(&"RunCompleted"));
+    assert!(!types.contains(&"RunFailed"));
+    assert_eq!(
+        types
+            .iter()
+            .filter(|name| **name == "ToolExecutionStarted")
+            .count(),
+        3,
+        "ToolExecutionStarted 只覆盖 to_run（call-0/1/4）"
+    );
+    assert_eq!(provider.requests().len(), 1);
+    assert_eq!(types.last().copied(), Some("RunCancelled"));
+}
+
 struct HangUntilApprovalCtx {
     started: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     msg_counter: AtomicU64,
     req_counter: AtomicU64,
+}
+
+/// CU-10 #4：取消发生在这批工具执行内部。execute_tools 取消令牌后返回
+/// 混合 raw 结果（success 事实、布尔派发事实、字符串非事实），审批闸门
+/// 把一条标 Denied、一条标 Cancelled 且都不执行。
+struct CancelledFactBatchCtx {
+    msg_counter: AtomicU64,
+    req_counter: AtomicU64,
+}
+
+impl CancelledFactBatchCtx {
+    fn new() -> Self {
+        Self {
+            msg_counter: AtomicU64::new(0),
+            req_counter: AtomicU64::new(0),
+        }
+    }
+
+    fn raw_result(name: &str) -> ToolResult {
+        match name {
+            "call-0" => ToolResult::success(vec![ContentPart::Text(TextContent {
+                text: "ok-0".into(),
+            })]),
+            "call-1" => {
+                let mut result = ToolResult::failure(ErrorContext {
+                    category: ErrorCategory::Cancelled,
+                    message: "observation failed after dispatch".into(),
+                    retryable: false,
+                    retry_after_ms: None,
+                    diagnostics: Default::default(),
+                });
+                result.metadata = serde_json::json!({
+                    "input_dispatched": true,
+                    "sandbox": {"fallback": true},
+                });
+                result
+            }
+            _ => {
+                let mut result = ToolResult::failure(ErrorContext {
+                    category: ErrorCategory::Cancelled,
+                    message: "string marker is not a fact".into(),
+                    retryable: false,
+                    retry_after_ms: None,
+                    diagnostics: Default::default(),
+                });
+                result.metadata = serde_json::json!({"input_dispatched": "true"});
+                result
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl LoopContext for CancelledFactBatchCtx {
+    async fn execute_tools(
+        &self,
+        calls: Vec<PendingToolInvocation>,
+        _events: LoopEventEmitter<'_>,
+        cancel: CancellationToken,
+    ) -> Vec<ToolCallResult> {
+        cancel.cancel();
+        calls
+            .into_iter()
+            .map(|call| ToolCallResult {
+                result: Self::raw_result(&call.name),
+                tool_call_id: call.tool_call_id,
+                tool_name: call.name,
+                arguments: call.arguments,
+            })
+            .collect()
+    }
+
+    async fn request_approval(
+        &self,
+        calls: &[PendingToolInvocation],
+        _already_approved_for_run: bool,
+        _events: LoopEventEmitter<'_>,
+        _cancel: CancellationToken,
+    ) -> Result<Vec<ApprovalGate>, EngineError> {
+        Ok(calls
+            .iter()
+            .map(|call| match call.name.as_str() {
+                "call-2" => ApprovalGate::Asked(ApprovalDecision::Denied),
+                "call-3" => ApprovalGate::Asked(ApprovalDecision::Cancelled),
+                _ => ApprovalGate::NotRequired,
+            })
+            .collect())
+    }
+
+    fn next_message_id(&self) -> MessageId {
+        let n = self.msg_counter.fetch_add(1, Ordering::Relaxed);
+        MessageId::from(format!("msg-{n}"))
+    }
+
+    fn next_request_id(&self) -> RequestId {
+        let n = self.req_counter.fetch_add(1, Ordering::Relaxed);
+        RequestId::from(format!("req-{n}"))
+    }
 }
 
 impl HangUntilApprovalCtx {

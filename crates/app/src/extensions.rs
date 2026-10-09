@@ -84,7 +84,8 @@ impl AppCore {
         &mut self,
         workspaces: &WorkspaceService,
     ) -> Result<(), AppError> {
-        let registry = builtin_registry(workspaces)?;
+        let native: Arc<dyn pawork_computer_use::NativePerform> = self.native.clone();
+        let registry = builtin_registry(workspaces, native)?;
         self.replace_registry(registry);
         Ok(())
     }
@@ -140,7 +141,8 @@ impl AppCore {
             return;
         };
         let runtime = stdio_runtime(&workspace.roots, self.workspace_trusted());
-        let mut registry = match builtin_registry(&self.extensions.workspaces) {
+        let native: Arc<dyn pawork_computer_use::NativePerform> = self.native.clone();
+        let mut registry = match builtin_registry(&self.extensions.workspaces, native) {
             Ok(registry) => registry,
             Err(error) => {
                 tracing::warn!(error = %error, "rebuild builtin registry for MCP failed");
@@ -273,7 +275,8 @@ impl AppCore {
             }
         }
         let config = mcp_config_from_pawork(&self.config)?;
-        let mut registry = builtin_registry(&self.extensions.workspaces)?;
+        let native: Arc<dyn pawork_computer_use::NativePerform> = self.native.clone();
+        let mut registry = builtin_registry(&self.extensions.workspaces, native)?;
         let mut reregister_failed = Vec::new();
         for slot in &self.extensions.mcp_servers {
             // 仅重建此前确实注册进 registry 的工具（descriptors 为准）：
@@ -429,7 +432,10 @@ impl AppCore {
     }
 }
 
-fn builtin_registry(workspaces: &WorkspaceService) -> Result<ToolRegistry, AppError> {
+fn builtin_registry(
+    workspaces: &WorkspaceService,
+    native: Arc<dyn pawork_computer_use::NativePerform>,
+) -> Result<ToolRegistry, AppError> {
     let mut registry = ToolRegistry::new();
     registry.extend([
         Arc::new(ReadFileTool::new(workspaces.clone())) as Arc<dyn pawork_domain::AgentTool>,
@@ -441,6 +447,8 @@ fn builtin_registry(workspaces: &WorkspaceService) -> Result<ToolRegistry, AppEr
         Arc::new(ApplyPatchTool::new(workspaces.clone())) as Arc<dyn pawork_domain::AgentTool>,
         Arc::new(RunCommandTool::new(workspaces.clone())) as Arc<dyn pawork_domain::AgentTool>,
         Arc::new(pawork_tools::ComputerTool::default()) as Arc<dyn pawork_domain::AgentTool>,
+        Arc::new(pawork_tools::NativeComputerTool::new(native))
+            as Arc<dyn pawork_domain::AgentTool>,
     ])?;
     Ok(registry)
 }

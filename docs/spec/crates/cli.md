@@ -5,7 +5,7 @@
 ## 1. 职责与边界
 
 - **职责**：clap 解析；七运行模式（chat / run / headless / acp / gui / service / gateway）与运维子命令；把 `AppCore`（[app.md](app.md)）装配成各通道所需宿主形态；终端渲染与终端审批交互。
-- **同进程原则**：CLI 与 Core 同进程同二进制。`run()` 解析参数后加载 `AppCore` 再分发；`service` / `status` / `doctor` / `watch` / `shutdown` 在加载 Core **之前**运行（纯本机检查 / 系统服务操作，不需要 Provider 装配）。
+- **同进程原则**：执行宿主仍是与 Core 同进程的 `pawork`。普通 `run()` 解析参数后加载 `AppCore` 再分发；`chat/run --gui-host` 显式作为已有 `pawork gui serve` 的认证客户端，在加载 Core 前分流，Run 由该 Host 的 Core 执行。`service` / `status` / `doctor` / `watch` / `shutdown` 同样在加载 Core **之前**运行（纯本机检查 / 系统服务操作，不需要 Provider 装配）。
 - **边界**：ACP 通道不持有 Provider 凭证、不构造第二个 Core、不消费 GUI Connection Protocol frame；Core 执行统一走窄 port `AcpCommandHost`。`gui serve` 经 `pawork-app::GuiHostAdapter` 实现 `pawork_gui_server::GuiHost` 并装配 `GuiServer` 提供服务，本包不直接实现协议服务器。
 - **不做**：Provider 调用、持久化实现、Policy 判定——全部由下层承载；本包只做参数解析、装配、翻译与呈现。
 
@@ -14,7 +14,7 @@
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
 | `src/lib.rs` | ~1300 | `Cli`（全局参数）与 `Command` 及全部子命令 enum（`SessionsCommand` / `AuthCommand` / `GuiCommand` / `AcpCommand` / `ServiceCommand` / `McpCommand` / `TasksCommand` / `PlanCommand` / `AgentsCommand` / `GatewayCommand`）；`run()` / `run_inner()` 分发（GUI / Tasks / Gateway 分支把同一次 data-dir 解析同时注入 Core 与对应宿主）；`run_models`（ADR-064 起 `--purpose <PURPOSE>` 可重复按 canonical 用途交集过滤，未知值 Usage 错误；用途无匹配时明确提示筛选结果为空；`--json` 条目增五布尔 `capabilities`）；`approval_host` 选择；`CliError`；clap 解析单元测试 |
-| `src/chat.rs` | ~840 | `run_chat`（REPL + 单次）、`run_once`、`run_json`（`--json` 驱动）；REPL 斜杠命令处理；`drive_turn` Ctrl-C 取消；轮末 usage 行；`map_turn_error`；`--image` / `--video-url` 附件装配（合计上限 4、本地图片 base64 编码） |
+| `src/chat.rs` | ~1700 | `run_chat`（REPL + 单次）、`run_once`、`run_json`（`--json` 驱动）；REPL 斜杠命令处理；`drive_turn` Ctrl-C 取消；轮末 usage 行；`map_turn_error`；`--image` / `--video-url` 附件装配（合计上限 4、本地图片 base64 编码）；`run_on_gui_host` 的认证连接、RunStart、终态观测与恢复 |
 | `src/sessions.rs` | ~700 | `sessions list/show/export/import/fork` 实现；`.jsonl` 首行签名嗅探（Codex 信封 / Claude 本地行 / Pi 默认）；`format_millis`（无时区库的 UTC 格式化） |
 | `src/auth.rs` | ~120 | `auth list/set-key/login/logout`；OAuth 登录等待 5 分钟（`LOGIN_TIMEOUT`）；只显示掩码 |
 | `src/gui.rs` | ~280 | `gui serve`：消费 `run_inner` 已解析的 Host data directory，派生单实例 socket/pid/token，向认证握手注入同一路径；单实例由实例级 `gui.lock` 独占锁保证（R-04，装配期获取，不再有探测-绑定竞态）、`TokenStore`、socket 目录 0o700、pid 文件（bind 成功后发布）、`GuiServer` accept 循环；握手能力由 `pawork_protocol::app::registry::gui_supported_capabilities()` **派生**（无手写清单）；R-11：`ConnectionSet` 登记活跃连接 + 每连接 reaper（`wait_done` 就绪即移除，探测短连接不再累积），退出按「关 listener → close 全部连接 → 逐 `wait_done` 收口 → 删除 PID → drop Host 持有者 → pty/Core shutdown → 随 Core 释放实例锁」排序，core 仍被共享时告警而不静默跳过 shutdown |
@@ -132,6 +132,8 @@ OPT-1 / ADR-053：`gui::run_gui` 经 `AppCore::set_approval_host` 只接线 GUI 
 
 API 1.24 视频：`chat --prompt` / `run` 接受重复 `--video-url <HTTP(S)>`，与 `--image` 合计最多 4 项；按 URL 后缀选择 MIME，校验无内嵌凭据后构造 canonical Video。交互无 prompt 和 JSONL 简写路径不支持该参数，明确返回 Usage 错误；不下载媒体，不写配置默认。`--video-url` 的 clap 帮助为中文，并写明与 `--image` 合计最多 4 项；`chat` 同时写明只作用于本次 `--prompt`，REPL 与 `--json` 不接受，`run` 写明 `--json` 不接受。超过上限时 Usage 为「--image 与 --video-url 每轮合计最多 4 项」。计数仍是两项长度之和大于 4，发生在读取本地图片之前。
 
+CU-10：`chat` / `run` 增加可选 `--gui-host[=<SOCKET>]`，裸标志使用当前 data-dir / instance 的默认 socket，自定义值必须用等号；token 仍来自同一实例。需要 TTY 和 Host API ≥1.27；未指定时沿用本进程 Core。共享模式拒绝 `--json`、`-p/-m`、`--approval-mode`、`--trust-workspaces`、`--branch`、`--image` 和 `--resume latest`，逐条说明原因；resume 仅接受完整 session id 并核对 workspace，视频仍只接受单次 prompt。共享 REPL 的 `/compact`、`/model`、`/provider`、`/plan` 显式拒绝。
+
 ## 4. 核心行为与数据流
 
 2026-09-24：`tasks cancel` 将活动任务的稳定 ID 经鉴权 GUI 连接路由到当前实例 Host（API ≥1.23），输出真实取消 ID；终态幂等返回空列表。旧 Host、不在线或 CLI/headless/ACP 任务明确报错并提示原宿主，不修改快照冒充取消。GUI Host 接 SIGINT/SIGTERM 后先取消运行、等待持久终态与连接回收，再执行 Core shutdown；关闭单个 GUI 窗口仍不取消 Run。
@@ -179,6 +181,8 @@ API 1.24 视频：`chat --prompt` / `run` 接受重复 `--video-url <HTTP(S)>`�
 
 ## 5. 契约与不变量
 
+- **显式共享 Host（CU-10）**：`--gui-host` 在 Executor Core 装配前分流，通过既有 `GuiClient` / GUI Connection Protocol 认证；本进程不创建第二个 Core。Host / token 缺失、认证或版本失败如实报错，不回退本地执行。cwd 必须唯一匹配 Host 已登记的 workspace root，resume 必须属于该 workspace。握手名 `pawork-cli` 只供 Host 在 RunStart 固定目标等批开关，不能签授权；目标批准仍经过 GUI 的既有命令与同一 registry。事件 ACK、Resume 和 SessionGet Timeline 用于观察原 run_id；连接全局游标与持久会话游标分别使用，分页末尾不冒充 Run 终态。REPL 等输入期间每 15 秒心跳，保持同一个未完成的读取 future，半行跨心跳不丢字节；心跳失败后下一轮输入先恢复连接。Ctrl-C 监听覆盖当轮观察、重连和 Timeline 查询，恢复后向原 Run 发送 RunCancel 并等待真实终态；协议拒绝只打印一次，传输未送达才在恢复后重试。监听结束或连接断开本身不取消 Run、不新建 Run、不重派发；每轮结束回收信号监听任务。实现与修后模拟验证状态见 [CU-10](../../plan/cu-10-action-observe.md)。
+
 - **stdout 协议纪律**：`--json` 与 `headless --json-stdio` 下 stdout 只承载 JSONL 协议帧；`acp serve` 的 stdout 只承载 JSON-RPC 帧。文本说明、URL、审批提示、git 概况、日志一律走 stderr。
 - **HeadlessResponse 形状**（冻结，见 [../contracts.md](../contracts.md)）：`type = event | response | error`（headless 通道另有 hello / hello_ack 握手对；`--json` 模式无 hello）。错误帧 `kind` 取 `ProtocolErrorKind`（本包用到 IncompatibleApiVersion / UnsupportedCapability / CompatRejected / Backpressure / Internal）。编码统一走 `pawork-protocol::headless::translate::encode_protocol_response`，本包不得自拼 JSON 帧。
 - **headless capability gate**：`HOST_CAPABILITIES` 五项由测试钉死快照；registry `headless` 列必须 ⊆ `HOST_CAPABILITIES`（测试断言）；**未映射命令 fail-closed**——`command_entry().headless == None` 一律 `UnsupportedCapability`，不得静默放行（`WorkspaceAdd` 有定向回归）。
@@ -217,7 +221,7 @@ API 1.24 视频：`chat --prompt` / `run` 接受重复 `--video-url <HTTP(S)>`�
 
 **外部依赖**：clap（derive）、tokio（macros / rt-multi-thread / signal / io-std / io-util / sync / time）、serde / serde_json、async-trait、thiserror、tracing。无 crate feature。
 
-**dev 依赖**：tempfile（集成测试的临时 workspace root / 会话文件）。
+**dev 依赖**：tempfile（临时 workspace root / 会话文件）；`pawork-testkit`（外部 Provider 的受控替身）；`pawork-transport` 的 `memory` feature（共享 Host CLI 控制循环的连接层回归，不改变生产传输）。
 
 **被依赖**：仅 `apps/pawork`（[pawork.md](pawork.md)）。ACP 集成测试随公共 API 迁入 pawork-acp。
 
@@ -227,7 +231,8 @@ API 1.24 视频：`chat --prompt` / `run` 接受重复 `--video-url <HTTP(S)>`�
 
 | 资产 | 覆盖点 |
 | --- | --- |
-| `src/lib.rs` 内嵌 tests | 子命令的 clap 解析矩阵（含 `sessions import` 三组互斥断言、`--branch`、`--instance`）；`--approval-mode` kebab 解析、`--trust-workspaces` 全局解析、`on-failure → NeverAsk` 兼容、未知档拒绝；default instance 的 socket / token 命名稳定性 |
+| `src/lib.rs` 内嵌 tests | 子命令的 clap 解析矩阵（含 `sessions import` 三组互斥断言、`--branch`、`--instance`、CU-10 `--gui-host` 裸标志 / 等号路径 / 共享模式冲突矩阵）；`--approval-mode` kebab 解析、`--trust-workspaces` 全局解析、`on-failure → NeverAsk` 兼容、未知档拒绝；default instance 的 socket / token 命名稳定性 |
+| `src/chat.rs` 内嵌 tests | 附件与共享模式参数拒绝；真实 REPL / Run 观察循环经 GuiClient → MemoryTransport → GuiServer → Core，覆盖半行跨心跳、跨空闲与断连后的两轮输入、恢复 connect 等待期间取消原 Run、持久 Cancelled 终态与零新 RunStart。只替换 stdin / 传输 / Provider 外部边界 |
 | `src/approval.rs` tests | 审批提示格式（tool / path / risk / preview；edit 与 apply_patch 的 hunk preview） |
 | `src/render.rs` tests | 工具活动行（成功字节数 / 失败原因）、`run_command` 取消提示、stderr 红色仅限彩色终端、`已截断` 检测、沙箱回退 notice（现行 / 旧版 Diagnostic 形状、空 note、message 直传与默认串） |
 | `src/sessions.rs` tests | `.jsonl` 首行签名嗅探（Codex / Claude / Pi、首行无 message、首行超 8K 不误判）、本地源白名单（拒绝 grok）、`format_millis` epoch 断言 |
@@ -236,7 +241,7 @@ API 1.24 视频：`chat --prompt` / `run` 接受重复 `--video-url <HTTP(S)>`�
 | `src/error.rs` tests | 认证 / 限流 / 超时 / 网络四类错误文案（认证错误不透传上游消息） |
 | `src/adapter.rs` tests | ACP 身份戳：合法 `acp:<client>` Automation 原样保留、伪装 User / 非 ACP 身份回退 `acp`、`command_id` / `idempotency_key` 不改写 |
 
-ACP 的 `acp_fixtures` / `acp_floor` target 与 versioned fixtures 已迁入 [acp](acp.md)。交互式 REPL、gui serve 网络路径与真实 Provider 不在本包测试范围（验证策略见 [../verification.md](../verification.md)）。
+ACP 的 `acp_fixtures` / `acp_floor` target 与 versioned fixtures 已迁入 [acp](acp.md)。共享 Host REPL 控制循环有上述内存连接层回归；真实 TTY / Unix socket、gui serve 网络路径与真实 Provider 不在这些模拟证据范围（验证策略见 [../verification.md](../verification.md)）。
 
 GUI data directory 的同源装配由类型/调用链覆盖，握手字段的 wire 与透传由 protocol/client 定向回归锁定。
 

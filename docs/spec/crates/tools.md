@@ -1,10 +1,10 @@
 # pawork-tools
 
-> 工具层：九个内置 Agent 工具（读/列/找/搜/写/改/补丁/命令/桌面）、最小调度器（ToolRegistry + ToolScheduler：注册、Policy 闸门、审批解析、并发上限、超时）。依赖 domain / policy / exec / workspace / computer-use；被依赖方为 `pawork-app` 与 `pawork-mcp`（engine 不依赖本包，工具由宿主装配进 LoopContext）。
+> 工具层：十个内置 Agent 工具（读/列/找/搜/写/改/补丁/命令/隔离桌面/本机后台）、最小调度器（ToolRegistry + ToolScheduler：注册、Policy 闸门、审批解析、并发上限、超时）。依赖 domain / policy / exec / workspace / computer-use；被依赖方为 `pawork-app` 与 `pawork-mcp`（engine 不依赖本包，工具由宿主装配进 LoopContext）。
 
 ## 1. 职责与边界
 
-- **内置工具**：九个 `pawork_domain::AgentTool` 实现；文件工具的路径输入 = `workspace_id + relative_path`，统一经 [`pawork-policy`](policy.md) `resolve_workspace_path` 解析——模型无法用绝对路径直达文件系统。
+- **内置工具**：十个 `pawork_domain::AgentTool` 实现；文件工具的路径输入 = `workspace_id + relative_path`，统一经 [`pawork-policy`](policy.md) `resolve_workspace_path` 解析——模型无法用绝对路径直达文件系统。
 - **调度**：`ToolRegistry` 是唯一注册表（内置与 MCP 工具同表）；`ToolScheduler::execute_named` 串起「查表 → Policy 裁决 → 审批解析 → 并发信号量 → 超时 → 执行」。
 - **扩展工具**：MCP 适配器在 [mcp](mcp.md)，通过本包 ToolRegistry 注册；本包不包含网络客户端或 MCP SDK。
 - **不做**：不做风险分类与裁决（policy）；不实现进程/沙箱原语（exec）；不持久化事件（engine/store 侧）。
@@ -13,8 +13,9 @@
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~30 | 门面：11 个模块声明 + re-export（九工具、`NoopToolEventSink`、registry/scheduler 全家）。 |
+| `src/lib.rs` | ~30 | 门面：12 个模块声明 + re-export（十工具、`NoopToolEventSink`、registry/scheduler 全家）。 |
 | `src/computer.rs` | — | `ComputerTool`：进程共享隔离桌面会话、按动作必填的 JSON 参数、跨 run 观察隔离、阻塞工作取消、JPEG → canonical Image、动作+新观测同调用闭环（CU-10，20s 预算覆盖输入+捕获串行）、Run 终态 `release_shared` 释放占用；复用 Policy / 审批。 |
+| `src/computer_native.rs` | — | `NativeComputerTool`：注入当前 Core 共享的 NativePerform，模型回传 Host 句柄 / bundle id；native 一次动作 + 新观测、终态与后置失败、JPEG → canonical Image，不持授权副本。 |
 | `src/common.rs` | ~230 | 公共层：`BuiltinToolError` 与 → `ToolError` 集中映射；取参 `require_str`/`opt_str`/`opt_u64`/`opt_bool`（opt_* 缺省或 `null` → None，类型不符报 InvalidField）；`workspace_roots`；`resolve_write_rel`（包 `resolve_workspace_path`）；`atomic_write`（同目录临时文件经 `create_new` **独占创建**——同名路径已存在（含预置 symlink）即换名重试、不跟随——+ rename，覆盖保留既有 Unix mode）。 |
 | `src/read_file.rs` | ~500（逻辑 ~260 + 测试） | `ReadFileTool`：行号视图、offset/limit、编码探测（chardetng + encoding_rs）、二进制检测（NUL + 控制字节占比）、4 MiB 读上限 / 256 KiB 输出上限。 |
 | `src/list_directory.rs` | ~440（逻辑 ~300 + 测试） | `ListDirectoryTool`：路径解析与目录扫描均在 `spawn_blocking` 内；目录优先字典序、BinaryHeap 单扫描取 offset+limit 窗口（内存 O(offset+limit)）、entry kind/size/mtime/symlink 目标（目标相对化，越 root 省略）。 |
@@ -66,6 +67,14 @@
 ### 3.2 Computer use
 
 `ComputerTool::default()` 使用进程共享 `Computer::isolated()`（CU-09 起桌面会话绑定 workspace/run 所有权：第二个 Run 的任何动作按 Conflict 错误明确拒绝且零后端访问，取消/超时释放占用并作废待用观测，空闲 60 秒自动失拥有，descriptor 如实告知模型单占用语义）；`new(Arc<Computer>)` 用于注入 backend。CU-09 起 `ComputerTool::release_shared(workspace_id, run_id)` 是 Run 终态收尾入口：scope 与 execute 同源构造（`computer_scope`），完成 / 取消 / 失败统一释放共享桌面占用，未占用过的 Run 为 no-op（生产接线在 app 的 run 终态收尾，见 [app](app.md)）。CU-11：模型未声明 `image_input` 时宿主（app Run 服务）不把本工具暴露给该 Run，臆造调用被本轮派发允许表拒绝、后端零访问；门控裁决不在本包。工具名 `computer`，`ExternalPlugin` / `ClientFunction` / `Local`，能力标签 `ComputerUse`，禁止 untrusted 与 ReadOnly，`requires_approval=true`（包括截图与权限查询），禁并发。Host 明确批准本轮时仍沿用既有本轮授权。参数与错误见 [computer-use](computer-use.md)，JSON 严格拒绝未知字段，输入上限 16 KiB。工具 schema 按 action 声明必填字段：所有输入必须有新截图的 observation_id，click 还必须带 x / y / button / clicks；解析失败返回参数要求，便于模型纠正，且不触达 backend。调用 `spawn_blocking`；future 取消/超时通过局部 token 停止工作，锁直到底层释放输入才归还。成功截图返回 Text 元数据及 `ImageSource::Base64` JPEG，整个输出预算 768 KiB；不写模型指定路径。CU-10 起输入动作在同一结果内返回动作后新截图与派发事实：metadata 显式 `input_dispatched`（派发事实非效果证明）与 `observation`（新观测 id 授权下一次输入）或 `observation_failure`（输入已派发而观测失败：结果仍成功、观测缺席、不自动重试，效果以再次截图核对），图片沿用同一 ContentPart 通路进入持久消息与重放；`default_timeout_ms`=20s 覆盖输入与后置捕获的串行 I/O 预算（各 8s），scheduler 超时协议保留协作收口后工具交出的成功终态（派发事实经既有结果链进入持久化，工具只回错误时才按 Timeout 回执，见 §4.1）。
+
+#### CU-10 本机后台工具 `computer_native`
+
+`NativeComputerTool::new(Arc<dyn NativePerform>)` 注入共享 Host，不新建 registry / 授权台账。支持 discover、request(bundle_id)、bind / launch(bundle_id)、screenshot(window)、read_tree(window)、find_element(observation,role/name)、semantic(element)、targeted(element)、move_window(window,x,y)；pointer 与网站请求终态拒绝。request 不自批，bind / launch 仅接受唯一活实例、唯一窗口，不猜裸 PID / 路径。descriptor：ExternalPlugin / ClientFunction / Local，ComputerUse 标签，requires_approval=true、read_only=false、supports_concurrency=false，untrusted 禁用，25s timeout / 768 KiB output / 16 KiB input。CU-11 暴露 / 臆造调用门控及 child 的 `computer` 权限同样适用。
+
+结果为普通 Text + 可选 Base64 JPEG：Text 首行与 metadata 共用 environment=native_background、input_dispatched、observation、window_id、element_id、outcome、observation_failure；其后保留 `NativeOutput.detail`，包括应用发现结果、bundle 身份及有界 AX 节点 / 截断标志，树的行列表上限 512 KiB，超限如实标记 listing truncated。JPEG 仍位于 content index 1，不另造消息或图像通路。Dispatched / Partial / UnknownEffect 不等于 UI 接受；Host 在派发后授权不足（含 Once 已消费）、取消或捕获失败时保留派发事实与失败，不续 grant、不重试。工具不落盘，结果沿 Engine 既有消息 / 事件链持久化；取消批次保留成功或严格布尔 `input_dispatched=true` 的事实，配齐结果后再结束为 Cancelled，语义见 [engine](engine.md#43-取消传播)。修后模拟验证与独立 review 状态、真实平台边界见 [CU-10](../../plan/cu-10-action-observe.md)。
+
+2026-10-09 新授权后，显式 CLI `--gui-host` 模式借用已有 Host，`computer_native bind/launch` 的目标等批由 app 在 scheduler 前完成，不计入原工具 25s 工作预算；request/discover 不等待。本工具仍只消费实际 grant，不自批、不续授权。历史 R4～R7 的未实施方案记录保留在任务文档，不代表本轮代码状态。
 
 ### 3.3 公共层（common）
 
@@ -146,7 +155,7 @@ MCP 的独立 API、连接与认证见 [mcp](mcp.md)，注册适配器仍使用�
 
 ## 6. 依赖关系
 
-- **workspace 内**：`pawork-domain`（AgentTool/ToolResult/CancellationToken 等 canonical 类型）、`pawork-policy`（路径内核 + PolicyEngine）、`pawork-exec`（Process/Sandbox Runtime）、`pawork-workspace`（WorkspaceService、ResolvedConfig）、`pawork-computer-use`（隔离虚拟桌面操作）。
+- **workspace 内**：`pawork-domain`（AgentTool/ToolResult/CancellationToken 等 canonical 类型）、`pawork-policy`（路径内核 + PolicyEngine）、`pawork-exec`（Process/Sandbox Runtime）、`pawork-workspace`（WorkspaceService、ResolvedConfig）、`pawork-computer-use`（隔离桌面与 native 共享 Host 操作）。
 - **外部**：`tokio`、`async-trait`、`serde/serde_json`、`thiserror`、`tracing`、`ignore`、`globset`、`regex`、`chardetng`、`encoding_rs`、`base64`（截图编码）。dev：`tempfile`、`proptest`。无 cargo feature。
 - **被依赖**：`pawork-mcp`（注册外部工具）、`pawork-app`（注册与调度装配；engine 经 LoopContext 回调消费，不依赖本包）。
 
@@ -155,6 +164,8 @@ MCP 的独立 API、连接与认证见 [mcp](mcp.md)，注册适配器仍使用�
 2026-09-20 精简：HTTP 配置拒绝只保留 codec 的完整输入矩阵；auto-approve 标志并入实际写工具被拒绝且零调用的回归；环境白名单副本由 exec 权威测试和 run_command 的真实子进程环境检查承接。MCP 回归已随迁至 mcp 包。
 
 `computer.rs` 七项回归：显式批准后的截图结果与序列化（零后端计数覆盖全部 backend 方法）、`another_run_conflict_is_visible_and_never_touches_the_backend`（第二个 Run 的 Conflict 错误可见且后端零调用，拥有者观测照常派发并同调用返回新观测）、`release_shared_frees_exactly_the_scope_execute_claims`（Run 终态释放与 execute 认领同 scope，释放后下一 Run 不再撞所有权闸）、缺 click 字段在触达 backend 前返回可纠正参数错误、未信任/只读/自动批准均不触碰虚拟桌面后端、`input_action_returns_dispatch_fact_and_fresh_image_in_one_result`（CU-10：一次有界调用同时携带派发事实与动作后新截图，metadata 与图片经序列化往返不变）、`dispatched_input_survives_observation_failure_through_the_scheduler`（复审 P2：真实 ComputerTool 经 scheduler，输入已派发而捕获失败的成功终态完整进入结果链，后端计数钉住派发与单次捕获）。输入与观察安全由 [computer-use](computer-use.md) 负责。
+
+`computer_native.rs` 四项定向回归：`native_host_action_returns_one_observation_and_rejects_closed_paths` 经真实 Host / Tool / Scheduler 验证门控零后台访问、请求不自批、scope 隔离、接管让出与一次动作新图，并核对应用发现及 AX 节点 / 截断进入普通 Text；`for_run_move_reports_capture_failure_without_retry` 验证后置失败保派发事实且不重试；`revoke_during_element_tree_revision_is_not_authorized_before_dispatch` 验证阻塞 tree_revision 时 revoke 可落地、恢复后无 semantic 派发；`user_active_during_tree_revision_keeps_once_then_regrant_misses_armed_permit` 验证长探测后的活动让出、Once 未提前消耗，以及 armed 后撤销 / 重授不放行旧调用。R1 行为修复实际命令 `cargo test -p pawork-tools --offline --lib computer_native -- --test-threads=8` 为 4 passed / 85 filtered；此后兼容性、排版与 macOS 补正未重跑本过滤器，非全包或真实 macOS 门禁。R4 已关闭相应源码审查项，但 Engine / CLI 两项与完整生命周期证据仍未闭合，见 [CU-10](../../plan/cu-10-action-observe.md)。
 
 默认验证命令：`bash scripts/test.sh tools`（无 `tests/` 目录，用例全部在 `--lib`）。
 

@@ -28,5 +28,7 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "
 tracing.workspace = true
 
 [dev-dependencies]
+pawork-testkit = { path = "../testkit" }
+pawork-transport = { path = "../transport", features = ["memory"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }

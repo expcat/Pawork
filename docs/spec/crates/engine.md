@@ -124,7 +124,7 @@
     6. 成功：`AssembledTurn` 折叠缓冲事件为助手消息（metadata 带 usage / stop_reason / provider / model），发 `MessageCommitted(assistant)`，usage 累计入 run。无 tool call → 发 `RunCompleted`（usage 为 run 累计）并返回。
     7. 有 tool call：调 `request_approval(invocations, run_approved, ...)`。返回后再查取消。**gate 数与调用数不匹配 → 协议违约，fail-closed**：全部按 `Denied` 处理、不执行任何调用，且由 engine 补发每个调用的 `ToolApprovalRequested`；正常路径由 `apply_approval_gates` 求出放行集（`NotRequired` 直接放行；`Asked(ApprovedOnce | ApprovedForRun)` 放行，`ApprovedForRun` 置位 run 级记忆，此后同 run 的非拒绝决策自动升级为 `ApprovedForRun`）。对每个 `Asked` 决策发 `ToolApprovalResponded { decision }`。
     8. `snapshot_write_tools(to_run)` → 每个快照发 `CheckpointCreated`。
-    9. 每个放行调用发 `ToolExecutionStarted` → `execute_tools`（空集则跳过）→ 再查取消。Denied/Cancelled 且未被执行的调用回填拒绝结果（`ErrorCategory::Authorization`，文本 "tool call denied by user"）→ `align_tool_results` 按序对齐补缺 → 逐个发 `ToolExecutionCompleted`；结果 metadata 带 `sandbox.fallback = true` 时追加 `Diagnostic { code: "sandbox.fallback" }`。
+    9. 每个放行调用发 `ToolExecutionStarted` → `execute_tools`（空集则跳过）→ 再查取消。未取消时，Denied/Cancelled 且未被执行的调用回填拒绝结果（`ErrorCategory::Authorization`，文本 "tool call denied by user"）→ `align_tool_results` 按序对齐补缺 → 逐个发 `ToolExecutionCompleted`；结果 metadata 带 `sandbox.fallback = true` 时追加 `Diagnostic { code: "sandbox.fallback" }`。执行后已取消的批次按 §4.3 保留派发事实，再收口终态。
     10. 构建 `Tool` 角色消息并发 `MessageCommitted(tool)`；把助手消息 + 工具消息追加进请求、换取新 `request_id`，`tool_rounds += 1`；达 `max_tool_rounds` → `RunFailed` + `Err(MaxToolRounds)`。
     11. provider 返回 Cancelled → `RunCancelled`（usage 合并流内最后一条 `UsageUpdated`）；其它 ProviderError → `RunFailed`（`ErrorContext::from(error)`）。
 5. 循环直到无 tool call、超限、取消或出错。
@@ -141,6 +141,8 @@
 ### 4.3 取消传播
 
 `CancelHandle.cancel()` → 根 token 取消 + cleaner 杀树；`run_session` 在轮首、审批返回后、工具执行后三处检查并发 `RunCancelled`；`run_turn` 在调用 provider 前做预取消检查（已取消则不调 provider）。工具内部与 provider 流内取消由同一把 token 传播。
+
+CU-10：工具执行返回时若已取消，`success == true` 或严格 JSON 布尔 `metadata.input_dispatched == true` 的结果仍是必须保留的事实。至少一条结果有事实时，按原 invocation 顺序为整批配对：事实结果原样保留，Denied 保持 Authorization，其余缺项或无事实结果回填 Cancelled 与明确取消文本；沿既有 `ToolExecutionCompleted` → 紧随对应结果的可选 `sandbox.fallback` Diagnostic → 唯一 `MessageCommitted(tool)` 提交，再返回 Cancelled 由调用者发 `RunCancelled`。整批没有事实时维持原取消路径，不提交 Completed 或工具消息。两条路径均不再次请求 Provider 或重派发工具。
 
 ### 4.4 流式折叠规则（`AssembledTurn::apply`）
 
@@ -179,6 +181,7 @@ API 1.24 视频引用：context token 估算只统计 URL 字符文本，不能�
 | --- | --- |
 | `tests/domain_only.rs` | **红线**：生产依赖 domain-only 断言（含 alias / target 表解析的自测试） |
 | `tests/no_provider_branch.rs` | **红线**：src/ 无 provider 名分支；守护名单派生自 `CHANNEL_REGISTRY` 且包含 chatgpt/xai/glm-coding/opencode-go/qwen-token-plan/deepseek 等首发通道 |
+| `tool_loop/tests.rs::cancelled_batch_with_dispatch_fact_pairs_all_invocations` | CU-10 取消后整批配对：success / 严格布尔派发事实、Denied / 缺项 / 非布尔反例、诊断顺序、唯一工具消息、RunCancelled 与零二次 Provider 请求 |
 | `lib.rs` 内联测试 | 装配默认值冻结断言；`run_turn` 透传（含 Thinking/ToolCallStarted 等变体）、预取消不调 provider、流中取消 |
 | `tool_loop/tests.rs`（27 个，原内联测试整文件迁入） | 多轮循环（`mock_provider_completes_multi_turn_tool_loop`）、并行只读工具、工具失败回填续跑、`max_tool_rounds_emits_run_failed_without_extra_stream`、审批事件对与 ApprovedOnce/ForRun/Denied（`approval_event_pair_then_execute_on_approved_once`、`short_approval_gates_fail_closed_without_executing`、`denied_fills_tool_result_and_continues_without_executing`、`approved_for_run_remembers_across_tool_rounds`）、取消（长工具中取消、`cancel_while_waiting_for_approval_emits_requested_without_responded`）、S5 上下文（默认关闭现状、注入层、软限压缩、硬限截断、`compaction_outcome_metadata_flows_into_events`、`compact_history_error_fails_the_run_instead_of_being_swallowed`、手动压缩两例、R-18 压缩取消两例 `manual_compaction_pre_cancelled_token_fails_without_provider_call` / `manual_compaction_cancelled_summary_is_not_degraded`、长对话恒不超硬限）、CU-12 观测图像裁剪（`observation_images_trimmed_in_request_copy_but_persisted_in_events`：多步截图请求图像受控 + 最新观测保留 + 已提交事件图像完整 + Diagnostic 留痕；`observation_images_untouched_without_context_limits`：默认上下文不裁剪）、checkpoint（快照先于执行、回滚追加事件）、sandbox fallback 诊断 |
 | `appender.rs` / `cancel.rs` / `context/*` 内联测试 | 流式折叠、取消幂等与杀树计数、预算推导 / 触发优先级 / 估算口径 / 裁剪分级边界、观测图像裁剪（最新观测保留 / 预算内保留 / 嵌套结果递归 / 用户附图、Url 来源与 Tool 消息顶层图像不动 / 预算折算） |

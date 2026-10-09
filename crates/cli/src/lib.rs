@@ -110,6 +110,15 @@ pub enum Command {
         /// 只作用于本次 `--prompt`；REPL 与 `--json` 不接受。
         #[arg(long = "video-url", value_name = "URL")]
         video_urls: Vec<String>,
+        /// 显式借用已有 GUI Host（pawork gui serve）运行本轮；缺省仍走本
+        /// 进程 Executor Core。--gui-host=<SOCKET> 覆盖默认 socket 路径。
+        #[arg(
+            long = "gui-host",
+            value_name = "SOCKET",
+            num_args = 0..=1,
+            require_equals = true
+        )]
+        gui_host: Option<Option<std::path::PathBuf>>,
     },
     /// 列出 / 查看已落盘会话
     Sessions {
@@ -128,6 +137,15 @@ pub enum Command {
         /// `--json` 不接受。
         #[arg(long = "video-url", value_name = "URL")]
         video_urls: Vec<String>,
+        /// 显式借用已有 GUI Host（pawork gui serve）运行本轮；缺省仍走本
+        /// 进程 Executor Core。--gui-host=<SOCKET> 覆盖默认 socket 路径。
+        #[arg(
+            long = "gui-host",
+            value_name = "SOCKET",
+            num_args = 0..=1,
+            require_equals = true
+        )]
+        gui_host: Option<Option<std::path::PathBuf>>,
     },
     /// 列出当前 provider 的模型目录
     Models {
@@ -454,6 +472,17 @@ async fn run_inner() -> Result<(), CliError> {
         _ => {}
     }
 
+    // CU-10 #5：显式 --gui-host 借用已有 GUI Host——本进程不加载 Executor
+    // Core、不启动 GuiServer；socket/token 缺失按无 Host 失败关闭，不回退本地执行。
+    let gui_host_socket = match &cli.command {
+        Command::Chat { gui_host, .. } | Command::Run { gui_host, .. } => gui_host.clone(),
+        _ => None,
+    };
+    if gui_host_socket.is_some() {
+        let data_dir = consume_data_dir_outcome(default_data_dir_outcome());
+        return chat::run_on_gui_host(&cli, &instance, &data_dir).await;
+    }
+
     if let Command::Gateway { command } = &cli.command {
         let data_dir = consume_data_dir_outcome(default_data_dir_outcome());
         let directory = pawork_app::instance_dir(&data_dir, &instance);
@@ -548,6 +577,7 @@ async fn run_inner() -> Result<(), CliError> {
             branch,
             images,
             video_urls,
+            ..
         } if cli.json => {
             if !images.is_empty() || !video_urls.is_empty() {
                 return Err(CliError::Usage(
@@ -560,6 +590,7 @@ async fn run_inner() -> Result<(), CliError> {
             prompt,
             images,
             video_urls,
+            ..
         } if cli.json => {
             if !images.is_empty() || !video_urls.is_empty() {
                 return Err(CliError::Usage(
@@ -576,6 +607,7 @@ async fn run_inner() -> Result<(), CliError> {
                     branch,
                     images,
                     video_urls,
+                    ..
                 } => chat::run_chat(&mut core, prompt, resume, branch, images, video_urls).await,
                 Command::Sessions { command } => {
                     sessions::run_sessions(&core, command, cli.json).await
@@ -584,6 +616,7 @@ async fn run_inner() -> Result<(), CliError> {
                     prompt,
                     images,
                     video_urls,
+                    ..
                 } => chat::run_once(&core, &prompt, images, video_urls).await,
                 Command::Models { purposes } => run_models(&core, cli.json, &purposes).await,
                 Command::Auth { command } => auth::run_auth(&core, command, cli.json).await,
@@ -814,6 +847,7 @@ mod tests {
                 branch,
                 images,
                 video_urls: _,
+                gui_host: _,
             } => {
                 assert_eq!(prompt.as_deref(), Some("hi"));
                 assert!(resume.is_none());
@@ -856,6 +890,7 @@ mod tests {
                 prompt,
                 images,
                 video_urls: _,
+                gui_host: _,
             } => {
                 assert_eq!(prompt, "explain this");
                 assert!(images.is_empty());
@@ -1277,6 +1312,7 @@ mod tests {
                 prompt,
                 images,
                 video_urls,
+                gui_host: _,
             } => {
                 assert_eq!(prompt, "describe");
                 assert_eq!(images, ["shot.webp"]);
@@ -1287,6 +1323,54 @@ mod tests {
             }
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    /// CU-10 #5：--gui-host 的三形态（缺省 / 裸标志 / 显式 socket）与
+    /// require_equals 语义（空格分隔值不歧义地被拒绝）。
+    #[test]
+    fn parses_gui_host_flag_shapes() {
+        let cli = Cli::try_parse_from(["pawork", "run", "do it"]).expect("parse run");
+        match &cli.command {
+            Command::Run { gui_host, .. } => assert_eq!(gui_host, &None),
+            other => panic!("unexpected {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from(["pawork", "run", "--gui-host", "do it"]).expect("bare");
+        match &cli.command {
+            Command::Run {
+                gui_host, prompt, ..
+            } => {
+                assert_eq!(gui_host, &Some(None));
+                assert_eq!(prompt, "do it");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "pawork",
+            "chat",
+            "--gui-host=/tmp/pawork-custom.sock",
+            "--prompt",
+            "hi",
+        ])
+        .expect("explicit socket");
+        match &cli.command {
+            Command::Chat {
+                gui_host, prompt, ..
+            } => {
+                assert_eq!(
+                    gui_host,
+                    &Some(Some(std::path::PathBuf::from("/tmp/pawork-custom.sock")))
+                );
+                assert_eq!(prompt.as_deref(), Some("hi"));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+
+        assert!(
+            Cli::try_parse_from(["pawork", "chat", "--gui-host", "/tmp/x.sock"]).is_err(),
+            "require_equals：空格分隔的值必须被拒绝，避免与位置参数歧义"
+        );
     }
 
     #[test]

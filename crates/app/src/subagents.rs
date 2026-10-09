@@ -83,7 +83,7 @@ fn resolve_effort(
 pub(crate) fn allows_tool(rule: &SubagentModelConfig, tool: &ToolDescriptor) -> bool {
     let permission = match tool.name.as_str() {
         "browser" => "browser",
-        "computer" => "computer",
+        "computer" | "computer_native" => "computer",
         name if name.starts_with("mcp.") || name.starts_with("mcp__") => "mcp",
         _ => match tool.capability {
             ToolCapability::ReadOnly => "read",
@@ -721,6 +721,7 @@ impl AppCore {
         child.protected_store = self.protected_store.clone();
         child.rebind_persistent_protector();
         child.scheduler = self.scheduler.clone();
+        child.native = Arc::clone(&self.native);
         child.descriptors = self.descriptors.clone();
         child.tool_defs = self.tool_defs.clone();
         child.extensions.workspaces = self.extensions.workspaces.clone();
@@ -1427,6 +1428,33 @@ mod tests {
             .await
             .expect("reuse held adapter");
         assert!(Arc::ptr_eq(&again, &child.provider));
+        assert!(Arc::ptr_eq(&child.native, &core.native));
+        let parent_scope = pawork_computer_use::target::Scope::new("ws", "parent-run");
+        let child_scope = pawork_computer_use::target::Scope::new("ws", "child-run");
+        let target = pawork_computer_use::approval::TargetIdentity::application(
+            pawork_computer_use::target::AppIdentity {
+                bundle_id: "com.example.editor".into(),
+                family: pawork_computer_use::target::AppFamily::Appkit,
+            },
+        );
+        core.open_target_scope(&parent_scope);
+        core.grant_target(
+            &parent_scope,
+            &target,
+            pawork_computer_use::approval::GrantKind::ForRun,
+        )
+        .expect("parent for-run grant");
+        assert_eq!(
+            child.native.grant_kind(&parent_scope, &target),
+            Some(pawork_computer_use::approval::GrantKind::ForRun)
+        );
+        assert_eq!(child.native.grant_kind(&child_scope, &target), None);
+        child.open_target_scope(&child_scope);
+        child.close_target_scope(&child_scope);
+        assert_eq!(
+            core.native.grant_kind(&parent_scope, &target),
+            Some(pawork_computer_use::approval::GrantKind::ForRun)
+        );
     }
 
     #[tokio::test]

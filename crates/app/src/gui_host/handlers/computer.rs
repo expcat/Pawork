@@ -3,7 +3,10 @@
 //! 观测读取只消费持久化事件账本（ToolExecutionCompleted 的 Base64
 //! Image part），永不触发新截图或输入；目标状态只读登记事实。两个
 //! 写命令（approve / revoke）是 Host 侧目标登记的唯一 GUI 入口，均以
-//! active run 归属 fail-closed。
+//! 本会话的活动 run 归属 fail-closed。GUI 注册表里的 run 保持原路径；
+//! CLI 与子 run 只在该会话投影状态恰为 `running`、且同一 `NativeHost`
+//! 上对应 scope 仍开着时可见。绑定会话只用它自己的 workspace，未绑定
+//! 会话只用 `ws-unbound`。
 
 use pawork_computer_use::approval::{GrantKind, TargetIdentity};
 use pawork_computer_use::target::{
@@ -15,15 +18,79 @@ use pawork_protocol::{
     AppQuery, AppResponse, ComputerActionKind, ComputerAppFamily, ComputerAppIdentity,
     ComputerCapabilitySupport, ComputerGrantKind, ComputerTargetApproveParams,
     ComputerTargetCapability, ComputerTargetIdentity, ComputerTargetRevokeParams,
-    ComputerTargetScope, ComputerTargetState, DEFAULT_OBSERVATION_LIST_LIMIT,
+    ComputerTargetScope, ComputerTargetState, ObservationEvidenceEntry, ObservationEvidenceStatus,
+    ObservationImageData, ObservationListData, DEFAULT_OBSERVATION_LIST_LIMIT,
     MAX_COMPUTER_TARGET_LIST_RESPONSE_BYTES, MAX_COMPUTER_TARGET_LIST_TARGETS,
     MAX_OBSERVATION_LIST_LIMIT, MAX_OBSERVATION_LIST_RESPONSE_BYTES, MAX_OBSERVATION_READ_BYTES,
-    ObservationEvidenceEntry, ObservationEvidenceStatus, ObservationImageData, ObservationListData,
 };
 use serde_json::Value;
 
 use super::super::GuiHostAdapter;
 use crate::services::extension::{base64_decode_range, base64_decoded_len, base64_encode};
+
+fn unknown_run() -> GuiHostError {
+    GuiHostAdapter::host_error(
+        "unknown_run",
+        "computer target commands require an active run of this session",
+    )
+}
+
+/// 绑定会话返回它的 workspace。已存在但未绑定的会话只能是 `ws-unbound`。
+/// 不存在的会话返回 `None`，列表因此保持空且 `workspace_id` 为 null。
+async fn session_computer_workspace(
+    adapter: &GuiHostAdapter,
+    session_id: &pawork_domain::SessionId,
+) -> Result<Option<String>, GuiHostError> {
+    let core = adapter.core.read().await;
+    if let Some(bound) = core.session_workspace_for_record(session_id.as_str()) {
+        return Ok(Some(bound.as_str().to_string()));
+    }
+    let store = core
+        .store()
+        .map_err(|error| GuiHostAdapter::host_error("internal", error.to_string()))?;
+    let store = store.clone();
+    drop(core);
+    match store.get_session(session_id).await {
+        Ok(record) => Ok(Some(
+            record
+                .workspace_id
+                .unwrap_or_else(|| "ws-unbound".to_string()),
+        )),
+        Err(pawork_storage::session::SessionStoreError::SessionNotFound(_)) => Ok(None),
+        Err(error) => Err(GuiHostAdapter::host_error("internal", error.to_string())),
+    }
+}
+
+/// 投影里状态恰为 `running`、且 scope 仍开着的 (workspace, run)。
+/// 已完成的投影即使 scope 泄漏开着也不计入。
+async fn projection_open_runs(
+    adapter: &GuiHostAdapter,
+    session_id: &pawork_domain::SessionId,
+    workspace_id: &str,
+) -> Result<Vec<(String, String)>, GuiHostError> {
+    let store = {
+        let core = adapter.core.read().await;
+        core.store()
+            .map_err(|error| GuiHostAdapter::host_error("internal", error.to_string()))?
+            .clone()
+    };
+    let snapshot = store
+        .projection_snapshot(session_id)
+        .await
+        .map_err(|error| GuiHostAdapter::host_error("internal", error.to_string()))?;
+    let open = adapter.core.read().await.native.active_scopes();
+    Ok(snapshot
+        .runs
+        .into_iter()
+        .filter(|run| run.state == "running")
+        .filter(|run| {
+            open.iter().any(|scope| {
+                scope.workspace_id == workspace_id && scope.run_id == run.run_id.as_str()
+            })
+        })
+        .map(|run| (workspace_id.to_string(), run.run_id.as_str().to_string()))
+        .collect())
+}
 
 fn require_api_1_27(envelope: &pawork_protocol::AppQueryEnvelope) -> Result<(), GuiHostError> {
     if envelope.api_version.minor < 27 {
@@ -99,9 +166,7 @@ fn evidence_entries(envelope: &pawork_domain::AgentEventEnvelope) -> Vec<Observa
 }
 
 /// 单页条目的序列化字节数（observation_list 预算口径）。
-fn entry_serialized_bytes(
-    entries: &[ObservationEvidenceEntry],
-) -> Result<usize, GuiHostError> {
+fn entry_serialized_bytes(entries: &[ObservationEvidenceEntry]) -> Result<usize, GuiHostError> {
     let mut total = 0usize;
     for entry in entries {
         let bytes = serde_json::to_vec(entry)
@@ -126,8 +191,7 @@ pub(crate) async fn observation_list(
     };
     let limit = limit
         .unwrap_or(DEFAULT_OBSERVATION_LIST_LIMIT)
-        .clamp(1, MAX_OBSERVATION_LIST_LIMIT)
-        as usize;
+        .clamp(1, MAX_OBSERVATION_LIST_LIMIT) as usize;
     let core = adapter.core.read().await;
     let head = core
         .next_sequence(session_id)
@@ -289,13 +353,14 @@ pub(crate) async fn observation_image_read(
         ));
     }
     let end = (*offset + *limit).min(byte_length);
-    let slice = base64_decode_range(encoded, *offset as usize, (end - *offset) as usize)
-        .map_err(|error| {
+    let slice = base64_decode_range(encoded, *offset as usize, (end - *offset) as usize).map_err(
+        |error| {
             GuiHostAdapter::host_error(
                 "app_error",
                 format!("observation image of event {sequence} failed range decode: {error}"),
             )
-        })?;
+        },
+    )?;
     let (image_width, image_height) = observation_dimensions(&result.metadata);
     let data = ObservationImageData {
         session_id: session_id.clone(),
@@ -365,14 +430,13 @@ fn native_target(target: &ComputerTargetIdentity) -> Result<TargetIdentity, GuiH
             TargetIdentity::application(native_app_identity(app))
         }
         ComputerTargetIdentity::Website { browser, origin } => {
-            TargetIdentity::website(native_app_identity(browser), origin).map_err(|error| {
-                GuiHostAdapter::host_error("invalid_query", error.to_string())
-            })?
+            TargetIdentity::website(native_app_identity(browser), origin)
+                .map_err(|error| GuiHostAdapter::host_error("invalid_query", error.to_string()))?
         }
     };
-    native.validate().map_err(|error| {
-        GuiHostAdapter::host_error("invalid_query", error.to_string())
-    })?;
+    native
+        .validate()
+        .map_err(|error| GuiHostAdapter::host_error("invalid_query", error.to_string()))?;
     Ok(native)
 }
 
@@ -392,17 +456,15 @@ fn target_capabilities(family: AppFamily) -> Vec<ComputerTargetCapability> {
     ACTIONS
         .into_iter()
         .map(|action| {
-            let support = |minimized: bool| {
-                match background_capability(family, action, minimized) {
-                    pawork_computer_use::target::Capability::Supported => {
-                        ComputerCapabilitySupport::Supported
-                    }
-                    pawork_computer_use::target::Capability::Unsupported => {
-                        ComputerCapabilitySupport::Unsupported
-                    }
-                    pawork_computer_use::target::Capability::Unverified => {
-                        ComputerCapabilitySupport::Unverified
-                    }
+            let support = |minimized: bool| match background_capability(family, action, minimized) {
+                pawork_computer_use::target::Capability::Supported => {
+                    ComputerCapabilitySupport::Supported
+                }
+                pawork_computer_use::target::Capability::Unsupported => {
+                    ComputerCapabilitySupport::Unsupported
+                }
+                pawork_computer_use::target::Capability::Unverified => {
+                    ComputerCapabilitySupport::Unverified
                 }
             };
             ComputerTargetCapability {
@@ -440,10 +502,9 @@ pub(crate) async fn computer_target_list(
     let AppQuery::ComputerTargetList { session_id } = &envelope.query else {
         unreachable!("computer_target_list handler receives ComputerTargetList")
     };
-    let core = adapter.core.read().await;
-    let workspace_id = core.session_workspace_for_record(session_id.as_str());
-    // 会话归属的 active runs：跨 session / scope 的登记一律不可见。
-    let active: Vec<(String, String)> = adapter
+    let workspace_id = session_computer_workspace(adapter, session_id).await?;
+    // GUI 注册表优先。CLI / 子 run 没有这份登记，改看本会话投影。
+    let mut active: Vec<(String, String)> = adapter
         .runs
         .active()
         .into_iter()
@@ -455,10 +516,21 @@ pub(crate) async fn computer_target_list(
             )
         })
         .collect();
-    let targets = if workspace_id.is_none() || active.is_empty() {
+    if let Some(workspace) = &workspace_id {
+        for pair in projection_open_runs(adapter, session_id, workspace).await? {
+            if !active.iter().any(|(_, run_id)| run_id == &pair.1) {
+                active.push(pair);
+            }
+        }
+    }
+    let targets = if active.is_empty() {
         Vec::new()
     } else {
-        core.target_states()
+        adapter
+            .core
+            .read()
+            .await
+            .target_states()
             .into_iter()
             .filter(|state| {
                 active.iter().any(|(workspace, run)| {
@@ -515,28 +587,33 @@ pub(crate) async fn computer_target_list(
 
 /// run 归属校验：approve / revoke 共用；未知或跨 session 一律 unknown_run
 /// （fail-closed，不区分「不存在」与「不归属」）。
-fn require_session_run(
+async fn require_session_run(
     adapter: &GuiHostAdapter,
     session_id: &pawork_domain::SessionId,
     run_id: &pawork_domain::RunId,
 ) -> Result<(String, String), GuiHostError> {
-    adapter
+    if let Some(run) = adapter
         .runs
         .active()
         .into_iter()
         .find(|run| run.run_id == *run_id && run.session_id == *session_id)
-        .map(|run| {
-            (
-                run.workspace_id.as_str().to_string(),
-                run.run_id.as_str().to_string(),
-            )
-        })
-        .ok_or_else(|| {
-            GuiHostAdapter::host_error(
-                "unknown_run",
-                "computer target commands require an active run of this session",
-            )
-        })
+    {
+        return Ok((
+            run.workspace_id.as_str().to_string(),
+            run.run_id.as_str().to_string(),
+        ));
+    }
+    let Some(workspace) = session_computer_workspace(adapter, session_id).await? else {
+        return Err(unknown_run());
+    };
+    let visible = projection_open_runs(adapter, session_id, &workspace)
+        .await?
+        .into_iter()
+        .any(|(_, open_run)| open_run == run_id.as_str());
+    if !visible {
+        return Err(unknown_run());
+    }
+    Ok((workspace, run_id.as_str().to_string()))
 }
 
 pub(crate) async fn computer_target_approve(
@@ -554,7 +631,7 @@ pub(crate) async fn computer_target_approve(
     else {
         unreachable!("computer_target_approve handler receives ComputerTargetApprove")
     };
-    let (workspace_id, run_id) = require_session_run(adapter, session_id, run_id)?;
+    let (workspace_id, run_id) = require_session_run(adapter, session_id, run_id).await?;
     let native = native_target(target)?;
     let native_kind = match kind {
         ComputerGrantKind::Once => GrantKind::Once,
@@ -564,10 +641,7 @@ pub(crate) async fn computer_target_approve(
     core.grant_target(&Scope::new(workspace_id, run_id), &native, native_kind)
         .map_err(|error| match error {
             pawork_computer_use::target::TargetError::ScopeClosed => {
-                GuiHostAdapter::host_error(
-                    "unknown_run",
-                    "run already reached a terminal state",
-                )
+                GuiHostAdapter::host_error("unknown_run", "run already reached a terminal state")
             }
             pawork_computer_use::target::TargetError::ForbiddenTarget => {
                 GuiHostAdapter::host_error(
@@ -599,7 +673,7 @@ pub(crate) async fn computer_target_revoke(
     else {
         unreachable!("computer_target_revoke handler receives ComputerTargetRevoke")
     };
-    let (workspace_id, run_id) = require_session_run(adapter, session_id, run_id)?;
+    let (workspace_id, run_id) = require_session_run(adapter, session_id, run_id).await?;
     let native = native_target(target)?;
     let core = adapter.core.read().await;
     core.revoke_target(&Scope::new(workspace_id, run_id), &native);

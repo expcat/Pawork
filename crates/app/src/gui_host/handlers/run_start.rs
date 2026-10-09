@@ -452,9 +452,7 @@ async fn start(
             .capability_evidence(core.model().as_str())
             .filter(|evidence| evidence.provider.as_ref() == Some(&core.provider_id))
             .map(|evidence| evidence.merged().image_input)
-            .or_else(|| {
-                pawork_models::registry::default_image_input(core.model().as_str())
-            })
+            .or_else(|| pawork_models::registry::default_image_input(core.model().as_str()))
             .unwrap_or(false);
         let tools: Vec<Arc<dyn pawork_domain::AgentTool>> = vec![
             Arc::new(super::super::terminal_tool::TerminalTool {
@@ -572,6 +570,16 @@ async fn start(
             "message or attachment is required",
         ));
     }
+    // CU-10 #5：显式 opt-in 的 CLI 客户端（握手名恰为 pawork-cli）经本
+    // Host 运行时，本 Run 的 bind/launch 可等待 GUI 目标审批。握手名只
+    // 打开等待开关，不授身份或更高权限；无连接登记、记录不存在、来源
+    // 不是盖章后的 LocalGui、或名字不相等，一律 false。
+    let wait_target_approval = match (&envelope.source, &adapter.connections) {
+        (pawork_protocol::CommandSource::LocalGui { client_id }, Some(connections)) => connections
+            .session(client_id)
+            .is_some_and(|session| session.name == "pawork-cli"),
+        _ => false,
+    };
     let n = adapter.next_gui_run.fetch_add(1, Ordering::Relaxed);
     let run_id = RunId::from(format!("run-gui-{}-{n}", now_timestamp().as_unix_millis()));
     adapter.browser.bind(&run_id, &envelope.source);
@@ -630,6 +638,7 @@ async fn start(
                 token,
                 web_search,
                 goal_budget,
+                wait_target_approval,
             )
             .await
         };
@@ -641,9 +650,12 @@ async fn start(
         // 审查修复 1：终态关闭兜底——chat_turn 内 ? 早退（如 usage 记账
         // 失败）绕过 services/run.rs 终态块时，这里仍幂等关闭授权 scope，
         // 阻止竞态窗口内的 late approve 重新授权。
-        core.read().await.close_target_scope(
-            &pawork_computer_use::target::Scope::new(target_workspace.as_str(), run.as_str()),
-        );
+        core.read()
+            .await
+            .close_target_scope(&pawork_computer_use::target::Scope::new(
+                target_workspace.as_str(),
+                run.as_str(),
+            ));
         approvals.clear_run(&run);
         runs.remove(&run);
         browser.unbind(&run);
