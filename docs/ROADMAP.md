@@ -22,7 +22,7 @@
 | 状态 | 任务 | 阶段 | 简介 |
 | --- | --- | --- | --- |
 | ✅ 完成（模拟验收） | [CU-01 · macOS 本机后台操作可行性与能力基线](plan/cu-01-background-feasibility.md) | P0 | 复用原生基线与异目标并发证据；Host 在途接管、取消及撤销后 Idle 模拟与 6 条回归通过，独立 review PASS，未证明能力继续拒绝。 |
-| 等待人工验收 | [CU-02 · 目标、观测与后台能力契约](plan/cu-02-target-contracts.md) | P1 | 在现有 computer-use / tools 内定义应用、窗口、元素和输入的最小有类型契约。 |
+| ✅ 完成（模拟验收） | [CU-02 · 目标、观测与后台能力契约](plan/cu-02-target-contracts.md) | P1 | 当前契约及正式入口拒绝语义核验，复用同版 99 条库回归与 6 条 Host 回归；源码无改，Spec 消费顺序同步，独立复审 PASS。 |
 | 等待人工验收 | [CU-03 · 应用发现、窗口选择与受控启动](plan/cu-03-app-window-discovery.md) | P2 | 让 Agent 选择已授权的真实应用与窗口，并按目标身份受控启动应用。 |
 | 等待人工验收 | [CU-04 · 窗口级截图与观测坐标](plan/cu-04-window-observation.md) | P2 | 提供目标窗口截图与可供动作使用的新鲜观测。 |
 | 等待人工验收 | [CU-05 · 有界无障碍树与元素定位](plan/cu-05-accessibility-tree.md) | P2 | 为支持的目标应用提供 AX 状态、元素查找和观测绑定的句柄。 |
