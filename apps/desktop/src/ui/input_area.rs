@@ -199,7 +199,7 @@ fn composer_chip_chrome(window: &Window) -> f32 {
     pad_x + metrics::SPACE_2 + metrics::ICON_SM
 }
 
-fn shape_label_width(window: &Window, label: &str, size: gpui::Rems) -> f32 {
+pub(super) fn shape_label_width(window: &Window, label: &str, size: gpui::Rems) -> f32 {
     let style = window.text_style();
     let text = if label.is_empty() { " " } else { label };
     let run = TextRun {

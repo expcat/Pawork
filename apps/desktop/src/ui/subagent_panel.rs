@@ -239,6 +239,37 @@ pub(super) fn short_title(title: &str) -> String {
     title.chars().take(24).collect()
 }
 
+/// 上一帧 chip 行视口留给标题的宽度。首帧视口为 0 时不钳制。
+/// 渲染读不到本帧 prepaint 才写入的宽度；调用方在布局结束后比较，
+/// 差超过 0.5px 时 notify 一次，下一帧用新宽度，宽度不动就停。
+/// 水平 chrome 是 Button px_2（左右各 0.5rem）、标题与状态点的 gap_1，
+/// 再加上 Ø6 状态点。文字至少留 12px，避免宽度被收成不可读的一条。
+fn subagent_chip_text_max(window: &Window, port_width: f32) -> Option<f32> {
+    if port_width <= 0.0 {
+        return None;
+    }
+    let rem = f32::from(window.rem_size());
+    let chrome = rem + rem * 0.25 + 6.0;
+    Some((port_width - chrome).max(12.0))
+}
+
+/// 标题列宽：完整 short_title 的测量宽向上取整。等于字形宽时 shape_text
+/// 会把最后一个字形折到下一行，而元素仍按一行排，高度对不上。
+/// 超出视口文字区时改用文字区宽并换行。
+fn subagent_chip_label_width(window: &Window, title: &str, text_max: Option<f32>) -> f32 {
+    let full = super::input_area::shape_label_width(window, title, font::BODY_SM).ceil();
+    match text_max {
+        Some(max) => {
+            if full <= max {
+                full
+            } else {
+                max
+            }
+        }
+        None => full,
+    }
+}
+
 /// 子代理状态 → chip 语义点颜色（与 Header 状态点 / TaskRail 同族映射：
 /// 运行蓝、等待琥珀、完成绿、失败红、其余弱化）。
 fn subagent_status_color(status: &str) -> Rgba {
@@ -378,6 +409,24 @@ impl AppView {
                     .child(empty_label),
             );
         }
+        // 视口宽来自上一帧。首帧为 0 时不钳制；默认 flex_shrink 会把超宽
+        // chip 压扁，所以每枚 chip 用 flex_none，放不下就横滑。
+        // bounds 更新不会自动重绘。本帧 prepaint 写入新宽度后，若与这次
+        // 测量差超过 0.5px，defer notify 一次：真窗口下一帧、测试的 effect
+        // flush 都会用新宽度再画。这次若消费了 reveal，说明滚动是按旧宽度
+        // 算的，下一帧再 reveal 一次；宽度不动就停，不逐帧循环。
+        let port_width = f32::from(self.subagent_chips_scroll.bounds().size.width);
+        let text_max = subagent_chip_text_max(window, port_width);
+        let reveal_for_layout = self.subagent_reveal_selected;
+        cx.defer_in(window, move |view, _window, cx| {
+            let laid_out = f32::from(view.subagent_chips_scroll.bounds().size.width);
+            if (laid_out - port_width).abs() > 0.5 {
+                if reveal_for_layout {
+                    view.subagent_reveal_selected = true;
+                }
+                cx.notify();
+            }
+        });
         for agent in &agents {
             let is_selected = Some(agent.agent_id.as_str()) == selected_id.as_deref();
             let focus = self
@@ -394,14 +443,22 @@ impl AppView {
             let tooltip = format!("{} · {} · {}", agent.title, agent.model_id, status_label);
             let click_id = agent.agent_id.clone();
             let activate_id = agent.agent_id.clone();
+            let selector_id = agent.agent_id.clone();
             let dot_color = subagent_status_color(&agent.status);
+            let title = short_title(&agent.title);
+            let label_width = subagent_chip_label_width(window, &title, text_max);
             chips = chips.child(
                 div()
                     .id(SharedString::from(format!(
                         "subagent-chip-layout-{}",
                         agent.agent_id
                     )))
+                    .flex_none()
                     .track_scroll(&layout)
+                    .debug_selector({
+                        let selector_id = selector_id.clone();
+                        move || format!("subagent-chip-{selector_id}")
+                    })
                     .child(
                         Button::new(format!("subagent-select-{}", agent.agent_id))
                             .disabled(!matches!(
@@ -430,9 +487,22 @@ impl AppView {
                                             .h(px(6.0))
                                             .rounded_full()
                                             .flex_none()
-                                            .bg(dot_color),
+                                            .bg(dot_color)
+                                            .debug_selector({
+                                                let selector_id = selector_id.clone();
+                                                move || format!("subagent-dot-{selector_id}")
+                                            }),
                                     )
-                                    .child(short_title(&agent.title)),
+                                    .child(
+                                        div()
+                                            .flex_none()
+                                            .w(px(label_width))
+                                            .debug_selector({
+                                                let selector_id = selector_id.clone();
+                                                move || format!("subagent-label-{selector_id}")
+                                            })
+                                            .child(title),
+                                    ),
                             )
                             .tooltip(tooltip)
                             .on_click(cx.listener(move |view, event, _window, cx| {
@@ -2314,5 +2384,430 @@ mod tests {
         ));
         assert!(!subagent_result_matches_reply("other", &conversation));
         assert!(!subagent_result_matches_reply(&other_2000, &conversation));
+    }
+
+    /// RV-06：100/125/150 与 1440×1024 侧栏 / 1080×720 中央下，子代理 chip
+    /// 按正文增高。超宽 emoji 放在第一枚并保持选中：scroll 为 0 时它贴着
+    /// 视口左缘，换行后 chip 不宽于视口，标题、状态点和焦点环不再被裁。
+    /// 一次 notify 内自行收敛，不靠测试里的额外 refresh。最后一个 chip 的
+    /// reveal 不在这条验收里：gpui 的 scroll_to_active_item 对照上一帧 port。
+    /// 只验证布局和字形测量，不是真实像素验收。
+    #[gpui::test]
+    fn subagent_chip_labels_fit_text_scales(cx: &mut gpui::TestAppContext) {
+        fn agent(id: &str, title: &str, status: &str) -> crate::projection::SubagentInfo {
+            crate::projection::SubagentInfo {
+                agent_id: id.into(),
+                session_id: id.into(),
+                parent_run_id: "run-0".into(),
+                title: title.into(),
+                provider_id: "test-provider".into(),
+                model_id: "test-model".into(),
+                status: status.into(),
+                result: None,
+                effort: None,
+            }
+        }
+        fn px_of(value: impl Into<f32>) -> f32 {
+            value.into()
+        }
+        fn contains(
+            outer: gpui::Bounds<gpui::Pixels>,
+            inner: gpui::Bounds<gpui::Pixels>,
+            tol: f32,
+        ) -> bool {
+            px_of(inner.left()) >= px_of(outer.left()) - tol
+                && px_of(inner.right()) <= px_of(outer.right()) + tol
+                && px_of(inner.top()) >= px_of(outer.top()) - tol
+                && px_of(inner.bottom()) <= px_of(outer.bottom()) + tol
+        }
+
+        let wide_title = "😀".repeat(24);
+        let titles = [
+            ("wide", wide_title.clone(), "running"),
+            ("run", "测".repeat(30), "running"),
+            ("wait", "glyphypq".to_string(), "waiting"),
+            ("done", "A".to_string(), "completed"),
+            ("fail", "签".repeat(28), "failed"),
+        ];
+        for (id, raw, _) in &titles {
+            let title = super::short_title(raw);
+            assert!(!title.is_empty(), "{id} title empty");
+            assert!(title.chars().count() <= 24, "{id} title longer than 24");
+            assert!(raw.starts_with(&title), "{id} title is not a prefix");
+            assert_ne!(title, "…", "{id} title collapsed to an ellipsis");
+        }
+
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("rv06-subagent-chip-font.sock");
+        let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.active_session_id = Some("parent".into());
+                view.projection.connection = crate::projection::ConnectionState::Connected {
+                    instance_id: "test".into(),
+                };
+                view.projection.subagent_activity.session_id = Some("parent".into());
+                view.projection.subagent_activity.agents = titles
+                    .iter()
+                    .map(|(id, title, status)| agent(id, title, status))
+                    .collect();
+                assert!(view.projection.subagent_conversation.select_agent("wide"));
+                view.subagent_reveal_selected = true;
+                view.inspector_open = true;
+                view.inspector_tab = super::super::inspector::InspectorTab::Subagent;
+                view.close_open_menu(cx);
+                cx.notify();
+            });
+        });
+
+        let mut done_heights = Vec::new();
+        for (width, height, side) in [(1440.0_f32, 1024.0_f32, true), (1080.0, 720.0, false)] {
+            for scale in [
+                font::TextScale::Percent100,
+                font::TextScale::Percent125,
+                font::TextScale::Percent150,
+            ] {
+                cx.simulate_resize(gpui::size(gpui::px(width), gpui::px(height)));
+                cx.run_until_parked();
+                cx.update(|window, cx| {
+                    window.set_rem_size(gpui::px(scale.rem_pixels()));
+                    view.update(cx, |view, cx| {
+                        view.text_scale = scale;
+                        view.inspector_open = true;
+                        view.inspector_tab = super::super::inspector::InspectorTab::Subagent;
+                        if view.projection.subagent_conversation.agent_id.as_deref() != Some("wide")
+                        {
+                            view.projection.subagent_conversation.select_agent("wide");
+                        }
+                        let large = scale == font::TextScale::Percent150;
+                        // Rust 1.96 的 duration_since 对更早的 Instant 返回 0，
+                        // 回拨开始时间不会结束动画。这里直接落到最终宽度。
+                        if super::super::shell_layout::can_fit_side_inspector(
+                            gpui::px(width),
+                            large,
+                        ) {
+                            view.inspector_motion.snap(metrics::INSPECTOR_WIDTH);
+                        } else {
+                            view.inspector_motion.snap(0.0);
+                        }
+                        // 一次 notify。宽度收敛和选中 chip 滚入都由产品自己完成。
+                        view.subagent_reveal_selected = true;
+                        cx.notify();
+                    });
+                });
+
+                let run_chip = cx.debug_bounds("subagent-chip-run").expect("run chip");
+                let run_label = cx.debug_bounds("subagent-label-run").expect("run label");
+                let wait_label = cx.debug_bounds("subagent-label-wait").expect("wait label");
+                let done_label = cx.debug_bounds("subagent-label-done").expect("done label");
+                let fail_label = cx.debug_bounds("subagent-label-fail").expect("fail label");
+                let wide_chip = cx.debug_bounds("subagent-chip-wide").expect("wide chip");
+                let wide_dot = cx.debug_bounds("subagent-dot-wide").expect("wide dot");
+                let wide_label = cx.debug_bounds("subagent-label-wide").expect("wide label");
+                let done_chip = cx.debug_bounds("subagent-chip-done").expect("done chip");
+                let inspector = cx.debug_bounds("shell-inspector").expect("inspector");
+                let chips = [
+                    cx.debug_bounds("subagent-chip-run").expect("run"),
+                    cx.debug_bounds("subagent-chip-wait").expect("wait"),
+                    cx.debug_bounds("subagent-chip-done").expect("done"),
+                    cx.debug_bounds("subagent-chip-fail").expect("fail"),
+                    cx.debug_bounds("subagent-chip-wide").expect("wide"),
+                ];
+
+                let done_h = cx.update(|window, cx| {
+                    let view = view.read(cx);
+                    let large = scale == font::TextScale::Percent150;
+                    let shell = super::super::shell_layout::resolve(
+                        window.viewport_size().width,
+                        view.inspector_open,
+                        large,
+                    );
+                    assert_eq!(shell.placement.is_side(), side, "{width}x{height} placement");
+                    if side {
+                        assert!(
+                            (px_of(inspector.size.width) - metrics::INSPECTOR_WIDTH).abs() <= 1.0,
+                            "side inspector width {} origin {} viewport {}",
+                            px_of(inspector.size.width),
+                            px_of(inspector.origin.x),
+                            px_of(window.viewport_size().width)
+                        );
+                    } else {
+                        assert!(
+                            shell.placement.is_center(),
+                            "1080 inspector must be centered"
+                        );
+                        assert!(px_of(inspector.size.width) > 400.0);
+                    }
+                    let port = view.subagent_chips_scroll.bounds();
+                    let text_max = super::subagent_chip_text_max(window, px_of(port.size.width));
+                    let rem = px_of(window.rem_size());
+                    let font_px = 12.0 * f32::from(scale.percent()) / 100.0;
+                    let expected_h = (font_px * 1.618034).round() + 2.0 * 0.25 * rem;
+                    eprintln!(
+                        "RV06 scale={}% window={width}x{height} placement={} port={:.1}x{:.1} wide={:.1}x{:.1} wide_label={:.1}x{:.1} done_h={:.1} expected_h={:.1} offset_x={:.1} wide_left={:.1} port_left={:.1}",
+                        scale.percent(),
+                        if side { "side" } else { "center" },
+                        px_of(port.size.width),
+                        px_of(port.size.height),
+                        px_of(wide_chip.size.width),
+                        px_of(wide_chip.size.height),
+                        px_of(wide_label.size.width),
+                        px_of(wide_label.size.height),
+                        px_of(done_chip.size.height),
+                        expected_h,
+                        px_of(view.subagent_chips_scroll.offset().x),
+                        px_of(wide_chip.left()),
+                        px_of(port.left()),
+                    );
+                    let wide_short = super::short_title(&wide_title);
+                    let wide_full = super::super::input_area::shape_label_width(
+                        window,
+                        &wide_short,
+                        font::BODY_SM,
+                    )
+                    .ceil();
+                    let wide_max = text_max.expect("chip port width");
+                    if side {
+                        assert!(
+                            wide_full > wide_max,
+                            "emoji short_title {wide_full} must exceed side text area {wide_max}"
+                        );
+                    }
+                    if wide_full > wide_max {
+                        assert!(
+                            px_of(wide_label.size.height) > px_of(done_label.size.height) + 4.0,
+                            "emoji title must wrap: label {} one_line {}",
+                            px_of(wide_label.size.height),
+                            px_of(done_label.size.height)
+                        );
+                    } else {
+                        assert!(
+                            (px_of(wide_label.size.height) - px_of(done_label.size.height)).abs()
+                                <= 2.0,
+                            "emoji title stays one line when it fits"
+                        );
+                    }
+                    assert!(
+                        px_of(view.subagent_chips_scroll.offset().x).abs() <= 1.0,
+                        "wide-first chip must stay at scroll 0, offset {}",
+                        px_of(view.subagent_chips_scroll.offset().x)
+                    );
+                    assert!(
+                        (px_of(wide_chip.left()) - px_of(port.left())).abs() <= 1.0,
+                        "wide chip must sit on the port left edge: chip={wide_chip:?} port={port:?}"
+                    );
+                    assert!(
+                        px_of(wide_chip.size.width) <= px_of(port.size.width) + 1.0,
+                        "wrapped wide chip is wider than the port: chip={wide_chip:?} port={port:?}"
+                    );
+                    assert!(
+                        contains(port, wide_chip, 1.0),
+                        "selected wide chip is outside the port: chip={wide_chip:?} port={port:?}"
+                    );
+                    assert!(contains(wide_chip, wide_label, 1.0), "wide label leaves its chip");
+                    assert!(contains(port, wide_dot, 1.0), "wide dot leaves the port");
+                    assert!((px_of(wide_dot.size.width) - 6.0).abs() <= 0.5);
+                    assert!((px_of(wide_dot.size.height) - 6.0).abs() <= 0.5);
+                    let ring = metrics::FOCUS_RING_WIDTH - 0.5;
+                    assert!(px_of(wide_dot.left()) >= px_of(wide_chip.left()) + ring);
+                    assert!(px_of(wide_chip.right()) >= px_of(wide_dot.right()) + ring);
+                    assert!(px_of(wide_dot.top()) >= px_of(wide_chip.top()) + ring);
+                    assert!(px_of(wide_chip.bottom()) >= px_of(wide_dot.bottom()) + ring);
+                    assert!(
+                        px_of(wide_dot.right()) <= px_of(wide_label.left()) + 0.5,
+                        "dot overlaps label"
+                    );
+                    assert!(px_of(done_chip.size.width) + 8.0 < px_of(run_chip.size.width));
+
+                    let mut ordered = chips;
+                    ordered.sort_by(|left, right| {
+                        px_of(left.left())
+                            .partial_cmp(&px_of(right.left()))
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                    for pair in ordered.windows(2) {
+                        assert!(
+                            px_of(pair[1].left()) + 0.5 >= px_of(pair[0].right()),
+                            "chips overlap: {:?} {:?}",
+                            pair[0],
+                            pair[1]
+                        );
+                    }
+
+                    let font_size = font::BODY_SM.to_pixels(window.rem_size());
+                    let line_height = window
+                        .text_style()
+                        .line_height
+                        .to_pixels(font_size.into(), window.rem_size());
+                    let style = window.text_style();
+                    for (id, raw, _) in &titles {
+                        let short = super::short_title(raw);
+                        let label = match *id {
+                            "run" => run_label,
+                            "wait" => wait_label,
+                            "done" => done_label,
+                            "fail" => fail_label,
+                            "wide" => wide_label,
+                            _ => unreachable!(),
+                        };
+                        let expected = super::subagent_chip_label_width(window, &short, text_max);
+                        assert!(
+                            (px_of(label.size.width) - expected).abs() <= 1.0,
+                            "{id} label width {} != {expected}",
+                            px_of(label.size.width)
+                        );
+                        let run = gpui::TextRun {
+                            len: short.len(),
+                            font: style.font(),
+                            color: style.color,
+                            background_color: None,
+                            underline: None,
+                            strikethrough: None,
+                        };
+                        let lines = window
+                            .text_system()
+                            .shape_text(
+                                short.clone().into(),
+                                font_size,
+                                &[run],
+                                Some(gpui::px(px_of(label.size.width))),
+                                None,
+                            )
+                            .expect("shape chip label");
+                        let shaped: String = lines.iter().map(|line| line.text.to_string()).collect();
+                        assert_eq!(shaped, short, "{id} label text was clipped");
+                        let shaped_h: f32 = lines
+                            .iter()
+                            .map(|line| px_of(line.size(line_height).height))
+                            .sum();
+                        assert!(
+                            (shaped_h - px_of(label.size.height)).abs() <= 2.0,
+                            "{id} label height {} != shaped {shaped_h}",
+                            px_of(label.size.height)
+                        );
+                    }
+                    assert!(
+                        (px_of(done_chip.size.height) - expected_h).abs() <= 1.5,
+                        "done chip height {} expected {expected_h}",
+                        px_of(done_chip.size.height)
+                    );
+                    px_of(done_chip.size.height)
+                });
+                done_heights.push((width, scale.percent(), done_h));
+
+                let before = cx
+                    .debug_bounds("subagent-chip-wide")
+                    .expect("wide before focus");
+                cx.update(|window, cx| {
+                    view.update(cx, |view, cx| {
+                        let handle = view
+                            .subagent_agent_focus
+                            .get("wide")
+                            .expect("wide focus")
+                            .clone();
+                        window.focus(&handle);
+                        super::super::components::focus_ring::set_keyboard_focus(true, window, cx);
+                    });
+                });
+                let after = cx
+                    .debug_bounds("subagent-chip-wide")
+                    .expect("wide after focus");
+                let focused_port = cx.update(|_, cx| view.read(cx).subagent_chips_scroll.bounds());
+                assert!(
+                    (px_of(before.origin.x) - px_of(after.origin.x)).abs() <= 0.5
+                        && (px_of(before.origin.y) - px_of(after.origin.y)).abs() <= 0.5
+                        && (px_of(before.size.width) - px_of(after.size.width)).abs() <= 0.5
+                        && (px_of(before.size.height) - px_of(after.size.height)).abs() <= 0.5,
+                    "focus ring changed chip bounds {before:?} -> {after:?}"
+                );
+                assert!(
+                    contains(focused_port, after, 1.0),
+                    "focused wide chip leaves the port: chip={after:?} port={focused_port:?}"
+                );
+            }
+        }
+        for window_width in [1440.0_f32, 1080.0] {
+            let heights: Vec<f32> = done_heights
+                .iter()
+                .filter(|(width, _, _)| *width == window_width)
+                .map(|(_, _, height)| *height)
+                .collect();
+            assert_eq!(heights.len(), 3);
+            assert!(
+                heights[0] < heights[1] && heights[1] < heights[2],
+                "done chip height must grow with text scale at {window_width}: {heights:?}"
+            );
+        }
+
+        // 中央栏回到侧栏：一次 notify，不额外 refresh。窄视口必须把 emoji 换行。
+        cx.simulate_resize(gpui::size(gpui::px(1440.0), gpui::px(1024.0)));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.set_rem_size(gpui::px(font::TextScale::Percent150.rem_pixels()));
+            view.update(cx, |view, cx| {
+                view.text_scale = font::TextScale::Percent150;
+                view.inspector_motion.snap(metrics::INSPECTOR_WIDTH);
+                view.subagent_reveal_selected = true;
+                cx.notify();
+            });
+        });
+        let wide_chip = cx.debug_bounds("subagent-chip-wide").expect("wide chip");
+        let wide_label = cx.debug_bounds("subagent-label-wide").expect("wide label");
+        let wide_dot = cx.debug_bounds("subagent-dot-wide").expect("wide dot");
+        let done_label = cx.debug_bounds("subagent-label-done").expect("done label");
+        let (port, wide_full, wide_max, offset_x) = cx.update(|window, cx| {
+            let view = view.read(cx);
+            let port = view.subagent_chips_scroll.bounds();
+            let offset_x = px_of(view.subagent_chips_scroll.offset().x);
+            let short = super::short_title(&wide_title);
+            let full =
+                super::super::input_area::shape_label_width(window, &short, font::BODY_SM).ceil();
+            let max = super::subagent_chip_text_max(window, px_of(port.size.width)).expect("port");
+            (port, full, max, offset_x)
+        });
+        eprintln!(
+            "RV06 boundary 1440x1024 scale=150% wide={:.1}x{:.1} label={:.1}x{:.1} dot={:.1}x{:.1} port={:.1}x{:.1} full={wide_full:.1} text_max={wide_max:.1} offset_x={offset_x:.1} wide_left={:.1} port_left={:.1}",
+            px_of(wide_chip.size.width),
+            px_of(wide_chip.size.height),
+            px_of(wide_label.size.width),
+            px_of(wide_label.size.height),
+            px_of(wide_dot.size.width),
+            px_of(wide_dot.size.height),
+            px_of(port.size.width),
+            px_of(port.size.height),
+            px_of(wide_chip.left()),
+            px_of(port.left())
+        );
+        assert!(
+            offset_x.abs() <= 1.0,
+            "wide-first chip must stay at scroll 0 after returning to the side inspector, offset {offset_x}"
+        );
+        assert!(
+            (px_of(wide_chip.left()) - px_of(port.left())).abs() <= 1.0,
+            "wide chip must sit on the port left edge: chip={wide_chip:?} port={port:?}"
+        );
+        assert!(
+            px_of(wide_chip.size.width) <= px_of(port.size.width) + 1.0,
+            "wrapped wide chip is wider than the port: chip={wide_chip:?} port={port:?}"
+        );
+        assert!(
+            wide_full > wide_max,
+            "emoji {wide_full} must exceed text area {wide_max}"
+        );
+        assert!(
+            px_of(wide_label.size.height) > px_of(done_label.size.height) + 4.0,
+            "emoji title must wrap after returning to the side inspector: wide {} one_line {}",
+            px_of(wide_label.size.height),
+            px_of(done_label.size.height)
+        );
+        assert!(
+            contains(port, wide_chip, 1.0),
+            "selected chip must fit after one notify: chip={wide_chip:?} port={port:?}"
+        );
+        assert!(
+            contains(port, wide_label, 1.0),
+            "wrapped title leaves the port"
+        );
+        assert!(contains(port, wide_dot, 1.0), "status dot leaves the port");
     }
 }

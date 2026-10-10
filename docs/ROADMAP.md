@@ -1,6 +1,6 @@
 # Pawork 计划目录
 
-> 更新：2026-10-09。本页只维护任务状态、链接和简介；每个任务的范围、前置、实现与验收细节写在 `docs/plan/` 的独立文档。现行能力与契约仍以 [Spec](spec/README.md) 和 [架构](architecture.md) 为准，计划不代表已实现。
+> 更新：2026-10-11。本页只维护任务状态、链接和简介；每个任务的范围、前置、实现与验收细节写在 `docs/plan/` 的独立文档。现行能力与契约仍以 [Spec](spec/README.md) 和 [架构](architecture.md) 为准，计划不代表已实现。
 
 ## 状态与维护
 
@@ -95,12 +95,12 @@
 | ✅ 完成（模拟验收）；独立 review / 复审 PASS；真实窗口与系统文件选择器待验 | [RV-03 · Composer 附件错误人工验收](plan/rv-03-composer-errors.md) | 真实临时文件的允许 / 类型拒绝 / 大小拒绝 / 清错 / 数量上限、中英文案与 AX、草稿焦点及修正入口在 GPUI 测试窗口模拟通过。 |
 | ✅ 完成（模拟验收）；独立 review / 复审 PASS；真实 Host 现场重放与窗口待验 | [RV-04 · 子代理工具展开人工验收](plan/rv-04-subagent-tools.md) | 历史工具事实水合后的目标、参数、回执、折叠稳定性与拒绝 / 失败区分在 GPUI 测试窗口模拟通过。审批标题按 Host 字段回退为 approval requested · tool · tool `write_file` requires approval，拒绝为 approval deny。 |
 | ✅ 完成（模拟验收）；独立 review / 复审 PASS；真实窗口与像素待验 | [RV-05 · 子代理回执阅读人工验收](plan/rv-05-subagent-receipts.md) | Markdown 回执与主正文同源渲染，长回执折叠 / 展开 / 再折叠、外层滚动与 2000 字符前缀去重边界在 GPUI 测试窗口模拟通过。 |
+| ✅ 完成（模拟验收）；独立 review / 复审 PASS；真实窗口与像素待验 | [RV-06 · 子代理标签字号人工验收](plan/rv-06-subagent-font-sizes.md) | 100% / 125% / 150% 字号与侧栏 / 中央布局下，超宽标题换行、chip 宽度钳制、状态点与焦点环完整由产品自行收敛；GPUI 测试窗口模拟通过。 |
 
 ### 待验收
 
 | 状态 | 任务 | 简介 |
 | --- | --- | --- |
-| 等待人工验收 | [RV-06 · 子代理标签字号人工验收](plan/rv-06-subagent-font-sizes.md) | 验收 100% / 125% / 150% 字号下标签的真实像素。 |
 | 等待人工验收 | [RV-07 · 子代理正文键盘与朗读人工验收](plan/rv-07-subagent-accessibility.md) | 验收正文真正可由键盘访问和朗读。 |
 | 等待人工验收 | [RV-11 · 子代理断线与恢复人工验收](plan/rv-11-subagent-reconnect.md) | 验收断线保留已加载对话、重连恢复和诚实加载态。 |
 | 等待人工验收 | [GUI2-01 · 工作台壳、首页与侧栏人工验收](plan/accept-gui-workbench.md) | 验收首页、Header 和侧栏在真实任务、项目与连接状态下的可达性。 |
