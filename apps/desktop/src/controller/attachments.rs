@@ -362,6 +362,15 @@ fn open_snapshot_file(
     ))
 }
 
+/// 测试专用：UI 验收直接调用真实 read_files，不新增生产入口。
+#[cfg(test)]
+pub(crate) fn read_composer_files_for_test(
+    paths: Vec<PathBuf>,
+    images_only: bool,
+) -> Result<Vec<ComposerAttachment>, ComposerAttachmentError> {
+    read_files(paths, images_only)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

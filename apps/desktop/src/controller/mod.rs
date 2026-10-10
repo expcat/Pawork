@@ -440,6 +440,8 @@ mod browser;
 mod computer;
 mod files;
 mod products;
+#[cfg(test)]
+pub(crate) use attachments::read_composer_files_for_test;
 pub use attachments::{ComposerAttachment, ComposerAttachmentError, ComposerOptions};
 pub use files::FileOperation;
 mod session;

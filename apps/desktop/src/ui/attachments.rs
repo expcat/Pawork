@@ -1012,4 +1012,378 @@ mod tests {
             });
         });
     }
+
+    /// RV-03：真实文件决定允许或拒绝。代表性错误保留本地化文案；
+    /// 草稿、焦点和添加入口保留，失败不记成成功，也不写进 status_hint。
+    #[gpui::test]
+    fn attachment_limits_keep_draft_focus_and_correction(cx: &mut gpui::TestAppContext) {
+        use gpui::{px, size};
+
+        struct LanguageReset(crate::ui::i18n::Language);
+        impl Drop for LanguageReset {
+            fn drop(&mut self) {
+                crate::ui::i18n::set_language(self.0);
+            }
+        }
+        let _language = LanguageReset(crate::ui::i18n::language());
+
+        fn intact(view: &AppView, cx: &gpui::App, window: &gpui::Window) {
+            assert_eq!(view.text_input.read(cx).text(), "草稿还在");
+            assert!(
+                view.composer_focus_handle(cx).is_focused(window),
+                "attachment result must not move composer focus"
+            );
+            assert!(view.status_hint.is_none());
+            assert!(!view.composer_loading);
+            assert!(view.current_composer_send_error().is_none());
+            assert!(view.composer_action_enabled(input_area::ComposerAction::Files));
+            assert!(view.composer_action_enabled(input_area::ComposerAction::Image));
+        }
+
+        // 1×1 PNG。只用于会进入渲染的允许路径。
+        const SHOT_PNG: &[u8] = &[
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
+            0x00, 0x90, 0x77, 0x53, 0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00, 0xc9, 0xfe, 0x92,
+            0xef, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ];
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path();
+        let write = |name: &str, bytes: &[u8]| {
+            let path = dir.join(name);
+            std::fs::write(&path, bytes).unwrap();
+            path
+        };
+        let read = |paths: Vec<std::path::PathBuf>, images_only: bool| {
+            crate::controller::read_composer_files_for_test(paths, images_only)
+        };
+        let note = write("note.txt", b"hello");
+        let shot = write("shot.png", SHOT_PNG);
+        let big_text = write("big.txt", &vec![b'b'; 64 * 1024 + 1]);
+
+        let allowed = read(vec![note.clone(), shot.clone()], false).unwrap();
+        assert_eq!(allowed[0].name, "note.txt");
+        assert!(!allowed[0].image);
+        assert_eq!(allowed[0].bytes.as_ref().as_slice(), b"hello");
+        assert_eq!(allowed[1].name, "shot.png");
+        assert!(allowed[1].image);
+        let image_only_text = read(vec![note.clone()], true).unwrap_err();
+        assert_eq!(
+            image_only_text,
+            ComposerAttachmentError::UnsupportedType {
+                name: "note.txt".into(),
+                images_only: true,
+            }
+        );
+        let text_too_large = read(vec![big_text], false).unwrap_err();
+        assert_eq!(
+            text_too_large,
+            ComposerAttachmentError::TooLarge {
+                name: "big.txt".into(),
+                image: false,
+            }
+        );
+        let later = read(vec![note, shot], false).unwrap();
+
+        let platform = Arc::new(Platform::new());
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            AppView::new(
+                platform,
+                std::env::temp_dir().join("rv03-composer-errors.sock"),
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        cx.simulate_resize(size(px(1440.0), px(1024.0)));
+        let draft = Some("rv03".to_string());
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.active_session_id = draft.clone();
+                view.text_input
+                    .update(cx, |input, cx| input.set_text("草稿还在", cx));
+                view.focus_composer(window, cx);
+            });
+        });
+        cx.refresh().unwrap();
+
+        let names = |view: &AppView| {
+            view.current_composer_options()
+                .attachments
+                .iter()
+                .map(|attachment| attachment.name.clone())
+                .collect::<Vec<_>>()
+        };
+        let apply =
+            |view: &mut AppView,
+             cx: &mut gpui::Context<AppView>,
+             result: Result<Vec<ComposerAttachment>, ComposerAttachmentError>| {
+                view.composer_loading = true;
+                view.handle_controller_event(
+                    ControllerEvent::ComposerAttachmentsLoaded {
+                        draft: draft.clone(),
+                        result,
+                    },
+                    cx,
+                );
+            };
+
+        let attach_error_ax = |cx: &mut gpui::VisualTestContext| {
+            cx.refresh().unwrap();
+            cx.update(|window, cx| {
+                view.update(cx, |view, cx| {
+                    view.accessibility_tree(window, cx)
+                        .find("composer-attach-error")
+                        .and_then(|node| node.value.clone())
+                })
+            })
+        };
+
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                apply(view, cx, Ok(allowed));
+                intact(view, cx, window);
+                assert!(view.current_composer_options().attachment_error.is_none());
+                assert_eq!(names(view), ["note.txt", "shot.png"]);
+                assert_eq!(
+                    view.current_composer_options()
+                        .attachments
+                        .iter()
+                        .map(|attachment| attachment.image)
+                        .collect::<Vec<_>>(),
+                    [false, true]
+                );
+
+                apply(view, cx, Err(image_only_text.clone()));
+                intact(view, cx, window);
+                assert_eq!(
+                    view.current_composer_options().attachment_error.as_ref(),
+                    Some(&image_only_text)
+                );
+                assert_eq!(names(view), ["note.txt", "shot.png"]);
+                let image_only_copy = view.composer_attachment_error_text(&image_only_text);
+                assert_eq!(
+                    image_only_copy,
+                    "note.txt: not a supported image; choose PNG, JPEG, GIF or WebP"
+                );
+                assert!(!image_only_copy.contains("UTF-8"));
+            });
+        });
+        assert_eq!(
+            attach_error_ax(cx).as_deref(),
+            Some("note.txt: not a supported image; choose PNG, JPEG, GIF or WebP")
+        );
+        crate::ui::i18n::set_language(crate::ui::i18n::Language::Chinese);
+        assert_eq!(
+            attach_error_ax(cx).as_deref(),
+            Some("note.txt：不是受支持的图片，请选择 PNG、JPEG、GIF 或 WebP 图片")
+        );
+        crate::ui::i18n::set_language(crate::ui::i18n::Language::English);
+
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                apply(view, cx, Err(text_too_large.clone()));
+                intact(view, cx, window);
+                assert_eq!(names(view), ["note.txt", "shot.png"]);
+                assert_eq!(
+                    view.current_composer_options().attachment_error.as_ref(),
+                    Some(&text_too_large)
+                );
+                let text_copy = view.composer_attachment_error_text(&text_too_large);
+                assert_eq!(
+                    text_copy,
+                    "big.txt: text file exceeds 64 KiB; choose a smaller UTF-8 text file"
+                );
+                assert!(!text_copy.contains("8 MiB"));
+
+                assert_eq!(
+                    view.composer_action_hint(input_area::ComposerAction::Files),
+                    "Choose up to 4 local files: PNG/JPEG/GIF/WebP images (≤8 MiB each) or UTF-8 text (≤64 KiB); no project required"
+                );
+                assert_eq!(
+                    view.composer_action_hint(input_area::ComposerAction::Image),
+                    "Choose PNG/JPEG/GIF/WebP images, ≤8 MiB each, up to 4 per message; no project required"
+                );
+            });
+        });
+        assert_eq!(
+            attach_error_ax(cx).as_deref(),
+            Some("big.txt: text file exceeds 64 KiB; choose a smaller UTF-8 text file")
+        );
+        crate::ui::i18n::set_language(crate::ui::i18n::Language::Chinese);
+        assert_eq!(
+            attach_error_ax(cx).as_deref(),
+            Some("big.txt：文本文件超过 64 KiB，请选择更小的 UTF-8 文本文件")
+        );
+        crate::ui::i18n::set_language(crate::ui::i18n::Language::English);
+
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                apply(view, cx, Ok(later.clone()));
+                intact(view, cx, window);
+                assert!(view.current_composer_options().attachment_error.is_none());
+                assert_eq!(
+                    names(view),
+                    ["note.txt", "shot.png", "note.txt", "shot.png"]
+                );
+            });
+        });
+        assert!(attach_error_ax(cx).is_none());
+
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                apply(view, cx, Ok(later));
+                intact(view, cx, window);
+                assert_eq!(
+                    names(view),
+                    ["note.txt", "shot.png", "note.txt", "shot.png"]
+                );
+                assert_eq!(
+                    view.current_composer_options().attachment_error,
+                    Some(ComposerAttachmentError::TooMany { count: 6 })
+                );
+                assert_eq!(
+                    view.composer_attachment_error_text(&ComposerAttachmentError::TooMany {
+                        count: 6
+                    }),
+                    "Attach at most 4 files per message; 6 selected"
+                );
+            });
+        });
+
+        cx.refresh().unwrap();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                let tree = view.accessibility_tree(window, cx);
+                let input = tree.find("composer-input").expect("composer draft");
+                assert_eq!(input.value.as_deref(), Some("草稿还在"));
+                assert!(input.focused);
+                let error = tree
+                    .find("composer-attach-error")
+                    .expect("attachment error");
+                assert_eq!(
+                    error.value.as_deref(),
+                    Some("Attach at most 4 files per message; 6 selected")
+                );
+                view.handle_accessibility_request(
+                    accessibility::AxRequest {
+                        identifier: "composer-attach".into(),
+                        action: accessibility::AxAction::Press,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+                assert!(matches!(view.open_menu, Some(MenuKind::ComposerAdd)));
+                intact(view, cx, window);
+            });
+        });
+        cx.refresh().unwrap();
+        let files_bounds = cx
+            .debug_bounds("composer-add-files")
+            .expect("files correction row");
+        let image_bounds = cx
+            .debug_bounds("composer-add-image")
+            .expect("image correction row");
+        assert!(f32::from(files_bounds.size.width) > 0.0);
+        assert!(f32::from(files_bounds.size.height) > 0.0);
+        assert!(f32::from(image_bounds.size.width) > 0.0);
+        assert!(f32::from(image_bounds.size.height) > 0.0);
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                let tree = view.accessibility_tree(window, cx);
+                for (id, hint) in [
+                    (
+                        "composer-add-files",
+                        "Choose up to 4 local files: PNG/JPEG/GIF/WebP images (≤8 MiB each) or UTF-8 text (≤64 KiB); no project required",
+                    ),
+                    (
+                        "composer-add-image",
+                        "Choose PNG/JPEG/GIF/WebP images, ≤8 MiB each, up to 4 per message; no project required",
+                    ),
+                ] {
+                    let row = tree.find(id).expect(id);
+                    assert!(row.enabled);
+                    assert!(row.actions.contains(&accessibility::AxAction::Press));
+                    assert_eq!(row.description.as_deref(), Some(hint));
+                    assert!(row.bounds.width > 0.0 && row.bounds.height > 0.0);
+                }
+                let image_ix = input_area::ComposerAction::ALL
+                    .iter()
+                    .position(|action| matches!(action, input_area::ComposerAction::Image))
+                    .unwrap();
+                for _ in 0..input_area::ComposerAction::ALL.len() {
+                    if view.menu_highlight == Some(image_ix) {
+                        break;
+                    }
+                    view.move_menu_highlight(true);
+                }
+                assert_eq!(view.menu_highlight, Some(image_ix));
+                assert!(view.composer_action_enabled(input_area::ComposerAction::Image));
+                assert_eq!(view.text_input.read(cx).text(), "草稿还在");
+                // 不激活 Files / Image：那会打开真实系统文件选择器。
+                let attach = view
+                    .settings_action_focus
+                    .get("composer-attach")
+                    .cloned()
+                    .expect("add button");
+                view.close_menu_and_focus_trigger(MenuKind::ComposerAdd, window, cx);
+                assert!(view.open_menu.is_none());
+                assert!(attach.is_focused(window));
+                assert_eq!(view.text_input.read(cx).text(), "草稿还在");
+                assert_eq!(
+                    view.current_composer_options().attachment_error,
+                    Some(ComposerAttachmentError::TooMany { count: 6 })
+                );
+                view.handle_accessibility_request(
+                    accessibility::AxRequest {
+                        identifier: "composer-input".into(),
+                        action: accessibility::AxAction::Focus,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+                intact(view, cx, window);
+
+                crate::ui::i18n::set_language(crate::ui::i18n::Language::Chinese);
+                assert_eq!(
+                    view.composer_attachment_error_text(&image_only_text),
+                    "note.txt：不是受支持的图片，请选择 PNG、JPEG、GIF 或 WebP 图片"
+                );
+                assert_eq!(
+                    view.composer_attachment_error_text(&text_too_large),
+                    "big.txt：文本文件超过 64 KiB，请选择更小的 UTF-8 文本文件"
+                );
+                assert_eq!(
+                    view.composer_attachment_error_text(&ComposerAttachmentError::TooMany {
+                        count: 6
+                    }),
+                    "每条消息最多附加 4 个文件，本次共 6 个"
+                );
+                assert_eq!(
+                    view.composer_action_hint(input_area::ComposerAction::Files),
+                    "选择本机文件，每次最多 4 个：PNG/JPEG/GIF/WebP 图片（每张 ≤8 MiB）或 UTF-8 文本（≤64 KiB），无需选择项目"
+                );
+                assert_eq!(
+                    view.composer_action_hint(input_area::ComposerAction::Image),
+                    "选择 PNG/JPEG/GIF/WebP 图片，每张 ≤8 MiB，每次最多 4 张，无需选择项目"
+                );
+                let tree = view.accessibility_tree(window, cx);
+                assert_eq!(
+                    tree.find("composer-input")
+                        .and_then(|node| node.value.clone())
+                        .as_deref(),
+                    Some("草稿还在")
+                );
+                assert_eq!(
+                    tree.find("composer-attach-error")
+                        .and_then(|node| node.value.clone())
+                        .as_deref(),
+                    Some("每条消息最多附加 4 个文件，本次共 6 个")
+                );
+            });
+        });
+    }
 }
