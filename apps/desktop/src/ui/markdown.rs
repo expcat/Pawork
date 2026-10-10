@@ -867,6 +867,8 @@ pub(super) fn message_body_element(
     let mut body = div()
         .flex()
         .flex_col()
+        .w_full()
+        .min_w_0()
         .gap(px(metrics::MSG_PARAGRAPH_GAP))
         .text_size(font::BODY)
         .line_height(font::from_pixels(metrics::MSG_LINE_HEIGHT))
@@ -920,12 +922,21 @@ pub(super) fn message_body_element(
         if block.kind == BlockKind::Table {
             let widths = table_column_widths_shaped(&block.table, window, color);
             let table_width: f32 = widths.iter().sum();
-            let mut table = div().flex().flex_col().w(px(table_width));
+            // Taffy 会把首选宽度夹到滚动口。ScrollHandle 只读直接子元素的
+            // 布局边界，所以 min_w 必须是 shape 后的表宽，不能靠绘制溢出。
+            let mut table = div()
+                .flex()
+                .flex_col()
+                .flex_none()
+                .w(px(table_width))
+                .min_w(px(table_width));
             for (row_index, row) in block.table.iter().enumerate() {
                 let mut row_element = div()
                     .flex()
                     .flex_row()
+                    .flex_none()
                     .w(px(table_width))
+                    .min_w(px(table_width))
                     .border_b_1()
                     .border_color(dark().border.subtle);
                 if row_index == 0 {
@@ -959,15 +970,17 @@ pub(super) fn message_body_element(
                 table = table.child(row_element);
             }
             element = element.child(
-                div()
-                    .id(SharedString::from(format!(
-                        "{entry_id}-table-scroll-{index}"
-                    )))
+                view.settings_element(format!("{entry_id}-table-scroll-{index}"))
+                    .w_full()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .items_start()
                     .overflow_x_scroll()
                     .child(table),
             );
         }
-        let mut lines = div().flex().flex_col();
+        let mut line_rows = Vec::new();
         let last_line = block.lines.len().saturating_sub(1);
         let attach_caret = streaming
             && index == last_block
@@ -1018,20 +1031,28 @@ pub(super) fn message_body_element(
             if attach_caret && line_index == last_line {
                 line_row = line_row.child(streaming_caret(color));
             }
-            lines = lines.child(line_row);
+            line_rows.push(line_row.into_any_element());
         }
         element = if block.kind == BlockKind::Code {
-            element.child(
-                lines
-                    .id(SharedString::from(format!(
-                        "{entry_id}-code-scroll-{index}"
-                    )))
-                    .items_start()
-                    .overflow_x_scroll(),
-            )
+            let mut scroll = view
+                .settings_element(format!("{entry_id}-code-scroll-{index}"))
+                .w_full()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .items_start()
+                .overflow_x_scroll();
+            for row in line_rows {
+                scroll = scroll.child(row);
+            }
+            element.w_full().min_w_0().child(scroll)
         } else if block.kind == BlockKind::Table {
-            element
+            element.w_full().min_w_0()
         } else {
+            let mut lines = div().flex().flex_col();
+            for row in line_rows {
+                lines = lines.child(row);
+            }
             element.child(lines)
         };
         body = body.child(element);

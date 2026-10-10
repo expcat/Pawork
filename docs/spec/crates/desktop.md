@@ -530,7 +530,7 @@ UI-2 新增 `session_actions_follow_hover_and_keyboard_without_opening`：真实
 | `ui/text_input.rs` | 多行粘贴行计数；AX set-value 清 marked range；动态 placeholder；Composer 视口预算不破面板总高；shift 选择经 SelectLeft/SelectRight 真实 action；IME 经真实 EntityInputHandler 路径 commit 单次入栈且中间态不可 undo；80 行真窗口 overflow scroll（max_offset>0、视口 28–163、caret 滚入视口）；滚动态点击映回可见内容行；reset_text 恢复草稿且清 undo；SET-4 增 secure 掩码只含 grapheme 数量对应掩码字符且非 secure 不发布掩码 |
 | `ui/u1_probe.rs` | R1 Wave C U1 spike 矩阵 + R5 Wave B SelectAll/Copy/Cut/Undo/Redo、IME commit 单次入栈（真实 EntityInputHandler 路径）、空输入不可发送、Wave B 键位（含 Shift-Enter）keystroke→keymap→action 链路；时钟/几何自测已删；AX 仍不在本层覆盖 |
 
-`ui/accessibility/app.rs` 的 GPUI 主路径回归覆盖正文 / 代码精确复制、实际菜单 AX、同 Run 后继闭合边界与断线禁用。
+`ui/accessibility/app.rs` 的 GPUI 主路径回归覆盖正文 / 代码精确复制、实际菜单 AX、同 Run 后继闭合边界与断线禁用。`conversation_blocks_scroll_and_menus_keep_run` 覆盖代码 / 表格块内横滚、消息菜单的鼠标 / 键盘 / AX、搜索无结果与空目录仍进入模型与供应商管理，以及 Settings 往返后任务、草稿和 Run 保持。
 
 **验证命令**：
 

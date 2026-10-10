@@ -4735,6 +4735,480 @@ mod tests {
         });
     }
 
+    /// GUI2-02：代码 / 表格在块内横滚，消息菜单走鼠标、键盘和 AX，模型菜单的
+    /// 无结果与空目录仍进入供应商管理。输入是 GPUI TestAppContext 的投影、
+    /// 鼠标、按键和 AX，不是真窗口。
+    #[gpui::test]
+    fn conversation_blocks_scroll_and_menus_keep_run(cx: &mut gpui::TestAppContext) {
+        use crate::ui::theme::font::TextScale;
+        use crate::ui::timeline_entry::EntryActionKind;
+        use gpui::{px, size, ClipboardItem, Modifiers};
+
+        let code_line = format!("let 原文 = \"{}\";\r\n", "W".repeat(240));
+        let fence = "\u{60}".repeat(3);
+        // TestAppContext 的文本系统把每个 BMP 字符排成 0.6em，真窗口 CoreText
+        // 里「宽」约 1em。160 字在 100% 的 880px 阅读列下两种度量都会横滚。
+        let cell = "宽".repeat(160);
+        let assistant = format!("{fence}rust\n{code_line}{fence}\n\n| 列 |\n| --- |\n| {cell} |\n");
+        let copies = crate::ui::markdown::message_code_copies("reply", &assistant);
+        assert_eq!(copies.len(), 1);
+        assert_eq!(copies[0].identifier, "reply-code-0");
+        let expected_code = copies[0].content.clone();
+        assert_eq!(expected_code, code_line);
+
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            AppView::new(
+                std::sync::Arc::new(crate::platform::Platform::new()),
+                std::env::temp_dir().join("gui2-02-conversation.sock"),
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            crate::ui::install_keybindings(cx);
+            window.set_rem_size(px(TextScale::Percent100.rem_pixels()));
+        });
+        cx.simulate_resize(size(px(1440.0), px(1024.0)));
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.connection = ConnectionState::Connected {
+                    instance_id: "gui2-02".into(),
+                };
+                view.projection.sessions = vec![rail_session_summary("task", "阅读任务", None, 1)];
+                view.projection.active_session_id = Some("task".into());
+                view.projection.timeline.entries = vec![
+                    TimelineEntry {
+                        sequence: 1,
+                        event_id: "short".into(),
+                        timestamp: "fixture-user".into(),
+                        run_id: None,
+                        kind: TimelineEntryKind::UserMessage {
+                            text: "你好 Pawork".into(),
+                        },
+                        fork_boundary: None,
+                    },
+                    TimelineEntry {
+                        sequence: 2,
+                        event_id: "reply".into(),
+                        timestamp: "fixture-reply".into(),
+                        run_id: None,
+                        kind: TimelineEntryKind::AssistantMessage { text: assistant },
+                        fork_boundary: None,
+                    },
+                ];
+                view.text_input
+                    .update(cx, |input, cx| input.set_text("保留草稿", cx));
+                view.timeline_changed();
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+
+        let assert_reading = |cx: &mut gpui::VisualTestContext| {
+            assert!(cx.debug_bounds("message-bubble-reply").is_none());
+            cx.update(|window, cx| {
+                let v = view.read(cx);
+                let bubble = v.settings_element_layouts["message-bubble-short"].bounds();
+                let user_actions = v.settings_element_layouts["message-actions-short"].bounds();
+                let reply_actions = v.settings_element_layouts["message-actions-reply"].bounds();
+                let bubble_w = f32::from(bubble.size.width);
+                assert!(
+                    bubble_w > 60.0 && bubble_w < 350.0,
+                    "short bubble {bubble:?}"
+                );
+                let bubble_right = f32::from(bubble.right());
+                let user_right = f32::from(user_actions.right());
+                let reply_right = f32::from(reply_actions.right());
+                assert!(
+                    (bubble_right - user_right).abs() < 2.0,
+                    "bubble {bubble:?} actions {user_actions:?}"
+                );
+                assert!(
+                    (user_right - reply_right).abs() < 2.0,
+                    "user actions {user_actions:?} reply actions {reply_actions:?}"
+                );
+                assert!(
+                    user_actions.bottom() <= bubble.top() + px(2.0),
+                    "user actions must sit above the bubble: actions {user_actions:?} bubble {bubble:?}"
+                );
+                let code_scroll = &v.settings_element_layouts["reply-code-scroll-0"];
+                let table_scroll = &v.settings_element_layouts["reply-table-scroll-1"];
+                let code_view = f32::from(code_scroll.bounds().size.width);
+                let table_view = f32::from(table_scroll.bounds().size.width);
+                assert!(
+                    f32::from(code_scroll.max_offset().width) > 8.0,
+                    "code scroll did not overflow: {:?}",
+                    code_scroll.max_offset()
+                );
+                assert!(
+                    f32::from(table_scroll.max_offset().width) > 8.0,
+                    "table scroll did not overflow: offset {:?} bounds {:?}",
+                    table_scroll.max_offset(),
+                    table_scroll.bounds()
+                );
+                assert!(code_view > 80.0 && code_view <= metrics::TIMELINE_READABLE_WIDTH + 0.5);
+                assert!(table_view > 80.0 && table_view <= metrics::TIMELINE_READABLE_WIDTH + 0.5);
+                assert!(
+                    (table_view - code_view - 24.0).abs() < 8.0,
+                    "code viewport {code_view} should be about 24px inside the table viewport {table_view}"
+                );
+                let delta = f32::from(code_scroll.bounds().top() - reply_actions.top());
+                assert!(
+                    (-4.0..=48.0).contains(&delta),
+                    "idle assistant must not reserve an author row, delta {delta}"
+                );
+                let tree = v.accessibility_tree(window, cx);
+                tree.validate().unwrap();
+                let user = tree.find("timeline-entry-short").unwrap();
+                let reply = tree.find("timeline-entry-reply").unwrap();
+                assert_eq!(user.label, t("timeline.you"));
+                assert_eq!(reply.label, "Pawork");
+                assert_eq!(user.description.as_deref(), Some("fixture-user"));
+                assert_eq!(reply.description.as_deref(), Some("fixture-reply"));
+                assert!(tree.find("reply-code-0").unwrap().actions.contains(&AxAction::Press));
+            });
+        };
+        let expect_code = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|_, cx| {
+                assert_eq!(
+                    cx.read_from_clipboard().and_then(|item| item.text()),
+                    Some(expected_code.clone())
+                );
+            });
+        };
+        assert_reading(cx);
+
+        let actions = cx.debug_bounds("message-actions-reply").unwrap();
+        cx.simulate_click(actions.center(), Modifiers::none());
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        let code_click = cx.update(|window, cx| {
+            let v = view.read(cx);
+            assert!(matches!(v.open_menu, Some(MenuKind::Entry(ref id)) if id == "reply"));
+            let actions = v.entry_menu_actions("reply");
+            let ix = actions
+                .iter()
+                .position(|action| {
+                    matches!(&action.kind, EntryActionKind::Copy(text) if text == &expected_code)
+                })
+                .expect("code copy row");
+            assert_eq!(ix, 1);
+            let id = actions[ix].identifier("reply", ix);
+            let tree = v.accessibility_tree(window, cx);
+            let node = tree.find(&id).expect("code row published after layout");
+            gpui::point(
+                px(node.bounds.x + node.bounds.width / 2.0),
+                px(node.bounds.y + node.bounds.height / 2.0),
+            )
+        });
+        cx.simulate_click(code_click, Modifiers::none());
+        cx.run_until_parked();
+        expect_code(cx);
+
+        cx.update(|window, cx| {
+            view.update(cx, |view, _| {
+                assert!(view.open_menu.is_none());
+                let focus = view.timeline_entry_action_focus["reply"].clone();
+                window.focus(&focus);
+            });
+        });
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let v = view.read(cx);
+            assert!(matches!(v.open_menu, Some(MenuKind::Entry(ref id)) if id == "reply"));
+            assert!(v.menu_highlight.is_none());
+        });
+        cx.simulate_keystrokes("down");
+        cx.run_until_parked();
+        cx.update(|_, cx| assert_eq!(view.read(cx).menu_highlight, Some(1)));
+        cx.update(|_, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string("sentinel-keyboard".into()));
+            assert_eq!(
+                cx.read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .as_deref(),
+                Some("sentinel-keyboard")
+            );
+        });
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        expect_code(cx);
+        cx.update(|_, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string("sentinel-ax".into()));
+            assert_eq!(
+                cx.read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .as_deref(),
+                Some("sentinel-ax")
+            );
+        });
+        press_published_ax(cx, &view, "reply-code-0");
+        expect_code(cx);
+
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.set_models(vec![ModelEntry {
+                    provider_id: "glm-coding".into(),
+                    id: "glm-5.2".into(),
+                    display_name: "GLM 5.2".into(),
+                    ..ModelEntry::default()
+                }]);
+                view.projection.settings_providers.providers =
+                    vec![crate::projection::ProviderAuthStatusEntry {
+                        provider_id: "glm-coding".into(),
+                        display_name: "GLM Coding".into(),
+                        endpoint_label: String::new(),
+                        auth_methods: vec!["api_key".into()],
+                        credentials: Vec::new(),
+                        selection_mode: Default::default(),
+                        auth: crate::projection::ProviderAuthState::Connected {
+                            method: "api_key".into(),
+                            masked_credential: None,
+                        },
+                        catalog: crate::projection::ProviderCatalogState::FixedFallback {
+                            snapshot_label: "test".into(),
+                            fetched_at: None,
+                        },
+                        use_proxy: true,
+                    }];
+                view.projection
+                    .set_pending_model("glm-coding".into(), "glm-5.2".into());
+                cx.notify();
+            })
+        });
+        for (width, height) in [(1440.0, 1024.0), (1080.0, 720.0)] {
+            for scale in [
+                TextScale::Percent100,
+                TextScale::Percent125,
+                TextScale::Percent150,
+            ] {
+                cx.simulate_resize(size(px(width), px(height)));
+                cx.update(|window, cx| {
+                    view.update(cx, |view, cx| {
+                        view.text_scale = scale;
+                        window.set_rem_size(px(scale.rem_pixels()));
+                        cx.notify();
+                    })
+                });
+                cx.refresh().unwrap();
+                cx.run_until_parked();
+                assert_reading(cx);
+                let card = cx.debug_bounds("composer-card").unwrap();
+                let model = cx.debug_bounds("composer-model-slot").unwrap();
+                let action = cx.debug_bounds("composer-action-slot").unwrap();
+                assert!(model.top() >= card.top() && model.bottom() <= card.bottom());
+                assert!(action.top() >= card.top() && action.bottom() <= card.bottom());
+                assert!(f32::from(model.size.height) >= 36.0, "{model:?}");
+                assert!(f32::from(action.size.height) >= 36.0, "{action:?}");
+                assert!(f32::from(model.size.width) <= metrics::COMPOSER_MODEL_WIDTH + 0.5);
+                assert!(
+                    model.right() < action.left(),
+                    "model {model:?} action {action:?}"
+                );
+                cx.update(|_, cx| {
+                    assert_eq!(view.read(cx).text_input.read(cx).text(), "保留草稿");
+                });
+            }
+        }
+
+        cx.simulate_resize(size(px(1440.0), px(1024.0)));
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.text_scale = TextScale::Percent100;
+                window.set_rem_size(px(TextScale::Percent100.rem_pixels()));
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        let slot = cx.debug_bounds("composer-model-slot").unwrap();
+        cx.simulate_click(slot.center(), Modifiers::none());
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let v = view.read(cx);
+            assert!(matches!(v.open_menu, Some(MenuKind::Model)));
+            assert!(v.menu_highlight.is_none());
+            assert!(v.model_search_query.is_empty());
+            assert!(v.model_search_focus.is_focused(window));
+            assert_eq!(v.route, AppRoute::Workspace);
+            assert!(v.model_menu_row_count() > 0);
+        });
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let v = view.read(cx);
+            assert!(matches!(v.open_menu, Some(MenuKind::Model)));
+            assert_eq!(v.route, AppRoute::Workspace);
+            assert_eq!(v.text_input.read(cx).text(), "保留草稿");
+            assert_eq!(v.projection.active_session_id.as_deref(), Some("task"));
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.handle_accessibility_request(
+                    AxRequest {
+                        identifier: "model-search-input".into(),
+                        action: AxAction::SetValue,
+                        value: Some("没有这个模型".into()),
+                    },
+                    window,
+                    cx,
+                );
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let v = view.read(cx);
+            assert_eq!(v.model_search_query, "没有这个模型");
+            assert!(v.menu_highlight.is_none());
+            assert_eq!(v.model_menu_row_count(), 0);
+            assert_eq!(v.menu_item_count(), 1);
+            let tree = v.accessibility_tree(window, cx);
+            let empty = tree.find("model-menu-empty").unwrap();
+            assert_eq!(empty.label, t("model_search.no_results"));
+            assert_ne!(empty.label, t("model_search.no_providers"));
+        });
+        cx.simulate_keystrokes("down");
+        cx.run_until_parked();
+        cx.update(|_, cx| assert_eq!(view.read(cx).menu_highlight, Some(0)));
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let v = view.read(cx);
+            assert_eq!(v.route, AppRoute::Settings);
+            assert_eq!(v.settings_page, SettingsPage::Providers);
+            assert_eq!(v.projection.workspace_header_title(), Some("阅读任务"));
+            assert_eq!(v.text_input.read(cx).text(), "保留草稿");
+            assert_eq!(v.projection.active_session_id.as_deref(), Some("task"));
+        });
+
+        press_published_ax(cx, &view, "settings-back");
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                assert_eq!(view.route, AppRoute::Workspace);
+                view.projection.set_models(Vec::new());
+                assert!(view.projection.models_loaded);
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            assert_eq!(
+                view.read(cx).model_label(),
+                t("composer.model_none_available")
+            );
+        });
+        let slot = cx.debug_bounds("composer-model-slot").unwrap();
+        cx.simulate_click(slot.center(), Modifiers::none());
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let v = view.read(cx);
+            assert!(matches!(v.open_menu, Some(MenuKind::Model)));
+            let tree = v.accessibility_tree(window, cx);
+            let empty = tree.find("model-menu-empty").unwrap();
+            assert_eq!(empty.label, t("composer.model_none_available"));
+            assert_ne!(empty.label, t("model_search.no_providers"));
+        });
+        let manage = cx.debug_bounds("model-menu-settings").unwrap();
+        cx.simulate_click(
+            gpui::point(manage.left() + px(8.0), manage.center().y),
+            Modifiers::none(),
+        );
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let v = view.read(cx);
+            assert_eq!(v.route, AppRoute::Settings);
+            assert_eq!(v.settings_page, SettingsPage::Providers);
+            assert_eq!(v.text_input.read(cx).text(), "保留草稿");
+        });
+        press_published_ax(cx, &view, "settings-back");
+
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                assert_eq!(view.route, AppRoute::Workspace);
+                view.projection.active_run_id = Some("run-keep".into());
+                view.projection.active_runs.push(ActiveRun {
+                    run_id: "run-keep".into(),
+                    session_id: "task".into(),
+                    started_at_ms: 1,
+                });
+                assert!(view
+                    .projection
+                    .timeline
+                    .iter()
+                    .all(|entry| entry.run_id.is_none()));
+                assert!(!view.can_open_model_menu());
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        let slot = cx.debug_bounds("composer-model-slot").unwrap();
+        cx.simulate_click(slot.center(), Modifiers::none());
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let v = view.read(cx);
+            assert!(v.open_menu.is_none());
+            let tree = v.accessibility_tree(window, cx);
+            let picker = tree.find("model-picker").unwrap();
+            assert!(!picker.enabled);
+            assert!(picker.actions.contains(&AxAction::Press));
+            assert!(!tree.permits(&AxRequest {
+                identifier: "model-picker".into(),
+                action: AxAction::Press,
+                value: None,
+            }));
+            assert_eq!(v.text_input.read(cx).text(), "保留草稿");
+        });
+        press_published_ax(cx, &view, "open-settings");
+        cx.update(|window, cx| {
+            let v = view.read(cx);
+            assert_eq!(v.route, AppRoute::Settings);
+            assert!(v
+                .accessibility_tree(window, cx)
+                .find("run-status")
+                .is_none());
+            assert_eq!(v.projection.active_run_id.as_deref(), Some("run-keep"));
+            assert_eq!(v.projection.active_session_id.as_deref(), Some("task"));
+            assert_eq!(v.text_input.read(cx).text(), "保留草稿");
+            assert_eq!(
+                v.projection
+                    .timeline
+                    .iter()
+                    .map(|entry| entry.event_id.as_str())
+                    .collect::<Vec<_>>(),
+                ["short", "reply"]
+            );
+        });
+        press_published_ax(cx, &view, "settings-back");
+        cx.update(|window, cx| {
+            let v = view.read(cx);
+            assert_eq!(v.route, AppRoute::Workspace);
+            assert_eq!(v.projection.workspace_header_title(), Some("阅读任务"));
+            assert_eq!(v.projection.active_session_id.as_deref(), Some("task"));
+            assert_eq!(v.projection.active_run_id.as_deref(), Some("run-keep"));
+            assert_eq!(v.text_input.read(cx).text(), "保留草稿");
+            assert_eq!(
+                v.projection
+                    .timeline
+                    .iter()
+                    .map(|entry| entry.event_id.as_str())
+                    .collect::<Vec<_>>(),
+                ["short", "reply"]
+            );
+            let tree = v.accessibility_tree(window, cx);
+            assert!(tree.find("run-status").is_some());
+            assert!(tree.find("cancel").is_some());
+            assert!(tree.find("send").is_none());
+        });
+    }
+
     #[gpui::test]
     fn reply_actions_copy_exact_content_and_use_closed_turn_boundary(
         cx: &mut gpui::TestAppContext,

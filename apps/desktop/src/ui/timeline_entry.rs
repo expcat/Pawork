@@ -632,7 +632,11 @@ fn entry_shell_element(
                 .py(px(metrics::MSG_USER_INSET_Y))
                 .bg(dark().surface.hover)
                 .rounded(px(metrics::SURFACE_RADIUS))
-                .child(body.w_auto()),
+                .child(if wide {
+                    body.w_full().min_w_0()
+                } else {
+                    body.w_auto()
+                }),
         )
     } else {
         body
