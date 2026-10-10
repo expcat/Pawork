@@ -1585,4 +1585,377 @@ mod tests {
             });
         });
     }
+
+    fn history_item(sequence: u64, kind: &str, extra: serde_json::Value) -> serde_json::Value {
+        let mut item = serde_json::json!({
+            "sequence": sequence,
+            "event_id": format!("hist-{sequence}"),
+            "kind": kind,
+            "run_id": "r-child",
+            "timestamp": "2000"
+        });
+        if let Some(fields) = extra.as_object() {
+            for (key, value) in fields {
+                item[key] = value.clone();
+            }
+        }
+        item
+    }
+
+    fn tool_context(tool_call_id: &str) -> String {
+        serde_json::json!({ "_pawork_tool_call_id": tool_call_id }).to_string()
+    }
+
+    fn timeline_page(items: Vec<serde_json::Value>) -> pawork_client::TimelinePage {
+        serde_json::from_value(serde_json::json!({
+            "items": items,
+            "head_sequence": items.len() as u64,
+            "complete": true
+        }))
+        .expect("timeline page")
+    }
+
+    fn tool_fact(items: &[PanelItem], name: &str) -> (String, Option<String>, Option<String>) {
+        items
+            .iter()
+            .find_map(|item| match item {
+                PanelItem::Tool {
+                    name: tool_name,
+                    status,
+                    detail,
+                    arguments,
+                    ..
+                } if tool_name == name => Some((status.clone(), detail.clone(), arguments.clone())),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("missing tool {name}"))
+    }
+
+    /// RV-04 主路径：历史工具事实进子代理时间线后，标题含目标，参数
+    /// pretty，默认折叠；AX Button+Press 走正式 handler，展开值带结果
+    /// 原文，再折叠不改时间线，重复展开一致。
+    #[gpui::test]
+    fn subagent_tool_row_expands_call_and_receipt(cx: &mut gpui::TestAppContext) {
+        let arguments = r#"{"path":"src/lib.rs","mode":"ro"}"#;
+        let receipt = "fn main() {}";
+        let mut conversation = SubagentConversationState::default();
+        assert!(conversation.select_agent("child-0"));
+        let generation = conversation.begin_loading();
+        conversation.apply_page(
+            "child-0",
+            generation,
+            &timeline_page(vec![
+                history_item(
+                    1,
+                    "tool_started",
+                    serde_json::json!({
+                        "tool_name": "read_file",
+                        "status": "running",
+                        "detail": tool_context("call-read")
+                    }),
+                ),
+                history_item(
+                    2,
+                    "other",
+                    serde_json::json!({
+                        "status": "tool_arguments",
+                        "text": arguments,
+                        "detail": tool_context("call-read")
+                    }),
+                ),
+                history_item(
+                    3,
+                    "tool_completed",
+                    serde_json::json!({
+                        "tool_name": "read_file",
+                        "status": "succeeded",
+                        "text": receipt,
+                        "detail": tool_context("call-read")
+                    }),
+                ),
+            ]),
+        );
+        let (status, detail, stored_arguments) =
+            tool_fact(&panel_items(&conversation), "read_file");
+        assert_eq!(status, "succeeded");
+        assert_eq!(detail.as_deref(), Some(receipt));
+        assert_eq!(stored_arguments.as_deref(), Some(arguments));
+        assert_eq!(
+            super::super::timeline_entry::tool_headline("read_file", stored_arguments.as_deref()),
+            "read_file src/lib.rs"
+        );
+        let pretty = subagent_arguments_display(stored_arguments.as_deref());
+        assert_eq!(
+            pretty,
+            serde_json::to_string_pretty(&serde_json::json!({"path": "src/lib.rs", "mode": "ro"}))
+                .unwrap()
+        );
+        assert_ne!(pretty, arguments);
+
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("rv04-subagent-tool-row.sock");
+        let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
+        cx.simulate_resize(gpui::size(gpui::px(1440.0), gpui::px(1024.0)));
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.active_session_id = Some("parent".into());
+                view.projection.connection = crate::projection::ConnectionState::Connected {
+                    instance_id: "test".into(),
+                };
+                view.projection.subagent_activity.session_id = Some("parent".into());
+                view.projection.subagent_activity.agents = vec![crate::projection::SubagentInfo {
+                    agent_id: "child-0".into(),
+                    session_id: "child-0".into(),
+                    parent_run_id: "run-0".into(),
+                    title: "Agent 0".into(),
+                    provider_id: "test-provider".into(),
+                    model_id: "test-model".into(),
+                    status: "completed".into(),
+                    result: None,
+                    effort: None,
+                }];
+                view.projection.subagent_conversation = conversation;
+                view.inspector_open = true;
+                view.inspector_motion.width(
+                    true,
+                    true,
+                    std::time::Instant::now() - std::time::Duration::from_secs(1),
+                );
+                view.inspector_tab = super::super::inspector::InspectorTab::Subagent;
+                view.close_open_menu(cx);
+                assert!(view.expanded_subagent_details.is_empty());
+                cx.notify();
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+
+        let identifier = "subagent-tool-toggle-hist-1";
+        let collapsed = cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().unwrap();
+            let node = tree
+                .find(identifier)
+                .expect("collapsed tool row publishes a button");
+            assert_eq!(node.role, AxRole::Button);
+            assert!(node.enabled);
+            assert!(node.actions.contains(&AxAction::Press));
+            node.value.clone().unwrap_or_default()
+        });
+        assert_eq!(collapsed, "read_file src/lib.rs · Completed");
+        assert!(!collapsed.contains(receipt));
+
+        macro_rules! press_tool {
+            () => {
+                cx.update(|window, cx| {
+                    view.update(cx, |view, cx| {
+                        view.handle_accessibility_request(
+                            crate::ui::accessibility::AxRequest {
+                                identifier: identifier.into(),
+                                action: AxAction::Press,
+                                value: None,
+                            },
+                            window,
+                            cx,
+                        );
+                    });
+                });
+            };
+        }
+        press_tool!();
+        let expanded = cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert!(view.expanded_subagent_details.contains("hist-1:tool"));
+            view.accessibility_tree(window, cx)
+                .find(identifier)
+                .unwrap()
+                .value
+                .clone()
+                .unwrap_or_default()
+        });
+        assert_eq!(expanded, format!("{collapsed} · {receipt}"));
+
+        press_tool!();
+        cx.update(|_, cx| {
+            view.update(cx, |view, _cx| {
+                assert!(!view.expanded_subagent_details.contains("hist-1:tool"));
+                let (status, detail, stored_arguments) = tool_fact(
+                    &panel_items(&view.projection.subagent_conversation),
+                    "read_file",
+                );
+                assert_eq!(status, "succeeded");
+                assert_eq!(detail.as_deref(), Some(receipt));
+                assert_eq!(stored_arguments.as_deref(), Some(arguments));
+            });
+        });
+        press_tool!();
+        let expanded_again = cx.update(|window, cx| {
+            view.read(cx)
+                .accessibility_tree(window, cx)
+                .find(identifier)
+                .unwrap()
+                .value
+                .clone()
+                .unwrap_or_default()
+        });
+        assert_eq!(expanded_again, expanded);
+    }
+
+    /// RV-04 关键失败路径：权限拒绝与执行失败都保持 Host 原文。
+    /// 审批在完成前，请求只带 pending + reason，标题回退 tool；拒绝是 approval deny。
+    #[test]
+    fn subagent_tool_denial_stays_distinct_from_execution_failure() {
+        let denial = "tool call denied by user";
+        let execution = (0..12)
+            .map(|ix| format!("exec-line-{ix}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let malformed = "{not json";
+        let mut conversation = SubagentConversationState::default();
+        assert!(conversation.select_agent("child-0"));
+        let generation = conversation.begin_loading();
+        conversation.apply_page(
+            "child-0",
+            generation,
+            &timeline_page(vec![
+                history_item(
+                    1,
+                    "tool_started",
+                    serde_json::json!({
+                        "tool_name": "write_file",
+                        "status": "running",
+                        "detail": tool_context("call-deny")
+                    }),
+                ),
+                history_item(
+                    2,
+                    "other",
+                    serde_json::json!({
+                        "status": "tool_arguments",
+                        "text": r#"{"path":"secret.txt"}"#,
+                        "detail": tool_context("call-deny")
+                    }),
+                ),
+                history_item(
+                    3,
+                    "approval_requested",
+                    serde_json::json!({
+                        "status": "pending",
+                        "detail": "tool `write_file` requires approval"
+                    }),
+                ),
+                history_item(
+                    4,
+                    "approval_responded",
+                    serde_json::json!({ "status": "deny" }),
+                ),
+                history_item(
+                    5,
+                    "tool_completed",
+                    serde_json::json!({
+                        "tool_name": "write_file",
+                        "status": "failed",
+                        "text": denial,
+                        "detail": tool_context("call-deny")
+                    }),
+                ),
+                history_item(
+                    6,
+                    "tool_started",
+                    serde_json::json!({
+                        "tool_name": "run_command",
+                        "status": "running",
+                        "detail": tool_context("call-exec")
+                    }),
+                ),
+                history_item(
+                    7,
+                    "other",
+                    serde_json::json!({
+                        "status": "tool_arguments",
+                        "text": malformed,
+                        "detail": tool_context("call-exec")
+                    }),
+                ),
+                history_item(
+                    8,
+                    "tool_completed",
+                    serde_json::json!({
+                        "tool_name": "run_command",
+                        "status": "failed",
+                        "text": execution,
+                        "detail": tool_context("call-exec")
+                    }),
+                ),
+            ]),
+        );
+        let items = panel_items(&conversation);
+        let (deny_status, deny_detail, deny_arguments) = tool_fact(&items, "write_file");
+        let (exec_status, exec_detail, exec_arguments) = tool_fact(&items, "run_command");
+        assert_eq!(deny_status, "failed");
+        assert_eq!(exec_status, "failed");
+        assert_eq!(deny_detail.as_deref(), Some(denial));
+        assert_eq!(exec_detail.as_deref(), Some(execution.as_str()));
+        assert_ne!(deny_detail, exec_detail);
+        assert_eq!(
+            super::super::timeline::tool_status_label(&deny_status),
+            super::super::timeline::tool_status_label(&exec_status)
+        );
+        assert_ne!(
+            super::super::timeline::tool_status_label(&deny_status),
+            denial
+        );
+        assert!(!deny_detail.unwrap().contains("失败"));
+        assert_eq!(
+            super::super::timeline_entry::tool_headline("write_file", deny_arguments.as_deref()),
+            "write_file secret.txt"
+        );
+        assert_eq!(
+            subagent_arguments_display(deny_arguments.as_deref()),
+            serde_json::to_string_pretty(&serde_json::json!({"path": "secret.txt"})).unwrap()
+        );
+        assert_eq!(exec_arguments.as_deref(), Some(malformed));
+        assert_eq!(
+            subagent_arguments_display(exec_arguments.as_deref()),
+            malformed
+        );
+        assert_eq!(
+            super::super::timeline_entry::tool_headline("run_command", exec_arguments.as_deref()),
+            "run_command"
+        );
+        let states: Vec<&str> = items
+            .iter()
+            .filter_map(|item| match item {
+                PanelItem::RunState(state) => Some(state.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            states,
+            vec![
+                "approval requested · tool · tool `write_file` requires approval",
+                "approval deny",
+            ]
+        );
+        for state in &states {
+            assert_eq!(subagent_run_label(state), (*state).to_string());
+        }
+        let (preview, can_expand) = subagent_detail_preview(&execution, false);
+        assert!(can_expand);
+        assert_eq!(preview.lines().count(), 10);
+        assert!(preview.contains("exec-line-0"));
+        assert!(!preview.contains("exec-line-11"));
+        let (full, can_expand_again) = subagent_detail_preview(&execution, true);
+        assert!(can_expand_again);
+        assert_eq!(full, execution);
+        assert_eq!(
+            subagent_detail_preview(&execution, true),
+            (full.clone(), true)
+        );
+        assert_eq!(
+            subagent_detail_preview(&denial, false),
+            (denial.to_string(), false)
+        );
+    }
 }

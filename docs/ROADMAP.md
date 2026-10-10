@@ -93,12 +93,12 @@
 | ✅ 完成（模拟验收）；独立 review / 复审 PASS；真实窗口与系统文件选择器待验 | [RV-01 · 图片附件交互人工验收](plan/rv-01-image-attachments.md) | GPUI 测试窗口验证有效 1×1 PNG 缩略图解码、预览 / 关闭 / 移除键盘分离，以及切任务与迟到发送失败时的文本和附件归属。 |
 | ✅ 完成（模拟验收）；独立 review / 多轮复审 PASS；真实窗口与系统文件选择器待验 | [RV-02 · 文本附件与不可信边界人工验收](plan/rv-02-text-attachments.md) | Host 包装、正文折叠、正式 AX Press、重复事件 Replay、历史页重载与含标记助手负例的结构一致性模拟通过。 |
 | ✅ 完成（模拟验收）；独立 review / 复审 PASS；真实窗口与系统文件选择器待验 | [RV-03 · Composer 附件错误人工验收](plan/rv-03-composer-errors.md) | 真实临时文件的允许 / 类型拒绝 / 大小拒绝 / 清错 / 数量上限、中英文案与 AX、草稿焦点及修正入口在 GPUI 测试窗口模拟通过。 |
+| ✅ 完成（模拟验收）；独立 review / 复审 PASS；真实 Host 现场重放与窗口待验 | [RV-04 · 子代理工具展开人工验收](plan/rv-04-subagent-tools.md) | 历史工具事实水合后的目标、参数、回执、折叠稳定性与拒绝 / 失败区分在 GPUI 测试窗口模拟通过。审批标题按 Host 字段回退为 approval requested · tool · tool `write_file` requires approval，拒绝为 approval deny。 |
 
 ### 待验收
 
 | 状态 | 任务 | 简介 |
 | --- | --- | --- |
-| 等待人工验收 | [RV-04 · 子代理工具展开人工验收](plan/rv-04-subagent-tools.md) | 验收子代理工具的目标、参数、结果和拒绝状态。 |
 | 等待人工验收 | [RV-05 · 子代理回执阅读人工验收](plan/rv-05-subagent-receipts.md) | 验收 Markdown 回执、长回执折叠与无重复全文。 |
 | 等待人工验收 | [RV-06 · 子代理标签字号人工验收](plan/rv-06-subagent-font-sizes.md) | 验收 100% / 125% / 150% 字号下标签的真实像素。 |
 | 等待人工验收 | [RV-07 · 子代理正文键盘与朗读人工验收](plan/rv-07-subagent-accessibility.md) | 验收正文真正可由键盘访问和朗读。 |
