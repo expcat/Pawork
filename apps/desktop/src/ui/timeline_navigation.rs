@@ -827,6 +827,18 @@ mod tests {
                 v.timeline_paging = true;
                 v.timeline_changed();
                 v.focus_composer(window, cx);
+                v.navigation_press("timeline-find", window, cx);
+                assert!(v.navigation_open() && v.navigation_input_focused(window));
+                v.close_timeline_navigation(window, cx);
+                assert!(
+                    !v.navigation_open()
+                        && v.timeline_navigation
+                            .focuses
+                            .get("timeline-find")
+                            .is_some_and(|focus| focus.is_focused(window)),
+                    "header find closes back to the header button"
+                );
+                v.focus_composer(window, cx);
             });
         });
         cx.refresh().unwrap();
@@ -913,6 +925,19 @@ mod tests {
             let v = view.read(cx);
             assert_eq!(v.find_count(), "1 / 12");
         });
+        cx.update(|window, cx| {
+            view.update(cx, |v, cx| {
+                v.navigation_press("timeline-nav-prev", window, cx);
+                assert_eq!(v.find_count(), "12 / 12");
+                v.navigation_press("timeline-nav-next", window, cx);
+                assert_eq!(v.find_count(), "1 / 12");
+                v.navigation_press("timeline-nav-next", window, cx);
+                assert_eq!(v.find_count(), "2 / 12");
+                v.navigation_press("timeline-nav-prev", window, cx);
+                assert_eq!(v.find_count(), "1 / 12");
+                assert!(v.timeline_navigation.reading && !v.timeline_following);
+            })
+        });
         cx.simulate_keystrokes("escape");
         cx.refresh().unwrap();
         cx.update(|window, cx| {
@@ -920,20 +945,63 @@ mod tests {
                 assert!(!v.navigation_open());
                 assert!(v.composer_focus_handle(cx).is_focused(window));
                 assert!(!v.timeline_following);
+                assert!(v.timeline_navigation.reading);
                 v.open_timeline_navigation(NavigationMode::Turns, window, cx);
             })
         });
         cx.refresh().unwrap();
         cx.update(|window, cx| {
             view.update(cx, |v, cx| {
-                let (key, _) = v.navigation_messages(true)[5].clone();
-                v.navigation_press(&v.turn_identifier(&key), window, cx);
+                let messages = v.navigation_messages(true);
+                let id = v.turn_identifier(&messages[messages.len() - 1].0);
+                let focus = v.navigation_focus(&id, cx);
+                window.focus(&focus);
             })
         });
         cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |v, cx| {
+                let max = f32::from(v.timeline_navigation.scroll.max_offset().height);
+                assert!(max > 36.0, "turn list must overflow, max_offset={max}");
+                let offset = f32::from(v.timeline_navigation.scroll.offset().y);
+                assert!(
+                    offset < 0.0,
+                    "focusing the last turn scrolls the directory, offset={offset}"
+                );
+                let messages = v.navigation_messages(true);
+                let last_id = v.turn_identifier(&messages[messages.len() - 1].0);
+                let first_id = v.turn_identifier(&messages[0].0);
+                let tree = super::super::accessibility::AxTree::new(1080.0, 720.0)
+                    .child(v.navigation_ax(window, cx));
+                assert!(tree.validate().is_ok(), "{:?}", tree.validate());
+                let children = &tree.children[0].children;
+                assert!(children
+                    .iter()
+                    .any(|node| { node.identifier == last_id && node.bounds.height > 0.0 }));
+                assert!(
+                    children.iter().all(|node| node.identifier != first_id),
+                    "the first turn is outside the scrolled directory"
+                );
+                assert!(
+                    v.timeline_navigation
+                        .focuses
+                        .get(&last_id)
+                        .is_some_and(|focus| focus.is_focused(window)),
+                    "the last turn keeps keyboard focus"
+                );
+            })
+        });
+        cx.simulate_keystrokes("enter");
+        cx.refresh().unwrap();
         cx.update(|_, cx| {
             view.update(cx, |v, _| {
-                assert_eq!(v.timeline_list.logical_scroll_top().item_ix, 5);
+                assert!(!v.navigation_open());
+                assert_eq!(v.timeline_list.logical_scroll_top().item_ix, 11);
+                let messages = v.navigation_messages(true);
+                let last = &messages.last().expect("twelve user turns").0;
+                assert_eq!(v.timeline_navigation.selected.as_ref(), Some(last));
+                assert_eq!(v.timeline_navigation.anchor.as_ref(), Some(last));
                 // 行插入与宽度/折叠 reset 仍按身份回到同一消息。
                 v.projection.timeline.entries.insert(
                     0,
@@ -952,8 +1020,40 @@ mod tests {
             })
         });
         cx.refresh().unwrap();
+        cx.update(|_, cx| {
+            view.update(cx, |v, _| {
+                assert_eq!(v.timeline_list.logical_scroll_top().item_ix, 12);
+                assert!(v.timeline_navigation.anchor.is_some());
+            })
+        });
+        let wheel_at = cx.update(|_, cx| {
+            let bounds = view.read(cx).timeline_list.viewport_bounds();
+            assert!(
+                f32::from(bounds.size.width) > 16.0 && f32::from(bounds.size.height) > 16.0,
+                "timeline viewport {bounds:?}"
+            );
+            gpui::point(
+                bounds.origin.x + gpui::px(8.0),
+                bounds.origin.y + gpui::px(8.0),
+            )
+        });
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: wheel_at,
+            delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(240.0))),
+            ..Default::default()
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            view.update(cx, |v, _| {
+                assert!(
+                    v.timeline_navigation.anchor.is_none(),
+                    "manual scroll unanchors the located message"
+                );
+                assert!(v.timeline_navigation.reading && !v.timeline_following);
+            })
+        });
         cx.update(|window, cx| view.update(cx, |v, cx| {
-            assert_eq!(v.timeline_list.logical_scroll_top().item_ix, 6);
             // 用真实 reducer 验证 delta → committed 的事件身份替换。
             let delta: pawork_client::AppEventEnvelope = serde_json::from_value(json!({
                 "api_version":{"major":1,"minor":1},"instance_id":"test","event_id":"delta-20","global_sequence":20,
@@ -979,24 +1079,110 @@ mod tests {
             v.timeline_changed();
         }));
         cx.refresh().unwrap();
-        cx.update(|window, cx| {
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            view.update(cx, |v, cx| {
+                let hits = v.navigation_messages(false);
+                assert_eq!(hits.len(), 1, "{hits:?}");
+                let assistants: Vec<_> = v
+                    .projection
+                    .timeline
+                    .iter()
+                    .filter_map(|entry| match &entry.kind {
+                        TimelineEntryKind::AssistantMessage { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(assistants, ["流式 needle 完成"]);
+                let key = &hits[0].0;
+                assert_eq!(v.timeline_navigation.selected.as_ref(), Some(key));
+                assert_eq!(v.timeline_navigation.anchor.as_ref(), Some(key));
+                assert_eq!(v.timeline_list.logical_scroll_top().item_ix, 13);
+                v.timeline_navigation
+                    .input
+                    .update(cx, |i, cx| i.set_text("match", cx));
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let texts: Vec<_> = view
+                .read(cx)
+                .navigation_messages(false)
+                .into_iter()
+                .map(|(_, text)| text)
+                .collect();
+            assert_eq!(texts.len(), 12, "{texts:?}");
+            assert!(texts.iter().all(|text| !text.contains("excluded")));
+        });
+        cx.refresh().unwrap();
+        cx.update(|_window, cx| {
             view.update(cx, |v, cx| {
                 assert!(!v.timeline_following);
-                assert_eq!(v.navigation_messages(false).len(), 1);
                 v.timeline_navigation
                     .input
                     .update(cx, |i, cx| i.set_text("不存在的内容", cx));
                 v.timeline_paging = false;
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |v, cx| {
+                assert_eq!(v.find_count(), "0 / 0");
+                assert_eq!(v.navigation_scope(), t("find.scope"));
+                let tree = super::super::accessibility::AxTree::new(1080.0, 720.0)
+                    .child(v.navigation_ax(window, cx));
+                assert!(tree.validate().is_ok(), "{:?}", tree.validate());
+                for id in ["timeline-nav-prev", "timeline-nav-next"] {
+                    let node = tree.children[0]
+                        .children
+                        .iter()
+                        .find(|node| node.identifier == id)
+                        .unwrap();
+                    assert!(
+                        !node.enabled && !node.actions.contains(&AxAction::Press),
+                        "{id}"
+                    );
+                }
                 v.close_timeline_navigation(window, cx);
                 v.timeline_jump_to_bottom();
                 assert!(v.timeline_following && !v.timeline_navigation.reading);
-                v.projection.active_session_id = Some("s-2".into());
-                v.sync_navigation_session();
+                v.open_timeline_navigation(NavigationMode::Find, window, cx);
+                v.timeline_navigation
+                    .input
+                    .update(cx, |input, cx| input.set_text("match", cx));
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |v, cx| {
+                assert!(v.navigation_open());
+                assert_eq!(v.navigation_messages(false).len(), 12);
+                assert!(v.timeline_navigation.selected.is_some());
+                assert_eq!(
+                    v.timeline_navigation.anchor.as_ref(),
+                    v.timeline_navigation.selected.as_ref()
+                );
+                v.on_session_clicked("s-2", window, cx);
+                assert_eq!(v.projection.active_session_id.as_deref(), Some("s-2"));
                 assert!(
                     !v.navigation_open()
                         && v.timeline_navigation.selected.is_none()
                         && v.timeline_navigation.anchor.is_none()
+                        && v.timeline_navigation.query.is_empty(),
+                    "session switch clears the live hit"
                 );
+                assert!(v.timeline_following);
+                assert_eq!(v.text_input.read(cx).text(), "");
+                assert_eq!(
+                    v.composer_drafts.get("s-1").map(String::as_str),
+                    Some("保留草稿")
+                );
+                v.open_timeline_navigation(NavigationMode::Find, window, cx);
+                assert!(v.timeline_navigation.input.read(cx).text().is_empty());
+                v.on_session_clicked("s-1", window, cx);
                 assert_eq!(v.text_input.read(cx).text(), "保留草稿");
             })
         });
