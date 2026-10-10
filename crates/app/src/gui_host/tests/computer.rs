@@ -93,13 +93,16 @@ async fn append(
     if let Some(parent) = parent {
         envelope = envelope.with_parent(parent);
     }
-    adapter
-        .core
-        .read()
+    let core = adapter.core.read().await;
+    let store = core.store().expect("store");
+    // 写入当前 active branch，fork 切换后的事件才会落在支线上。
+    let branch = store
+        .get_session(session)
         .await
-        .store()
-        .expect("store")
-        .append_event(pawork_storage::session::DEFAULT_BRANCH_ID, envelope)
+        .expect("session")
+        .active_branch;
+    store
+        .append_event(branch, envelope)
         .await
         .expect("append event");
 }
@@ -288,6 +291,50 @@ async fn observation_failures_fail_closed() {
     envelope.api_version = V1_26;
     let error = adapter.query(&envelope).await.expect_err("1.26 rejected");
     assert_eq!(error.code, "unsupported", "{error:?}");
+    // 其余四个 1.27 入口走各自 handler 的版本闸，旧 minor 同样在发网前拒绝。
+    let mut image = query_envelope(observation_query(&session, 3, 1, 0, 3));
+    image.api_version = V1_26;
+    let error = adapter
+        .query(&image)
+        .await
+        .expect_err("1.26 image read rejected");
+    assert_eq!(error.code, "unsupported", "{error:?}");
+    let mut targets = query_envelope(AppQuery::ComputerTargetList {
+        session_id: session.clone(),
+    });
+    targets.api_version = V1_26;
+    let error = adapter
+        .query(&targets)
+        .await
+        .expect_err("1.26 target list rejected");
+    assert_eq!(error.code, "unsupported", "{error:?}");
+    let mut approve = command_envelope(AppCommand::ComputerTargetApprove(
+        pawork_protocol::ComputerTargetApproveParams {
+            session_id: session.clone(),
+            run_id: RunId::from("run-old"),
+            target: application_target("com.example.App"),
+            kind: ComputerGrantKind::ForRun,
+        },
+    ));
+    approve.api_version = V1_26;
+    let error = adapter
+        .command(&approve)
+        .await
+        .expect_err("1.26 approve rejected");
+    assert_eq!(error.code, "unsupported", "{error:?}");
+    let mut revoke = command_envelope(AppCommand::ComputerTargetRevoke(
+        pawork_protocol::ComputerTargetRevokeParams {
+            session_id: session.clone(),
+            run_id: RunId::from("run-old"),
+            target: application_target("com.example.App"),
+        },
+    ));
+    revoke.api_version = V1_26;
+    let error = adapter
+        .command(&revoke)
+        .await
+        .expect_err("1.26 revoke rejected");
+    assert_eq!(error.code, "unsupported", "{error:?}");
 }
 
 fn application_target(bundle: &str) -> ComputerTargetIdentity {
@@ -463,6 +510,17 @@ async fn computer_targets_approve_revoke_and_run_lifecycle() {
         panic!("target list returns data");
     };
     assert_eq!(data["targets"], json!([]));
+    let error = adapter
+        .command(&command_envelope(AppCommand::ComputerTargetRevoke(
+            pawork_protocol::ComputerTargetRevokeParams {
+                session_id: session.clone(),
+                run_id: run.clone(),
+                target: application_target("com.example.App"),
+            },
+        )))
+        .await
+        .expect_err("revoke after run end");
+    assert_eq!(error.code, "unknown_run", "{error:?}");
 }
 
 /// CLI 与子 run 不进 GUI 注册表。投影状态恰为 running、且同一 host 上的
@@ -534,6 +592,17 @@ async fn computer_targets_follow_projection_runs_without_gui_registry() {
         .command(&approve(run, &child))
         .await
         .expect_err("parent run is not the child's run");
+    assert_eq!(error.code, "unknown_run", "{error:?}");
+    let error = adapter
+        .command(&command_envelope(AppCommand::ComputerTargetRevoke(
+            pawork_protocol::ComputerTargetRevokeParams {
+                session_id: child.clone(),
+                run_id: RunId::from(run),
+                target: application_target("com.example.App"),
+            },
+        )))
+        .await
+        .expect_err("parent run revoke is not the child's run");
     assert_eq!(error.code, "unknown_run", "{error:?}");
     let response = adapter
         .query(&query_envelope(AppQuery::ComputerTargetList {
@@ -874,4 +943,192 @@ async fn observation_entries_with_invalid_base64_fail_closed() {
         .expect_err("invalid base64 read rejected");
     assert_eq!(error.code, "app_error", "{error:?}");
     assert!(error.message.contains("not valid base64"), "{error:?}");
+}
+
+/// fork 后 active lineage 之外的同 session 图像不可读，也不能被支线上
+/// 更晚的同 part 图像冒充。两侧 tool call 落在 fork 点之前，完成事件分别落在
+/// main 与 side；读取 main 的 sequence 时，lineage 上的下一条恰好是 side 的图。
+#[tokio::test]
+async fn observation_fork_lineage_does_not_alias_later_image() {
+    let (adapter, _dir, session) = adapter_with_session().await;
+    let root = seed_text_event(&adapter, &session, 1).await;
+    let main_call = EventId::from("evt-call-main");
+    append(
+        &adapter,
+        &session,
+        "run-main",
+        2,
+        Some(root),
+        main_call.clone(),
+        AgentEvent::ToolCallStarted {
+            tool_call_id: ToolCallId::from("call-main"),
+            name: "computer".into(),
+        },
+    )
+    .await;
+    let side_call = EventId::from("evt-call-side");
+    append(
+        &adapter,
+        &session,
+        "run-side",
+        3,
+        Some(main_call),
+        side_call.clone(),
+        AgentEvent::ToolCallStarted {
+            tool_call_id: ToolCallId::from("call-side"),
+            name: "computer".into(),
+        },
+    )
+    .await;
+    let boundary = EventId::from("evt-boundary");
+    append(
+        &adapter,
+        &session,
+        "run-1",
+        4,
+        Some(side_call),
+        boundary.clone(),
+        AgentEvent::CompactionCompleted {
+            summary_message_id: MessageId::from("fork-boundary"),
+            compacted_through: EventSequence::new(0),
+        },
+    )
+    .await;
+    adapter
+        .core
+        .read()
+        .await
+        .store()
+        .expect("store")
+        .fork_from_event(&session, "side", &boundary)
+        .await
+        .expect("fork");
+
+    let main_image: &[u8] = &[1, 2, 3, 4];
+    append(
+        &adapter,
+        &session,
+        "run-main",
+        5,
+        Some(boundary.clone()),
+        EventId::from("evt-obs-main"),
+        image_completed("call-main", main_image),
+    )
+    .await;
+    assert_eq!(
+        list_sequences(&adapter, &session).await,
+        vec![5],
+        "main image is visible before the switch"
+    );
+    assert_eq!(read_image(&adapter, &session, 5).await, main_image);
+
+    adapter
+        .core
+        .read()
+        .await
+        .store()
+        .expect("store")
+        .switch_branch(&session, "side")
+        .await
+        .expect("switch to side");
+    let side_image: &[u8] = &[9, 9, 9, 9];
+    append(
+        &adapter,
+        &session,
+        "run-side",
+        6,
+        Some(boundary),
+        EventId::from("evt-obs-side"),
+        image_completed("call-side", side_image),
+    )
+    .await;
+
+    assert_eq!(
+        list_sequences(&adapter, &session).await,
+        vec![6],
+        "fork lineage lists only its own image"
+    );
+    let error = adapter
+        .query(&query_envelope(observation_query(&session, 5, 1, 0, 8)))
+        .await
+        .expect_err("main image is off the fork lineage");
+    assert_eq!(error.code, "not_found", "{error:?}");
+    assert_eq!(read_image(&adapter, &session, 6).await, side_image);
+
+    adapter
+        .core
+        .read()
+        .await
+        .store()
+        .expect("store")
+        .switch_branch(&session, pawork_storage::session::DEFAULT_BRANCH_ID)
+        .await
+        .expect("switch back to main");
+    assert_eq!(list_sequences(&adapter, &session).await, vec![5]);
+    assert_eq!(read_image(&adapter, &session, 5).await, main_image);
+    let error = adapter
+        .query(&query_envelope(observation_query(&session, 6, 1, 0, 8)))
+        .await
+        .expect_err("side image is off the main lineage");
+    assert_eq!(error.code, "not_found", "{error:?}");
+}
+
+fn image_completed(call_id: &str, bytes: &[u8]) -> AgentEvent {
+    AgentEvent::ToolExecutionCompleted {
+        tool_call_id: ToolCallId::from(call_id),
+        result: ToolResultContent {
+            tool_call_id: ToolCallId::from(call_id),
+            tool_name: Some("computer".into()),
+            content: vec![
+                pawork_domain::ContentPart::Text(pawork_domain::TextContent {
+                    text: "captured".into(),
+                }),
+                pawork_domain::ContentPart::Image(pawork_domain::ImageContent {
+                    source: pawork_domain::ImageSource::Base64(
+                        crate::services::extension::base64_encode(bytes),
+                    ),
+                    media_type: "image/png".into(),
+                    alt_text: None,
+                }),
+            ],
+            is_error: false,
+            metadata: serde_json::json!({}),
+            artifacts: Vec::new(),
+        },
+    }
+}
+
+async fn list_sequences(adapter: &GuiHostAdapter, session: &SessionId) -> Vec<u64> {
+    let response = adapter
+        .query(&query_envelope(AppQuery::ObservationList {
+            session_id: session.clone(),
+            after_sequence: None,
+            limit: None,
+        }))
+        .await
+        .expect("observation list");
+    let AppResponse::Data(data) = response else {
+        panic!("observation list returns data");
+    };
+    data["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .map(|entry| entry["sequence"].as_u64().expect("sequence"))
+        .collect()
+}
+
+async fn read_image(adapter: &GuiHostAdapter, session: &SessionId, sequence: u64) -> Vec<u8> {
+    let response = adapter
+        .query(&query_envelope(observation_query(
+            session, sequence, 1, 0, 8,
+        )))
+        .await
+        .expect("image read");
+    let AppResponse::Data(data) = response else {
+        panic!("image read returns data");
+    };
+    assert_eq!(data["sequence"], json!(sequence));
+    crate::services::extension::base64_decode(data["data"].as_str().expect("base64"))
+        .expect("decode")
 }

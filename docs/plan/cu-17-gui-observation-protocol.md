@@ -1,6 +1,6 @@
 # CU-17 · GUI 观测查询与协议版本接入
 
-> 状态：已实现（P5，自动门禁通过；GUI 真窗验收归 CU-18/19）。前置：[CU-02](cu-02-target-contracts.md)。更新：2026-10-07。
+> 状态：已完成（P5，自动门禁与 Host 侧模拟验收通过；独立 review PASS；GUI 真窗验收归 CU-18/19）。前置：[CU-02](cu-02-target-contracts.md)。更新：2026-10-10。
 
 [返回 ROADMAP](../ROADMAP.md#computer-use-rust-升级)
 
@@ -58,3 +58,18 @@ TimelineItem 没有图片字段，join_text 只保留文本/视频说明；持�
 - 真实窗口 / 真实目标的人工验收未执行（Desktop 消费侧接入另行任务）；截图证据不适用（本任务为 Host 侧查询与登记接入，无 GUI 视觉变化）。
 
 **遗留**：无已知缺口。Golden fixture 计数 109 → 117；architecture §2 app 依赖边新增 computer-use。
+
+### 2026-10-10 Host 侧模拟验收
+
+在基线 `965c2bc72d172e2514b49af4784488a01473ed76` 上用进程内 `GuiHostAdapter`、临时 SQLite 与手工持久化 `ToolExecutionCompleted` 夹具执行模拟人工验收。`observation_list` / `observation_image_read` 的有界分块读取、API 1.26 拒绝、跨 session 与 fork lineage、part / offset / limit / Base64 fail-closed，以及 `computer_target_list` / approve / revoke 的 run、session、终态边界均直接打到真实 Host handler。
+
+本次仅补充 `crates/app/src/gui_host/tests/computer.rs`：新增 fork 支线同 sequence / part 图像不得串读的失败路径，并给既有失败路径补齐 1.26 命令侧入口与 revoke 的 session / 终态断言；未改产品代码。首次运行因新夹具缺少 `ToolCallStarted` 被投影拒绝（exit 101，保留日志），补夹具后通过：
+
+```text
+cargo test -p pawork-app --lib gui_host::tests::computer -- --test-threads=8
+exit 0；10 passed，0 failed，298 filtered out
+```
+
+证据：`/tmp/pawork-cu17-gui-observation-acceptance/`（失败与通过日志、`final.diff` SHA256 `dcb23a586860dfb5666a6bb6cf3e6e727410508a1827ac48e4ca95548c067b97`、根 diff `cmp` 一致）。模拟边界：无 Desktop 真窗、像素、原生探针、Provider 或新截图；真实工具产物与 GUI 消费侧验收分别归 CU-20 和 CU-18/19。
+
+**独立 review**（2026-10-10，gpt-6.1-sol max，thread `01a12320-5bc2-7122-8b9e-b2290db62b06`）：R1 哈希 / manifest / 当前 diff、真实 SQLite 分支操作、`GuiHostAdapter.query` 精确序号过滤、五入口 1.26 分发与两次日志核对后 PASS；无阻断或非阻断问题。reviewer 未运行 Cargo。
