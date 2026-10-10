@@ -309,7 +309,15 @@ impl AppView {
                         window.focus(&input.read(cx).focus_handle(cx));
                     }
                 }
-                _ => return,
+                _ => {
+                    let Some(focus) = self
+                        .subagent_focus_for_identifier(&request.identifier)
+                        .cloned()
+                    else {
+                        return;
+                    };
+                    window.focus(&focus);
+                }
             },
             AxAction::SetValue => {
                 let value = request.value.unwrap_or_default();
@@ -769,6 +777,14 @@ impl AppView {
             other if other.starts_with("subagent-tool-toggle-") => {
                 if let Some(id) = other.strip_prefix("subagent-tool-toggle-") {
                     self.toggle_subagent_detail(&format!("{id}:tool"), cx);
+                }
+            }
+            other if other.starts_with("subagent-tool-result-toggle-") => {
+                if let Some(id) = other.strip_prefix("subagent-tool-result-toggle-") {
+                    self.toggle_subagent_detail(
+                        &crate::ui::timeline_entry::tool_result_expand_key(id),
+                        cx,
+                    );
                 }
             }
             other if other.starts_with("subagent-result-toggle-") => {
@@ -3671,7 +3687,7 @@ impl AppView {
             InspectorTab::Browser => inspector.child(self.browser_ax(window, cx, body)),
             InspectorTab::Files => inspector.child(self.files_ax(window, cx, body)),
             InspectorTab::Subagent => {
-                inspector.child(crate::ui::subagent_panel::subagent_ax(self, body))
+                inspector.child(crate::ui::subagent_panel::subagent_ax(self, window, body))
             }
         };
         inspector

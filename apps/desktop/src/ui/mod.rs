@@ -766,6 +766,8 @@ pub struct AppView {
     expanded_subagent_details: HashSet<String>,
     /// 对话栏工具行 / 结果盒展开按钮焦点（按 key 懒建）。
     subagent_item_focus: HashMap<String, FocusHandle>,
+    /// 上次已滚入 transcript 视口的正文焦点。只在焦点变化时再滚。
+    subagent_revealed_focus: Option<String>,
     subagent_refresh_focus: FocusHandle,
     subagent_back_to_bottom_focus: FocusHandle,
     terminal_back_to_bottom_focus: FocusHandle,
@@ -1196,6 +1198,7 @@ impl AppView {
             subagent_item_layouts: HashMap::new(),
             expanded_subagent_details: HashSet::new(),
             subagent_item_focus: HashMap::new(),
+            subagent_revealed_focus: None,
             subagent_refresh_focus: cx
                 .focus_handle()
                 .tab_stop(true)

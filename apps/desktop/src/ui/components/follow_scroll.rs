@@ -47,6 +47,11 @@ impl FollowScroll {
     /// paint_scroll_listener 2417 注册，window.rs 3705 rev 逆序），直接按
     /// 贴底同式判定，不做 delta 投影（投影会把 delta 计两次）。
     pub fn on_scroll_wheel(&mut self) {
+        self.sync_following();
+    }
+
+    /// 程序滚动后按当前偏移重估挂钩，避免人已离开底部仍被新内容拽回。
+    pub fn sync_following(&mut self) {
         self.following = self.is_scrolled_to_bottom();
     }
 

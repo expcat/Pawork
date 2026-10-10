@@ -234,6 +234,108 @@ fn subagent_ax_rect(rect: gpui::Bounds<gpui::Pixels>) -> Option<AxRect> {
     ))
 }
 
+/// 工具结果原文。空结果用与主 Timeline 相同的占位，不编造内容。
+fn subagent_tool_detail_text(detail: Option<&str>) -> String {
+    detail
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| t("tool.result_missing").into())
+}
+
+fn subagent_tool_result_layout_key(event_id: &str) -> String {
+    format!(
+        "{}:toggle",
+        super::timeline_entry::tool_result_expand_key(event_id)
+    )
+}
+
+fn subagent_item_focus_handle(
+    view: &mut AppView,
+    cx: &mut Context<AppView>,
+    key: &str,
+) -> gpui::FocusHandle {
+    view.subagent_item_focus
+        .entry(key.to_string())
+        .or_insert_with(|| {
+            cx.focus_handle()
+                .tab_stop(true)
+                .tab_index(super::INSPECTOR_TAB_INDEX)
+        })
+        .clone()
+}
+
+fn subagent_item_focused(view: &AppView, window: &Window, key: &str) -> bool {
+    view.open_menu.is_none()
+        && view
+            .subagent_item_focus
+            .get(key)
+            .is_some_and(|focus| focus.is_focused(window))
+}
+
+/// 焦点 key → 实测布局 key。工具标题、结果展开按钮和结果正文不共用一块 bounds。
+fn subagent_focus_layout_key(focus_key: &str) -> String {
+    if let Some(event_id) = focus_key.strip_suffix(":tool") {
+        format!("{event_id}:tool-header")
+    } else if let Some(agent_id) = focus_key.strip_suffix(":result-text") {
+        format!("{agent_id}:result")
+    } else if focus_key.ends_with(":result") {
+        format!("{focus_key}:toggle")
+    } else {
+        focus_key.to_string()
+    }
+}
+
+/// 把已聚焦条目滚进 transcript 视口。None 表示布局还没测到。
+/// Some(true) 表示这次改了滚动偏移。
+fn reveal_subagent_layout(scroll: &gpui::ScrollHandle, item: &gpui::ScrollHandle) -> Option<bool> {
+    let viewport = scroll.bounds();
+    let item_bounds = item.bounds();
+    let viewport_h = f32::from(viewport.size.height);
+    let item_h = f32::from(item_bounds.size.height);
+    let item_w = f32::from(item_bounds.size.width);
+    if viewport_h <= 1.0 || item_h <= 1.0 || item_w <= 1.0 {
+        return None;
+    }
+    let viewport_top = f32::from(viewport.origin.y);
+    let viewport_bottom = viewport_top + viewport_h;
+    let item_top = f32::from(item_bounds.origin.y);
+    let item_bottom = item_top + item_h;
+    const EDGE: f32 = 0.5;
+    if item_top >= viewport_top - EDGE && item_bottom <= viewport_bottom + EDGE {
+        return Some(false);
+    }
+    let delta = if item_h >= viewport_h || item_top < viewport_top {
+        viewport_top - item_top
+    } else {
+        viewport_bottom - item_bottom
+    };
+    let mut offset = scroll.offset();
+    let max = f32::from(scroll.max_offset().height);
+    let y = (f32::from(offset.y) + delta).clamp(-max, 0.0);
+    offset.y = px(y);
+    scroll.set_offset(offset);
+    Some(true)
+}
+
+/// 本帧 prepaint 落定后，条目是否与 transcript 视口有正面积相交。
+/// None 表示视口或条目还没测到，调用方不得据此 notify。
+fn subagent_layout_settled_visible(
+    scroll: &gpui::ScrollHandle,
+    item: &gpui::ScrollHandle,
+) -> Option<bool> {
+    let viewport = scroll.bounds();
+    let item_bounds = item.bounds();
+    if f32::from(viewport.size.width) <= 1.0
+        || f32::from(viewport.size.height) <= 1.0
+        || f32::from(item_bounds.size.width) <= 1.0
+        || f32::from(item_bounds.size.height) <= 1.0
+    {
+        return None;
+    }
+    let visible = item_bounds.intersect(&viewport);
+    Some(f32::from(visible.size.width) > 0.0 && f32::from(visible.size.height) > 0.0)
+}
+
 /// 代理标题截断（chip 与列表行共用口径）。
 pub(super) fn short_title(title: &str) -> String {
     title.chars().take(24).collect()
@@ -283,6 +385,61 @@ fn subagent_status_color(status: &str) -> Rgba {
 }
 
 impl AppView {
+    /// focus_next / AX Focus 都不滚动。正文获得焦点后，用上一帧布局尝试
+    /// 把对应条目滚进 transcript。gpui 0.2.2 的 set_offset 清不掉
+    /// scroll_to_bottom，同帧 follow_new_content 会在 prepaint 里盖掉这次
+    /// 偏移，所以这里不登记成功，也不按中间偏移重估 following。defer 等到
+    /// 本帧滚动落定：正面积相交才登记并按最终偏移重估；被盖掉或再次离屏
+    /// 则不登记，notify 让下一帧重试。未测量不 notify。同一焦点确认可见后
+    /// 不反复抢手动滚动。高于视口的条目只要相交就算可见，避免死循环。
+    fn reveal_focused_subagent_body(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let focused = self
+            .subagent_item_focus
+            .iter()
+            .find_map(|(key, handle)| handle.is_focused(window).then(|| key.clone()));
+        let Some(focus_key) = focused else {
+            self.subagent_revealed_focus = None;
+            return;
+        };
+        if self.subagent_revealed_focus.as_deref() == Some(focus_key.as_str()) {
+            return;
+        }
+        let layout_key = subagent_focus_layout_key(&focus_key);
+        let Some(item) = self.subagent_item_layouts.get(&layout_key).cloned() else {
+            return;
+        };
+        if reveal_subagent_layout(self.subagent_conversation_scroll.handle(), &item).is_none() {
+            return;
+        }
+        cx.defer_in(window, move |view, window, cx| {
+            let still_focused = view
+                .subagent_item_focus
+                .iter()
+                .any(|(key, handle)| key == &focus_key && handle.is_focused(window));
+            if !still_focused || view.subagent_revealed_focus.as_deref() == Some(focus_key.as_str())
+            {
+                return;
+            }
+            let layout_key = subagent_focus_layout_key(&focus_key);
+            let Some(item) = view.subagent_item_layouts.get(&layout_key).cloned() else {
+                return;
+            };
+            match subagent_layout_settled_visible(view.subagent_conversation_scroll.handle(), &item)
+            {
+                Some(true) => {
+                    view.subagent_revealed_focus = Some(focus_key);
+                    let was_following = view.subagent_conversation_scroll.is_following();
+                    view.subagent_conversation_scroll.sync_following();
+                    if view.subagent_conversation_scroll.is_following() != was_following {
+                        cx.notify();
+                    }
+                }
+                Some(false) => cx.notify(),
+                None => {}
+            }
+        });
+    }
+
     pub(super) fn can_refresh_subagents(&self) -> bool {
         self.projection.active_session_id.is_some()
             && matches!(
@@ -337,6 +494,27 @@ impl AppView {
             self.expanded_subagent_details.insert(key.to_string());
         }
         cx.notify();
+    }
+
+    /// 正文 StaticText 与展开按钮的 GPUI 焦点。AX Focus 与 Tab 链共用这些句柄。
+    pub(super) fn subagent_focus_for_identifier(
+        &self,
+        identifier: &str,
+    ) -> Option<&gpui::FocusHandle> {
+        let key = if let Some(id) = identifier.strip_prefix("subagent-tool-result-toggle-") {
+            super::timeline_entry::tool_result_expand_key(id)
+        } else if let Some(id) = identifier.strip_prefix("subagent-tool-toggle-") {
+            format!("{id}:tool")
+        } else if let Some(id) = identifier.strip_prefix("subagent-result-toggle-") {
+            format!("{id}:result")
+        } else if let Some(id) = identifier.strip_prefix("subagent-result-") {
+            format!("{id}:result-text")
+        } else if let Some(id) = identifier.strip_prefix("subagent-msg-") {
+            format!("{id}:item")
+        } else {
+            return None;
+        };
+        self.subagent_item_focus.get(&key)
     }
 
     pub(super) fn subagent_conversation_element(
@@ -661,6 +839,7 @@ impl AppView {
                 t("subagents.panel_empty_desc").to_string(),
             );
         };
+        self.reveal_focused_subagent_body(window, cx);
         let mut transcript = div()
             .id("subagent-transcript")
             .relative()
@@ -695,6 +874,21 @@ impl AppView {
             visible_keys.insert(result_key.clone());
             if !result_repeated && subagent_result_is_long(result) {
                 visible_keys.insert(format!("{result_key}:toggle"));
+            }
+        }
+        for item in &items {
+            if let PanelItem::Tool {
+                event_id, detail, ..
+            } = item
+            {
+                if self
+                    .expanded_subagent_details
+                    .contains(&format!("{event_id}:tool"))
+                    && subagent_detail_preview(&subagent_tool_detail_text(detail.as_deref()), false)
+                        .1
+                {
+                    visible_keys.insert(subagent_tool_result_layout_key(event_id));
+                }
             }
         }
         self.subagent_item_layouts
@@ -795,7 +989,9 @@ impl AppView {
                     cx,
                 ));
             }
-            result_box = result_box.child(if result_repeated {
+            let result_text_focus =
+                subagent_item_focus_handle(self, cx, &format!("{}:result-text", agent.agent_id));
+            let result_body = if result_repeated {
                 div()
                     .text_size(font::SM)
                     .text_color(dark().text.secondary)
@@ -818,7 +1014,16 @@ impl AppView {
                     .text_color(dark().text.secondary)
                     .child(subagent_result_summary(result))
                     .into_any_element()
-            });
+            };
+            result_box = result_box.child(
+                div()
+                    .id(SharedString::from(format!(
+                        "subagent-result-text-{}",
+                        agent.agent_id
+                    )))
+                    .track_focus(&result_text_focus)
+                    .child(result_body),
+            );
             transcript = transcript.child(result_box);
         }
         transcript
@@ -878,8 +1083,10 @@ impl AppView {
                     .entry(format!("{event_id}:item"))
                     .or_insert_with(gpui::ScrollHandle::new)
                     .clone();
+                let focus = subagent_item_focus_handle(self, cx, &format!("{event_id}:item"));
                 div()
                     .id(SharedString::from(format!("subagent-item-{event_id}")))
+                    .track_focus(&focus)
                     .track_scroll(&layout)
                     .flex()
                     .flex_col()
@@ -910,8 +1117,10 @@ impl AppView {
                     .entry(format!("{event_id}:item"))
                     .or_insert_with(gpui::ScrollHandle::new)
                     .clone();
+                let focus = subagent_item_focus_handle(self, cx, &format!("{event_id}:item"));
                 div()
                     .id(SharedString::from(format!("subagent-item-{event_id}")))
+                    .track_focus(&focus)
                     .track_scroll(&layout)
                     .flex()
                     .flex_col()
@@ -937,8 +1146,10 @@ impl AppView {
                     .entry(format!("{event_id}:item"))
                     .or_insert_with(gpui::ScrollHandle::new)
                     .clone();
+                let focus = subagent_item_focus_handle(self, cx, &format!("{event_id}:item"));
                 div()
                     .id(SharedString::from(format!("subagent-item-{event_id}")))
+                    .track_focus(&focus)
                     .track_scroll(&layout)
                     .flex()
                     .flex_col()
@@ -965,8 +1176,10 @@ impl AppView {
                     .entry(format!("{event_id}:item"))
                     .or_insert_with(gpui::ScrollHandle::new)
                     .clone();
+                let focus = subagent_item_focus_handle(self, cx, &format!("{event_id}:item"));
                 div()
                     .id(SharedString::from(format!("subagent-item-{event_id}")))
+                    .track_focus(&focus)
                     .track_scroll(&layout)
                     .flex()
                     .flex_col()
@@ -1014,11 +1227,7 @@ impl AppView {
                     .entry(format!("{event_id}:tool-header"))
                     .or_insert_with(gpui::ScrollHandle::new)
                     .clone();
-                let focus = self
-                    .subagent_item_focus
-                    .entry(tool_key.clone())
-                    .or_insert_with(|| cx.focus_handle().tab_stop(true))
-                    .clone();
+                let focus = subagent_item_focus_handle(self, cx, &tool_key);
                 let button_id = format!("subagent-tool-toggle-{event_id}");
                 let click_button_id = button_id.clone();
                 let click_key = tool_key.clone();
@@ -1083,9 +1292,7 @@ impl AppView {
                         ),
                 );
                 if expanded {
-                    let detail_text = detail
-                        .filter(|text| !text.is_empty())
-                        .unwrap_or_else(|| t("tool.result_missing").into());
+                    let detail_text = subagent_tool_detail_text(detail.as_deref());
                     let (preview, can_expand) =
                         subagent_detail_preview(&detail_text, result_expanded);
                     let mut expanded_area = div()
@@ -1149,11 +1356,7 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let button_id = format!("subagent-result-toggle-{agent_id}");
-        let focus = self
-            .subagent_item_focus
-            .entry(result_key.to_string())
-            .or_insert_with(|| cx.focus_handle().tab_stop(true))
-            .clone();
+        let focus = subagent_item_focus_handle(self, cx, result_key);
         let toggle_layout = self
             .subagent_item_layouts
             .entry(format!("{result_key}:toggle"))
@@ -1202,37 +1405,45 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let button_id = format!("subagent-tool-result-toggle-{event_id}");
-        let focus = self
-            .subagent_item_focus
-            .entry(result_key.to_string())
-            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+        let focus = subagent_item_focus_handle(self, cx, result_key);
+        let toggle_layout = self
+            .subagent_item_layouts
+            .entry(subagent_tool_result_layout_key(event_id))
+            .or_insert_with(gpui::ScrollHandle::new)
             .clone();
         let click_button_id = button_id.clone();
         let click_key = result_key.to_string();
         let activate_button_id = button_id.clone();
         let activate_key = result_key.to_string();
-        Button::new(button_id)
-            .variant(ButtonVariant::Ghost)
-            .text_size(font::BODY_SM)
-            .text_color(dark().text.secondary)
-            .padding(ButtonPadding::Horizontal(metrics::PADDING_XS))
-            .label(if expanded {
-                t("tool.result_collapse")
-            } else {
-                t("tool.result_expand")
-            })
-            .track_focus(&focus)
-            .on_click(cx.listener(move |view, event, _window, cx| {
-                if view.consume_button_key_click(&click_button_id, event) {
-                    return;
-                }
-                view.toggle_subagent_detail(&click_key, cx);
-            }))
-            .on_activate(cx.listener(move |view, _event, _window, cx| {
-                view.note_button_key_activate(&activate_button_id);
-                view.toggle_subagent_detail(&activate_key, cx);
-                cx.stop_propagation();
-            }))
+        div()
+            .id(SharedString::from(format!(
+                "subagent-tool-result-toggle-layout-{event_id}"
+            )))
+            .track_scroll(&toggle_layout)
+            .child(
+                Button::new(button_id)
+                    .variant(ButtonVariant::Ghost)
+                    .text_size(font::BODY_SM)
+                    .text_color(dark().text.secondary)
+                    .padding(ButtonPadding::Horizontal(metrics::PADDING_XS))
+                    .label(if expanded {
+                        t("tool.result_collapse")
+                    } else {
+                        t("tool.result_expand")
+                    })
+                    .track_focus(&focus)
+                    .on_click(cx.listener(move |view, event, _window, cx| {
+                        if view.consume_button_key_click(&click_button_id, event) {
+                            return;
+                        }
+                        view.toggle_subagent_detail(&click_key, cx);
+                    }))
+                    .on_activate(cx.listener(move |view, _event, _window, cx| {
+                        view.note_button_key_activate(&activate_button_id);
+                        view.toggle_subagent_detail(&activate_key, cx);
+                        cx.stop_propagation();
+                    })),
+            )
     }
 }
 
@@ -1257,7 +1468,7 @@ fn subagent_placeholder(title: &'static str, description: String) -> gpui::AnyEl
 /// 加载 / 失败 / 空态），并按实测布局发布 chip / Refresh / 回底按钮
 ///（VoiceOver 可 Press；几何与 Inspector 页签同口径：tracked div 实测
 /// bounds 按滚动视口裁剪，不发布无真实布局的行级节点）。
-pub(super) fn subagent_ax(view: &AppView, frame: AxRect) -> AxNode {
+pub(super) fn subagent_ax(view: &AppView, window: &Window, frame: AxRect) -> AxNode {
     let activity = &view.projection.subagent_activity;
     let conversation = &view.projection.subagent_conversation;
     let bound =
@@ -1389,6 +1600,9 @@ pub(super) fn subagent_ax(view: &AppView, frame: AxRect) -> AxNode {
         }
         // RV-07 对话正文：按实际阅读顺序发布节点；tracked 条目布局按
         // transcript 滚动视口裁剪，未测量 / 零面积项不发布（几何不伪造）。
+        // 正文与展开按钮进入 Inspector Tab 链，并声明 Focus，使 AX
+        // setFocused 与键盘 focus_next 落在同一句柄上。
+        // 工具标题与长结果展开按钮分别按各自 bounds 裁剪。
         if let Some(agent_id) = conversation.agent_id.as_deref() {
             let viewport = view.subagent_conversation_scroll.handle().bounds();
             for item in panel_items(conversation) {
@@ -1399,10 +1613,11 @@ pub(super) fn subagent_ax(view: &AppView, frame: AxRect) -> AxNode {
                         None => continue,
                     },
                 };
-                let Some(layout) = view.subagent_item_layouts.get(&key) else {
-                    continue;
-                };
-                let Some(rect) = subagent_ax_rect(layout.bounds().intersect(&viewport)) else {
+                let rect = view
+                    .subagent_item_layouts
+                    .get(&key)
+                    .and_then(|layout| subagent_ax_rect(layout.bounds().intersect(&viewport)));
+                if rect.is_none() && !matches!(item, PanelItem::Tool { .. }) {
                     continue;
                 };
                 match &item {
@@ -1413,33 +1628,84 @@ pub(super) fn subagent_ax(view: &AppView, frame: AxRect) -> AxNode {
                         detail,
                         arguments,
                     } => {
-                        let headline =
-                            super::timeline_entry::tool_headline(name, arguments.as_deref());
-                        let mut tool_value = format!(
-                            "{headline} · {}",
-                            super::timeline::tool_status_label(status)
-                        );
+                        if let Some(rect) = rect {
+                            let headline =
+                                super::timeline_entry::tool_headline(name, arguments.as_deref());
+                            let mut tool_value = format!(
+                                "{headline} · {}",
+                                super::timeline::tool_status_label(status)
+                            );
+                            if view
+                                .expanded_subagent_details
+                                .contains(&format!("{event_id}:tool"))
+                            {
+                                if let Some(text) = detail.as_deref().filter(|d| !d.is_empty()) {
+                                    tool_value.push_str(" · ");
+                                    tool_value.push_str(&subagent_ax_text(text));
+                                }
+                            }
+                            node = node.child(
+                                AxNode::new(
+                                    format!("subagent-tool-toggle-{event_id}"),
+                                    AxRole::Button,
+                                    t("timeline.tool"),
+                                    rect,
+                                )
+                                .value(tool_value)
+                                .focused(subagent_item_focused(
+                                    view,
+                                    window,
+                                    &format!("{event_id}:tool"),
+                                ))
+                                .action(AxAction::Press)
+                                .action(AxAction::Focus),
+                            );
+                        }
                         if view
                             .expanded_subagent_details
                             .contains(&format!("{event_id}:tool"))
                         {
-                            if let Some(text) = detail.as_deref().filter(|d| !d.is_empty()) {
-                                tool_value.push_str(" · ");
-                                tool_value.push_str(&subagent_ax_text(text));
+                            let detail_text = subagent_tool_detail_text(detail.as_deref());
+                            let result_key =
+                                super::timeline_entry::tool_result_expand_key(event_id);
+                            let result_expanded =
+                                view.expanded_subagent_details.contains(&result_key);
+                            if subagent_detail_preview(&detail_text, result_expanded).1 {
+                                if let Some(toggle_layout) = view
+                                    .subagent_item_layouts
+                                    .get(&subagent_tool_result_layout_key(event_id))
+                                {
+                                    if let Some(toggle_rect) = subagent_ax_rect(
+                                        toggle_layout.bounds().intersect(&viewport),
+                                    ) {
+                                        node = node.child(
+                                            AxNode::new(
+                                                format!("subagent-tool-result-toggle-{event_id}"),
+                                                AxRole::Button,
+                                                if result_expanded {
+                                                    t("tool.result_collapse")
+                                                } else {
+                                                    t("tool.result_expand")
+                                                },
+                                                toggle_rect,
+                                            )
+                                            .focused(subagent_item_focused(
+                                                view,
+                                                window,
+                                                &result_key,
+                                            ))
+                                            .action(AxAction::Press)
+                                            .action(AxAction::Focus),
+                                        );
+                                    }
+                                }
                             }
                         }
-                        node = node.child(
-                            AxNode::new(
-                                format!("subagent-tool-toggle-{event_id}"),
-                                AxRole::Button,
-                                t("timeline.tool"),
-                                rect,
-                            )
-                            .value(tool_value)
-                            .action(AxAction::Press),
-                        );
                     }
                     PanelItem::UserMessage { event_id, text } => {
+                        let Some(rect) = rect else {
+                            continue;
+                        };
                         node = node.child(
                             AxNode::new(
                                 format!("subagent-msg-{event_id}"),
@@ -1447,10 +1713,19 @@ pub(super) fn subagent_ax(view: &AppView, frame: AxRect) -> AxNode {
                                 t("subagents.task_from_main"),
                                 rect,
                             )
-                            .value(subagent_ax_text(text)),
+                            .value(subagent_ax_text(text))
+                            .focused(subagent_item_focused(
+                                view,
+                                window,
+                                &format!("{event_id}:item"),
+                            ))
+                            .action(AxAction::Focus),
                         );
                     }
                     PanelItem::UserFollowUp { event_id, text } => {
+                        let Some(rect) = rect else {
+                            continue;
+                        };
                         node = node.child(
                             AxNode::new(
                                 format!("subagent-msg-{event_id}"),
@@ -1458,10 +1733,19 @@ pub(super) fn subagent_ax(view: &AppView, frame: AxRect) -> AxNode {
                                 t("timeline.you"),
                                 rect,
                             )
-                            .value(subagent_ax_text(text)),
+                            .value(subagent_ax_text(text))
+                            .focused(subagent_item_focused(
+                                view,
+                                window,
+                                &format!("{event_id}:item"),
+                            ))
+                            .action(AxAction::Focus),
                         );
                     }
                     PanelItem::Assistant { event_id, text } => {
+                        let Some(rect) = rect else {
+                            continue;
+                        };
                         node = node.child(
                             AxNode::new(
                                 format!("subagent-msg-{event_id}"),
@@ -1469,10 +1753,19 @@ pub(super) fn subagent_ax(view: &AppView, frame: AxRect) -> AxNode {
                                 t("subagents.assistant_label"),
                                 rect,
                             )
-                            .value(subagent_ax_text(text)),
+                            .value(subagent_ax_text(text))
+                            .focused(subagent_item_focused(
+                                view,
+                                window,
+                                &format!("{event_id}:item"),
+                            ))
+                            .action(AxAction::Focus),
                         );
                     }
                     PanelItem::Thinking { event_id, text } => {
+                        let Some(rect) = rect else {
+                            continue;
+                        };
                         node = node.child(
                             AxNode::new(
                                 format!("subagent-msg-{event_id}"),
@@ -1480,7 +1773,13 @@ pub(super) fn subagent_ax(view: &AppView, frame: AxRect) -> AxNode {
                                 t("subagents.thinking_label"),
                                 rect,
                             )
-                            .value(subagent_ax_text(text)),
+                            .value(subagent_ax_text(text))
+                            .focused(subagent_item_focused(
+                                view,
+                                window,
+                                &format!("{event_id}:item"),
+                            ))
+                            .action(AxAction::Focus),
                         );
                     }
                     PanelItem::RunState(_) | PanelItem::Error(_) => {}
@@ -1514,7 +1813,13 @@ pub(super) fn subagent_ax(view: &AppView, frame: AxRect) -> AxNode {
                                     subagent_ax_text(result)
                                 } else {
                                     subagent_result_summary(result)
-                                }),
+                                })
+                                .focused(subagent_item_focused(
+                                    view,
+                                    window,
+                                    &format!("{agent_id}:result-text"),
+                                ))
+                                .action(AxAction::Focus),
                             );
                             if long {
                                 if let Some(toggle_layout) = view
@@ -1535,7 +1840,13 @@ pub(super) fn subagent_ax(view: &AppView, frame: AxRect) -> AxNode {
                                                 },
                                                 toggle_rect,
                                             )
-                                            .action(AxAction::Press),
+                                            .focused(subagent_item_focused(
+                                                view,
+                                                window,
+                                                &result_key,
+                                            ))
+                                            .action(AxAction::Press)
+                                            .action(AxAction::Focus),
                                         );
                                     }
                                 }
@@ -2384,6 +2695,1006 @@ mod tests {
         ));
         assert!(!subagent_result_matches_reply("other", &conversation));
         assert!(!subagent_result_matches_reply(&other_2000, &conversation));
+    }
+
+    fn spoken_ax(node: &AxNode) -> String {
+        match &node.value {
+            Some(value) => format!("{} · {value}", node.label),
+            None => node.label.clone(),
+        }
+    }
+
+    fn focused_subagent_key(view: &AppView, window: &Window) -> Option<String> {
+        view.subagent_item_focus
+            .iter()
+            .find_map(|(key, focus)| focus.is_focused(window).then(|| key.clone()))
+    }
+
+    /// RV-07：正文进入 Inspector Tab 链，AX Focus 与 focus_next / focus_prev
+    /// 落在同一句柄。GPUI 测试没有 NSWindow，直接调用产品路径截获 Tab 后
+    /// 使用的那一对方法；按钮用 Enter 激活。朗读文本是 label · value。
+    /// 结果对的键盘顺序是展开按钮然后文本，AX 阅读顺序相反。原生 bridge
+    /// 与 VoiceOver 不在这条模拟里。
+    #[gpui::test]
+    fn subagent_body_keyboard_focus_reads_and_presses(cx: &mut gpui::TestAppContext) {
+        let receipt = (0..12)
+            .map(|index| format!("receipt-line-{index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(receipt.lines().count(), 12);
+        let result = std::iter::once("Distinct agent result".to_string())
+            .chain((1..11).map(|index| format!("agent-result-line-{index}-{}", "x".repeat(40))))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(result.lines().count(), 11);
+        assert!(result.chars().count() > SUBAGENT_AX_TEXT_CHARS);
+        let summary = subagent_result_summary(&result);
+        let truncated = subagent_ax_text(&result);
+        assert_eq!(summary, "Distinct agent result");
+        assert_ne!(truncated, summary);
+        assert!(truncated.ends_with('…'));
+        assert!(truncated.contains("agent-result-line-1"));
+        assert!(!truncated.contains("agent-result-line-10"));
+
+        let mut conversation = SubagentConversationState::default();
+        assert!(conversation.select_agent("child-0"));
+        let generation = conversation.begin_loading();
+        conversation.apply_page(
+            "child-0",
+            generation,
+            &timeline_page(vec![
+                history_item(
+                    1,
+                    "user_message",
+                    serde_json::json!({ "text": "Inspect the crate" }),
+                ),
+                history_item(
+                    2,
+                    "thinking_delta",
+                    serde_json::json!({ "text": "Check the public API" }),
+                ),
+                history_item(
+                    3,
+                    "assistant_delta",
+                    serde_json::json!({ "text": "Done looking" }),
+                ),
+                history_item(
+                    4,
+                    "tool_started",
+                    serde_json::json!({
+                        "tool_name": "read_file",
+                        "status": "running",
+                        "detail": tool_context("call-read")
+                    }),
+                ),
+                history_item(
+                    5,
+                    "other",
+                    serde_json::json!({
+                        "status": "tool_arguments",
+                        "text": r#"{"path":"src/lib.rs"}"#,
+                        "detail": tool_context("call-read")
+                    }),
+                ),
+                history_item(
+                    6,
+                    "tool_completed",
+                    serde_json::json!({
+                        "tool_name": "read_file",
+                        "status": "succeeded",
+                        "text": receipt,
+                        "detail": tool_context("call-read")
+                    }),
+                ),
+                history_item(
+                    7,
+                    "user_message",
+                    serde_json::json!({ "text": "Send the summary" }),
+                ),
+            ]),
+        );
+        let items = panel_items(&conversation);
+        assert_eq!(
+            items
+                .iter()
+                .filter_map(|item| item.event_id())
+                .collect::<Vec<_>>(),
+            vec!["hist-1", "hist-2:thinking", "hist-3", "hist-4", "hist-7",]
+        );
+
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("rv07-subagent-body-focus.sock");
+        let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
+        cx.simulate_resize(gpui::size(gpui::px(1440.0), gpui::px(1600.0)));
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.active_session_id = Some("parent".into());
+                view.projection.connection = crate::projection::ConnectionState::Connected {
+                    instance_id: "test".into(),
+                };
+                view.projection.subagent_activity.session_id = Some("parent".into());
+                view.projection.subagent_activity.agents = vec![crate::projection::SubagentInfo {
+                    agent_id: "child-0".into(),
+                    session_id: "child-0".into(),
+                    parent_run_id: "run-0".into(),
+                    title: "Agent 0".into(),
+                    provider_id: "test-provider".into(),
+                    model_id: "test-model".into(),
+                    status: "completed".into(),
+                    result: Some(result.clone()),
+                    effort: None,
+                }];
+                view.projection.subagent_conversation = conversation;
+                view.inspector_open = true;
+                view.inspector_motion.width(
+                    true,
+                    true,
+                    std::time::Instant::now() - std::time::Duration::from_secs(1),
+                );
+                view.inspector_tab = super::super::inspector::InspectorTab::Subagent;
+                view.close_open_menu(cx);
+                assert!(view.expanded_subagent_details.is_empty());
+                cx.notify();
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+
+        let collapsed_tool = "Tool · read_file src/lib.rs · Completed";
+        let expected_order = [
+            "subagent-select-child-0",
+            "subagent-refresh",
+            "subagent-msg-hist-1",
+            "subagent-msg-hist-2:thinking",
+            "subagent-msg-hist-3",
+            "subagent-tool-toggle-hist-4",
+            "subagent-msg-hist-7",
+            "subagent-result-child-0",
+            "subagent-result-toggle-child-0",
+        ];
+        let expected_spoken = [
+            "Open subagent conversation · Agent 0 · test-model · Done",
+            "Refresh subagent conversations",
+            "Main agent → subagent · Inspect the crate",
+            "Thinking · Check the public API",
+            "Subagent · Done looking",
+            collapsed_tool,
+            "You · Send the summary",
+            "Subagent → main agent · Distinct agent result",
+            "Show full result",
+        ];
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().unwrap();
+            let group = tree.find("inspector-subagent").expect("subagent group");
+            assert_eq!(
+                group.value.as_deref(),
+                Some("Agent 0 · test-model · Done"),
+                "group value stays the header summary"
+            );
+            assert_eq!(
+                group
+                    .children
+                    .iter()
+                    .map(|node| node.identifier.as_str())
+                    .collect::<Vec<_>>(),
+                expected_order
+            );
+            assert_eq!(
+                group.children.iter().map(spoken_ax).collect::<Vec<_>>(),
+                expected_spoken
+            );
+            let text_at = expected_order
+                .iter()
+                .position(|id| *id == "subagent-result-child-0")
+                .unwrap();
+            let toggle_at = expected_order
+                .iter()
+                .position(|id| *id == "subagent-result-toggle-child-0")
+                .unwrap();
+            assert!(
+                text_at < toggle_at,
+                "AX reads result text before its toggle"
+            );
+            assert!(group.children.iter().all(|node| !node.focused));
+            assert!(tree.find("subagent-tool-result-toggle-hist-4").is_none());
+            for node in &group.children {
+                let body = node.identifier.starts_with("subagent-msg-")
+                    || node.identifier.starts_with("subagent-tool-")
+                    || node.identifier.starts_with("subagent-result");
+                if !body {
+                    continue;
+                }
+                assert!(
+                    node.actions.contains(&AxAction::Focus),
+                    "{}",
+                    node.identifier
+                );
+                let press = node.actions.contains(&AxAction::Press);
+                assert_eq!(press, node.role == AxRole::Button, "{}", node.identifier);
+            }
+            assert!(group
+                .children
+                .iter()
+                .filter(|node| node.role == AxRole::StaticText)
+                .all(|node| node.value.as_deref() != Some("Agent 0 · test-model · Done")));
+        });
+
+        let keys = [
+            "hist-1:item",
+            "hist-2:thinking:item",
+            "hist-3:item",
+            "hist-4:tool",
+            "hist-7:item",
+            "child-0:result",
+            "child-0:result-text",
+        ];
+        let ax_ids = [
+            "subagent-msg-hist-1",
+            "subagent-msg-hist-2:thinking",
+            "subagent-msg-hist-3",
+            "subagent-tool-toggle-hist-4",
+            "subagent-msg-hist-7",
+            "subagent-result-toggle-child-0",
+            "subagent-result-child-0",
+        ];
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.handle_accessibility_request(
+                    crate::ui::accessibility::AxRequest {
+                        identifier: ax_ids[0].into(),
+                        action: AxAction::Focus,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+            });
+            for (index, (key, ax_id)) in keys.into_iter().zip(ax_ids).enumerate() {
+                if index > 0 {
+                    window.focus_next();
+                }
+                let view = view.read(cx);
+                assert_eq!(
+                    focused_subagent_key(view, window).as_deref(),
+                    Some(key),
+                    "focus_next step {index}"
+                );
+                let tree = view.accessibility_tree(window, cx);
+                assert!(
+                    tree.find(ax_id).is_some_and(|node| node.focused),
+                    "{ax_id} focused"
+                );
+                assert_eq!(
+                    tree.focused().map(|node| node.identifier.as_str()),
+                    Some(ax_id)
+                );
+            }
+            for (index, (key, ax_id)) in keys.into_iter().zip(ax_ids).rev().skip(1).enumerate() {
+                window.focus_prev();
+                let view = view.read(cx);
+                assert_eq!(
+                    focused_subagent_key(view, window).as_deref(),
+                    Some(key),
+                    "focus_prev step {index}"
+                );
+                let tree = view.accessibility_tree(window, cx);
+                assert!(tree.find(ax_id).is_some_and(|node| node.focused));
+            }
+        });
+
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.handle_accessibility_request(
+                    crate::ui::accessibility::AxRequest {
+                        identifier: "subagent-tool-toggle-hist-4".into(),
+                        action: AxAction::Focus,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+            });
+            assert_eq!(
+                focused_subagent_key(view.read(cx), window).as_deref(),
+                Some("hist-4:tool")
+            );
+        });
+        cx.simulate_keystrokes("enter");
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert!(view.expanded_subagent_details.contains("hist-4:tool"));
+            assert_eq!(
+                focused_subagent_key(view, window).as_deref(),
+                Some("hist-4:tool")
+            );
+            let value = view
+                .accessibility_tree(window, cx)
+                .find("subagent-tool-toggle-hist-4")
+                .and_then(|node| node.value.clone())
+                .unwrap_or_default();
+            // 节点 value 不含 label。展开后是 headline · status · 截断后的原文，
+            // 不是 10 行预览；朗读形态仍是 label · value。
+            assert_eq!(
+                value,
+                format!(
+                    "read_file src/lib.rs · Completed · {}",
+                    subagent_ax_text(&receipt)
+                )
+            );
+            assert!(value.contains("receipt-line-0"));
+            assert!(value.contains("receipt-line-11"));
+        });
+        cx.update(|window, _| window.focus_next());
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert_eq!(
+                focused_subagent_key(view, window).as_deref(),
+                Some("hist-4:result"),
+                "next stop is the tool result toggle"
+            );
+            let tree = view.accessibility_tree(window, cx);
+            let node = tree
+                .find("subagent-tool-result-toggle-hist-4")
+                .expect("expanded tool publishes the result toggle");
+            assert_eq!(node.label, "Show full result");
+            assert!(node.focused);
+            assert!(node.actions.contains(&AxAction::Press));
+        });
+        cx.simulate_keystrokes("enter");
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            {
+                let current = view.read(cx);
+                assert!(current.expanded_subagent_details.contains(
+                    &super::super::timeline_entry::tool_result_expand_key("hist-4")
+                ));
+                assert_eq!(
+                    current
+                        .accessibility_tree(window, cx)
+                        .find("subagent-tool-result-toggle-hist-4")
+                        .map(|node| node.label.as_str()),
+                    Some("Show less")
+                );
+            }
+            view.update(cx, |view, cx| {
+                view.handle_accessibility_request(
+                    crate::ui::accessibility::AxRequest {
+                        identifier: "subagent-tool-result-toggle-hist-4".into(),
+                        action: AxAction::Press,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+            });
+            let current = view.read(cx);
+            assert!(!current.expanded_subagent_details.contains(
+                &super::super::timeline_entry::tool_result_expand_key("hist-4")
+            ));
+            assert_eq!(
+                focused_subagent_key(current, window).as_deref(),
+                Some("hist-4:result")
+            );
+            assert_eq!(
+                current
+                    .accessibility_tree(window, cx)
+                    .find("subagent-tool-result-toggle-hist-4")
+                    .map(|node| node.label.as_str()),
+                Some("Show full result")
+            );
+            window.focus_next();
+            window.focus_next();
+        });
+        cx.update(|window, cx| {
+            assert_eq!(
+                focused_subagent_key(view.read(cx), window).as_deref(),
+                Some("child-0:result")
+            );
+        });
+        cx.simulate_keystrokes("enter");
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.focus_next();
+            let view = view.read(cx);
+            assert!(view.expanded_subagent_details.contains("child-0:result"));
+            assert_eq!(
+                focused_subagent_key(view, window).as_deref(),
+                Some("child-0:result-text")
+            );
+            assert_eq!(
+                view.accessibility_tree(window, cx)
+                    .find("subagent-result-child-0")
+                    .and_then(|node| node.value.clone())
+                    .as_deref(),
+                Some(truncated.as_str())
+            );
+            window.focus_prev();
+        });
+        cx.simulate_keystrokes("enter");
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.focus_next();
+            let (expanded, focused) = {
+                let current = view.read(cx);
+                assert!(!current.expanded_subagent_details.contains("child-0:result"));
+                assert_eq!(
+                    focused_subagent_key(current, window).as_deref(),
+                    Some("child-0:result-text")
+                );
+                let tree = current.accessibility_tree(window, cx);
+                assert!(tree.find("subagent-result-child-0").is_some_and(|node| {
+                    node.focused && node.value.as_deref() == Some(summary.as_str())
+                }));
+                (
+                    current.expanded_subagent_details.clone(),
+                    focused_subagent_key(current, window),
+                )
+            };
+            view.update(cx, |view, cx| {
+                view.handle_accessibility_request(
+                    crate::ui::accessibility::AxRequest {
+                        identifier: "subagent-not-a-node".into(),
+                        action: AxAction::Focus,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+                view.handle_accessibility_request(
+                    crate::ui::accessibility::AxRequest {
+                        identifier: "subagent-msg-hist-1".into(),
+                        action: AxAction::Press,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+            });
+            let current = view.read(cx);
+            assert_eq!(current.expanded_subagent_details, expanded);
+            assert_eq!(focused_subagent_key(current, window), focused);
+            assert!(current.expanded_subagent_details.contains("hist-4:tool"));
+            assert!(!current.expanded_subagent_details.contains("hist-1:item"));
+        });
+    }
+
+    /// RV-07：长对话里 focus_next 必须把离屏正文滚进 transcript，AX 才能发布。
+    /// 工具标题离屏时，仍可见的结果展开按钮按自己的 bounds 留下。
+    /// 滚动到按钮的那一步是场景布置，不是被测的滚入路径。
+    #[gpui::test]
+    fn subagent_offscreen_focus_reveals_and_keeps_visible_tool_toggle(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        fn fully_below(
+            item: gpui::Bounds<gpui::Pixels>,
+            viewport: gpui::Bounds<gpui::Pixels>,
+        ) -> bool {
+            f32::from(item.top()) >= f32::from(viewport.bottom()) - 0.5
+        }
+        fn fully_above(
+            item: gpui::Bounds<gpui::Pixels>,
+            viewport: gpui::Bounds<gpui::Pixels>,
+        ) -> bool {
+            f32::from(item.bottom()) <= f32::from(viewport.top()) + 0.5
+        }
+        fn intersects(
+            item: gpui::Bounds<gpui::Pixels>,
+            viewport: gpui::Bounds<gpui::Pixels>,
+        ) -> bool {
+            let visible = item.intersect(&viewport);
+            f32::from(visible.size.width) > 0.5 && f32::from(visible.size.height) > 0.5
+        }
+
+        let receipt = (0..16)
+            .map(|index| format!("tool-line-{index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut history = Vec::new();
+        for sequence in 1..=36 {
+            history.push(history_item(
+                sequence,
+                "user_message",
+                serde_json::json!({ "text": format!("row-{sequence}") }),
+            ));
+        }
+        history.push(history_item(
+            37,
+            "tool_started",
+            serde_json::json!({
+                "tool_name": "read_file",
+                "status": "running",
+                "detail": tool_context("call-read")
+            }),
+        ));
+        history.push(history_item(
+            38,
+            "other",
+            serde_json::json!({
+                "status": "tool_arguments",
+                "text": r#"{"path":"src/lib.rs"}"#,
+                "detail": tool_context("call-read")
+            }),
+        ));
+        history.push(history_item(
+            39,
+            "tool_completed",
+            serde_json::json!({
+                "tool_name": "read_file",
+                "status": "succeeded",
+                "text": receipt,
+                "detail": tool_context("call-read")
+            }),
+        ));
+        for sequence in 40..=70 {
+            history.push(history_item(
+                sequence,
+                "user_message",
+                serde_json::json!({ "text": format!("after-{sequence}") }),
+            ));
+        }
+        let mut conversation = SubagentConversationState::default();
+        assert!(conversation.select_agent("child-0"));
+        let generation = conversation.begin_loading();
+        conversation.apply_page("child-0", generation, &timeline_page(history));
+
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("rv07-subagent-offscreen-focus.sock");
+        let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
+        cx.simulate_resize(gpui::size(gpui::px(1440.0), gpui::px(560.0)));
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.active_session_id = Some("parent".into());
+                view.projection.connection = crate::projection::ConnectionState::Connected {
+                    instance_id: "test".into(),
+                };
+                view.projection.subagent_activity.session_id = Some("parent".into());
+                view.projection.subagent_activity.agents = vec![crate::projection::SubagentInfo {
+                    agent_id: "child-0".into(),
+                    session_id: "child-0".into(),
+                    parent_run_id: "run-0".into(),
+                    title: "Agent 0".into(),
+                    provider_id: "test-provider".into(),
+                    model_id: "test-model".into(),
+                    status: "completed".into(),
+                    result: None,
+                    effort: None,
+                }];
+                view.projection.subagent_conversation = conversation;
+                view.inspector_open = true;
+                view.inspector_motion.width(
+                    true,
+                    true,
+                    std::time::Instant::now() - std::time::Duration::from_secs(1),
+                );
+                view.inspector_tab = super::super::inspector::InspectorTab::Subagent;
+                view.close_open_menu(cx);
+                cx.notify();
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+
+        let (previous, target, offset_before) = cx.update(|window, cx| {
+            let view = view.read(cx);
+            let scroll = view.subagent_conversation_scroll.handle();
+            let overflow = f32::from(scroll.max_offset().height);
+            assert!(
+                overflow > metrics::SCROLL_EPSILON,
+                "fixture must overflow the transcript, max_offset={overflow}"
+            );
+            let viewport = scroll.bounds();
+            let keys = panel_items(&view.projection.subagent_conversation)
+                .iter()
+                .filter_map(|item| match item {
+                    PanelItem::Tool { event_id, .. } => Some(format!("{event_id}:tool")),
+                    PanelItem::RunState(_) | PanelItem::Error(_) => None,
+                    other => other.event_id().map(|id| format!("{id}:item")),
+                })
+                .collect::<Vec<_>>();
+            let index = keys.iter().position(|key| {
+                view.subagent_item_layouts
+                    .get(key)
+                    .is_some_and(|layout| fully_below(layout.bounds(), viewport))
+            });
+            let Some(index) = index else {
+                panic!(
+                    "no body item is fully below the viewport, height={}",
+                    f32::from(viewport.size.height)
+                );
+            };
+            assert!(index > 0, "the first body item should still be on screen");
+            let target = keys[index].clone();
+            let previous = keys[index - 1].clone();
+            let ax_id = format!(
+                "subagent-msg-{}",
+                target.strip_suffix(":item").expect("message focus key")
+            );
+            assert!(
+                view.accessibility_tree(window, cx).find(&ax_id).is_none(),
+                "{ax_id} is offscreen and must not be published yet"
+            );
+            let previous_focus = view
+                .subagent_item_focus
+                .get(&previous)
+                .cloned()
+                .expect("previous tab stop");
+            window.focus(&previous_focus);
+            window.focus_next();
+            (previous, target, scroll.offset())
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert_eq!(
+                focused_subagent_key(view, window).as_deref(),
+                Some(target.as_str())
+            );
+            assert_ne!(previous, target);
+            let viewport = view.subagent_conversation_scroll.handle().bounds();
+            let item = view
+                .subagent_item_layouts
+                .get(&target)
+                .expect("focused layout")
+                .bounds();
+            assert!(
+                intersects(item, viewport),
+                "focus_next must scroll the item into the transcript: item={item:?} viewport={viewport:?}"
+            );
+            assert_ne!(
+                view.subagent_conversation_scroll.handle().offset().y,
+                offset_before.y,
+                "the product path must move the transcript, not leave the test to scroll"
+            );
+            let ax_id = format!(
+                "subagent-msg-{}",
+                target.strip_suffix(":item").unwrap()
+            );
+            let tree = view.accessibility_tree(window, cx);
+            let node = tree
+                .find(&ax_id)
+                .unwrap_or_else(|| panic!("{ax_id} must be published once focused"));
+            assert!(node.focused);
+            assert!(node.actions.contains(&AxAction::Focus));
+        });
+
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.toggle_subagent_detail("hist-37:tool", cx);
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.blur();
+            view.update(cx, |view, _cx| {
+                let scroll = view.subagent_conversation_scroll.handle();
+                let viewport = scroll.bounds();
+                let toggle = view
+                    .subagent_item_layouts
+                    .get(&subagent_tool_result_layout_key("hist-37"))
+                    .expect("expanded tool publishes a result toggle layout")
+                    .bounds();
+                let delta = f32::from(viewport.origin.y) - f32::from(toggle.origin.y);
+                let mut offset = scroll.offset();
+                let max = f32::from(scroll.max_offset().height);
+                let y = (f32::from(offset.y) + delta).clamp(-max, 0.0);
+                offset.y = px(y);
+                scroll.set_offset(offset);
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            {
+                let current = view.read(cx);
+                let viewport = current.subagent_conversation_scroll.handle().bounds();
+                let header = current
+                    .subagent_item_layouts
+                    .get("hist-37:tool-header")
+                    .expect("tool header layout")
+                    .bounds();
+                let toggle = current
+                    .subagent_item_layouts
+                    .get(&subagent_tool_result_layout_key("hist-37"))
+                    .expect("tool result toggle layout")
+                    .bounds();
+                assert!(
+                    fully_above(header, viewport),
+                    "header must be offscreen: header={header:?} viewport={viewport:?}"
+                );
+                assert!(
+                    intersects(toggle, viewport),
+                    "toggle must stay visible: toggle={toggle:?} viewport={viewport:?}"
+                );
+                let tree = current.accessibility_tree(window, cx);
+                assert!(tree.find("subagent-tool-toggle-hist-37").is_none());
+                let node = tree
+                    .find("subagent-tool-result-toggle-hist-37")
+                    .expect("visible result toggle stays in the AX tree");
+                assert_eq!(node.label, "Show full result");
+                assert!(node.actions.contains(&AxAction::Focus));
+                assert!(node.actions.contains(&AxAction::Press));
+            }
+            view.update(cx, |view, cx| {
+                view.handle_accessibility_request(
+                    crate::ui::accessibility::AxRequest {
+                        identifier: "subagent-tool-result-toggle-hist-37".into(),
+                        action: AxAction::Focus,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            {
+                let current = view.read(cx);
+                let viewport = current.subagent_conversation_scroll.handle().bounds();
+                let toggle = current
+                    .subagent_item_layouts
+                    .get(&subagent_tool_result_layout_key("hist-37"))
+                    .expect("toggle layout")
+                    .bounds();
+                assert!(intersects(toggle, viewport));
+                assert_eq!(
+                    focused_subagent_key(current, window).as_deref(),
+                    Some("hist-37:result")
+                );
+                let tree = current.accessibility_tree(window, cx);
+                let node = tree
+                    .find("subagent-tool-result-toggle-hist-37")
+                    .expect("focused toggle is still published");
+                assert!(node.focused);
+            }
+            view.update(cx, |view, cx| {
+                view.handle_accessibility_request(
+                    crate::ui::accessibility::AxRequest {
+                        identifier: "subagent-tool-result-toggle-hist-37".into(),
+                        action: AxAction::Press,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+            });
+            let view = view.read(cx);
+            assert!(view.expanded_subagent_details.contains("hist-37:result"));
+            assert_eq!(
+                view.accessibility_tree(window, cx)
+                    .find("subagent-tool-result-toggle-hist-37")
+                    .map(|node| node.label.as_str()),
+                Some("Show less")
+            );
+        });
+    }
+
+    /// RV-07：同帧 follow_new_content 把滚底标志留到 prepaint，会盖掉 reveal
+    /// 的 set_offset。滚底落定后不得登记成功，也不得按被盖掉的中间偏移重估
+    /// following。下一帧目标进入视口后才登记，AX 随之发布且 focused。
+    #[gpui::test]
+    fn subagent_same_frame_follow_does_not_confirm_offscreen_reveal(cx: &mut gpui::TestAppContext) {
+        #[derive(Clone, Debug)]
+        struct Snap {
+            revealed: Option<String>,
+            following: bool,
+            at_bottom: bool,
+            offset_y: f32,
+            intersects: bool,
+        }
+
+        let mut history = Vec::new();
+        for sequence in 1..=64 {
+            history.push(history_item(
+                sequence,
+                "user_message",
+                serde_json::json!({ "text": format!("row-{sequence}") }),
+            ));
+        }
+        let mut conversation = SubagentConversationState::default();
+        assert!(conversation.select_agent("child-0"));
+        let generation = conversation.begin_loading();
+        conversation.apply_page("child-0", generation, &timeline_page(history));
+
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("rv07-subagent-same-frame-follow.sock");
+        let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
+        cx.simulate_resize(gpui::size(gpui::px(1440.0), gpui::px(560.0)));
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.active_session_id = Some("parent".into());
+                view.projection.connection = crate::projection::ConnectionState::Connected {
+                    instance_id: "test".into(),
+                };
+                view.projection.subagent_activity.session_id = Some("parent".into());
+                view.projection.subagent_activity.agents = vec![crate::projection::SubagentInfo {
+                    agent_id: "child-0".into(),
+                    session_id: "child-0".into(),
+                    parent_run_id: "run-0".into(),
+                    title: "Agent 0".into(),
+                    provider_id: "test-provider".into(),
+                    model_id: "test-model".into(),
+                    status: "completed".into(),
+                    result: None,
+                    effort: None,
+                }];
+                view.projection.subagent_conversation = conversation;
+                view.inspector_open = true;
+                view.inspector_motion.width(
+                    true,
+                    true,
+                    std::time::Instant::now() - std::time::Duration::from_secs(1),
+                );
+                view.inspector_tab = super::super::inspector::InspectorTab::Subagent;
+                view.close_open_menu(cx);
+                cx.notify();
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+
+        let target = cx.update(|window, cx| {
+            let view = view.read(cx);
+            let scroll = view.subagent_conversation_scroll.handle();
+            let max = f32::from(scroll.max_offset().height);
+            let offset_y = f32::from(scroll.offset().y);
+            assert!(
+                max > metrics::SCROLL_EPSILON,
+                "fixture must overflow the transcript, max_offset={max}"
+            );
+            assert!(view.subagent_conversation_scroll.is_following());
+            assert!(
+                !view.subagent_conversation_scroll.is_scrolled_to_bottom(),
+                "fixture must start away from the bottom"
+            );
+            let viewport = scroll.bounds();
+            let shift = -max - offset_y;
+            let target = panel_items(&view.projection.subagent_conversation)
+                .iter()
+                .filter_map(|item| match item {
+                    PanelItem::UserMessage { event_id, .. }
+                    | PanelItem::UserFollowUp { event_id, .. } => Some(format!("{event_id}:item")),
+                    _ => None,
+                })
+                .find(|key| {
+                    let Some(bounds) = view
+                        .subagent_item_layouts
+                        .get(key)
+                        .map(|layout| layout.bounds())
+                    else {
+                        return false;
+                    };
+                    let top = f32::from(bounds.top());
+                    let height = f32::from(bounds.size.height);
+                    let below = top >= f32::from(viewport.bottom()) - 0.5;
+                    let above_after = top + shift + height <= f32::from(viewport.top()) + 0.5;
+                    below && above_after && height > 1.0
+                });
+            let target = target.unwrap_or_else(|| {
+                panic!(
+                    "need a row that is below the viewport now and above it after scroll-to-bottom"
+                )
+            });
+            let ax_id = format!(
+                "subagent-msg-{}",
+                target.strip_suffix(":item").expect("message focus key")
+            );
+            assert!(
+                view.accessibility_tree(window, cx).find(&ax_id).is_none(),
+                "{ax_id} is offscreen and must not be published yet"
+            );
+            target
+        });
+
+        let snaps = std::rc::Rc::new(std::cell::RefCell::new(Vec::<Snap>::new()));
+        let _observe = {
+            let snaps = snaps.clone();
+            let watched = target.clone();
+            cx.update(|_, cx| {
+                cx.observe(&view, move |entity, cx| {
+                    let current = entity.read(cx);
+                    let scroll = current.subagent_conversation_scroll.handle();
+                    let viewport = scroll.bounds();
+                    let intersects = current
+                        .subagent_item_layouts
+                        .get(&watched)
+                        .map(|layout| layout.bounds())
+                        .is_some_and(|bounds| {
+                            let visible = bounds.intersect(&viewport);
+                            f32::from(visible.size.width) > 0.0
+                                && f32::from(visible.size.height) > 0.0
+                        });
+                    snaps.borrow_mut().push(Snap {
+                        revealed: current.subagent_revealed_focus.clone(),
+                        following: current.subagent_conversation_scroll.is_following(),
+                        at_bottom: current.subagent_conversation_scroll.is_scrolled_to_bottom(),
+                        offset_y: f32::from(scroll.offset().y),
+                        intersects,
+                    });
+                })
+            })
+        };
+        cx.update(|window, cx| {
+            let focus = view
+                .read(cx)
+                .subagent_item_focus
+                .get(&target)
+                .cloned()
+                .expect("offscreen body focus handle");
+            window.focus(&focus);
+            view.update(cx, |view, cx| {
+                view.subagent_conversation_scroll.follow_new_content();
+                cx.notify();
+            });
+        });
+
+        let recorded = snaps.borrow().clone();
+        let overwritten = recorded.iter().find(|snap| {
+            snap.revealed.is_none() && snap.at_bottom && snap.following && !snap.intersects
+        });
+        let overwritten = overwritten.unwrap_or_else(|| {
+            panic!(
+                "same-frame scroll-to-bottom recorded reveal or synced the intermediate offset: {recorded:?}"
+            )
+        });
+        cx.update(|window, cx| {
+            let current = view.read(cx);
+            assert_eq!(
+                current.subagent_revealed_focus.as_deref(),
+                Some(target.as_str())
+            );
+            assert_eq!(
+                focused_subagent_key(current, window).as_deref(),
+                Some(target.as_str())
+            );
+            assert_eq!(
+                current.subagent_conversation_scroll.is_following(),
+                current.subagent_conversation_scroll.is_scrolled_to_bottom(),
+                "following must match the settled offset"
+            );
+            assert!(
+                !current.subagent_conversation_scroll.is_scrolled_to_bottom(),
+                "the later frame must leave the bottom to show the focused row"
+            );
+            let offset_y = f32::from(current.subagent_conversation_scroll.handle().offset().y);
+            assert!(
+                (offset_y - overwritten.offset_y).abs() > 1.0,
+                "settled offset {offset_y} must move off the same-frame bottom {}",
+                overwritten.offset_y
+            );
+            let viewport = current.subagent_conversation_scroll.handle().bounds();
+            let item = current
+                .subagent_item_layouts
+                .get(&target)
+                .expect("focused layout")
+                .bounds();
+            let visible = item.intersect(&viewport);
+            assert!(
+                f32::from(visible.size.width) > 0.0 && f32::from(visible.size.height) > 0.0,
+                "focused row must intersect the viewport: item={item:?} viewport={viewport:?}"
+            );
+            let ax_id = format!(
+                "subagent-msg-{}",
+                target.strip_suffix(":item").expect("message focus key")
+            );
+            let tree = current.accessibility_tree(window, cx);
+            let node = tree
+                .find(&ax_id)
+                .unwrap_or_else(|| panic!("{ax_id} must be published once focused"));
+            assert!(node.focused);
+            assert!(node.actions.contains(&AxAction::Focus));
+        });
+        drop(_observe);
     }
 
     /// RV-06：100/125/150 与 1440×1024 侧栏 / 1080×720 中央下，子代理 chip

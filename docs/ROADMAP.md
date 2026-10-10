@@ -96,12 +96,12 @@
 | ✅ 完成（模拟验收）；独立 review / 复审 PASS；真实 Host 现场重放与窗口待验 | [RV-04 · 子代理工具展开人工验收](plan/rv-04-subagent-tools.md) | 历史工具事实水合后的目标、参数、回执、折叠稳定性与拒绝 / 失败区分在 GPUI 测试窗口模拟通过。审批标题按 Host 字段回退为 approval requested · tool · tool `write_file` requires approval，拒绝为 approval deny。 |
 | ✅ 完成（模拟验收）；独立 review / 复审 PASS；真实窗口与像素待验 | [RV-05 · 子代理回执阅读人工验收](plan/rv-05-subagent-receipts.md) | Markdown 回执与主正文同源渲染，长回执折叠 / 展开 / 再折叠、外层滚动与 2000 字符前缀去重边界在 GPUI 测试窗口模拟通过。 |
 | ✅ 完成（模拟验收）；独立 review / 复审 PASS；真实窗口与像素待验 | [RV-06 · 子代理标签字号人工验收](plan/rv-06-subagent-font-sizes.md) | 100% / 125% / 150% 字号与侧栏 / 中央布局下，超宽标题换行、chip 宽度钳制、状态点与焦点环完整由产品自行收敛；GPUI 测试窗口模拟通过。 |
+| ✅ 完成（模拟验收）；独立 review / 多轮复审 PASS；原生 AX bridge、VoiceOver、真窗口与像素待验 | [RV-07 · 子代理正文键盘与朗读人工验收](plan/rv-07-subagent-accessibility.md) | 正文与展开按钮共用 GPUI 焦点句柄并进入 Tab 链；AX Focus、Enter 与 Press 走正式路径，离屏焦点由产品滚入视口，同帧滚底覆盖后可重试。 |
 
 ### 待验收
 
 | 状态 | 任务 | 简介 |
 | --- | --- | --- |
-| 等待人工验收 | [RV-07 · 子代理正文键盘与朗读人工验收](plan/rv-07-subagent-accessibility.md) | 验收正文真正可由键盘访问和朗读。 |
 | 等待人工验收 | [RV-11 · 子代理断线与恢复人工验收](plan/rv-11-subagent-reconnect.md) | 验收断线保留已加载对话、重连恢复和诚实加载态。 |
 | 等待人工验收 | [GUI2-01 · 工作台壳、首页与侧栏人工验收](plan/accept-gui-workbench.md) | 验收首页、Header 和侧栏在真实任务、项目与连接状态下的可达性。 |
 | 等待人工验收 | [GUI2-02 · 对话阅读层级与 Composer 人工验收](plan/gui2-02-conversation-composer.md) | 验收用户与助手消息、长内容阅读和模型管理入口。 |
