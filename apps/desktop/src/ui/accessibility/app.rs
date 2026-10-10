@@ -10146,8 +10146,10 @@ mod tests {
         }
     }
 
-    /// GUI2-05：1080×720 与 150% 窄窗显式打开时三个面板走中央模式；返回
-    /// 对话恢复草稿与 Timeline 偏移；不派发 terminal / cancel。
+    /// GUI2-05：1440×1024 的三档字号并排打开；1080×720 三档与 1280×720 的
+    /// 150% 走中央呈现。返回后草稿、Timeline 偏移和连接文案保持，terminal
+    /// create / close 的本地 pending 仍为空。active_run_id 与 pending_approval
+    /// 只断言本地投影保持，未校验取消 / 审批命令派发。
     #[gpui::test]
     fn work_panel_center_mode_reaches_all_tabs_and_restores_conversation(
         cx: &mut gpui::TestAppContext,
@@ -10190,15 +10192,21 @@ mod tests {
             })
         });
 
-        for (width, height, scale) in [
-            (1080.0, 720.0, TextScale::Percent100),
-            (1280.0, 720.0, TextScale::Percent150),
+        for (width, height, scale, center) in [
+            (1440.0, 1024.0, TextScale::Percent100, false),
+            (1440.0, 1024.0, TextScale::Percent125, false),
+            (1440.0, 1024.0, TextScale::Percent150, false),
+            (1080.0, 720.0, TextScale::Percent100, true),
+            (1080.0, 720.0, TextScale::Percent125, true),
+            (1080.0, 720.0, TextScale::Percent150, true),
+            (1280.0, 720.0, TextScale::Percent150, true),
         ] {
             cx.simulate_resize(size(px(width), px(height)));
             cx.update(|window, cx| {
                 view.update(cx, |view, cx| {
                     view.inspector_open = false;
                     view.inspector_render_width = 0.0;
+                    view.inspector_motion.snap(0.0);
                     view.inspector_tab = InspectorTab::Changes;
                     view.text_scale = scale;
                     window.set_rem_size(px(scale.rem_pixels()));
@@ -10224,37 +10232,89 @@ mod tests {
                     tree.validate().unwrap();
                     assert!(tree.find("timeline").is_some());
                     assert!(tree.find("composer").is_some());
+                    assert_eq!(
+                        tree.find("connection-status").unwrap().value.as_deref(),
+                        Some(t("rail.connection_local_connected"))
+                    );
                     let request = AxRequest {
                         identifier: "inspector-expand".into(),
                         action: AxAction::Press,
                         value: None,
                     };
-                    assert!(tree.permits(&request), "expand at {width} {scale:?}");
+                    assert!(
+                        tree.permits(&request),
+                        "expand at {width} {scale:?} {center}"
+                    );
                     view.handle_accessibility_request(request, window, cx);
                 })
             });
             cx.refresh().unwrap();
             cx.run_until_parked();
+            if !center {
+                // 并排开合是 180ms InspectorMotion，测试执行器不推动 Instant。
+                // 插值由 inspector_motion_reverses_without_jump_and_snaps_when_narrow
+                // 覆盖；这里落到与该动画相同的终宽后再看布局。
+                cx.update(|_, cx| {
+                    view.update(cx, |view, cx| {
+                        view.inspector_motion.snap(metrics::INSPECTOR_WIDTH);
+                        cx.notify();
+                    });
+                });
+                cx.refresh().unwrap();
+                cx.run_until_parked();
+            }
+            let inspector = cx.debug_bounds("shell-inspector").unwrap_or_else(|| {
+                panic!("inspector missing at {width}x{height} {scale:?} center={center}")
+            });
+            let inspector_width: f32 = inspector.size.width.into();
+            if center {
+                assert!(
+                    inspector_width > 500.0,
+                    "center inspector {inspector_width} at {width}x{height} {scale:?}"
+                );
+            } else {
+                assert!(
+                    (inspector_width - metrics::INSPECTOR_WIDTH).abs() <= 1.0,
+                    "side inspector {inspector_width} at {width}x{height} {scale:?}"
+                );
+            }
             cx.update(|window, cx| {
                 view.update(cx, |view, cx| {
                     assert!(view.inspector_open);
+                    assert_eq!(
+                        shell_layout::resolve(
+                            window.viewport_size().width,
+                            true,
+                            scale == TextScale::Percent150,
+                        )
+                        .placement
+                        .is_center(),
+                        center,
+                        "{width}x{height} {scale:?}"
+                    );
                     let tree = view.accessibility_tree(window, cx);
                     tree.validate().unwrap();
-                    assert!(
+                    assert_eq!(
                         tree.find("timeline").is_none(),
-                        "center mode hides Timeline at {width} {scale:?}"
+                        center,
+                        "timeline visibility at {width} {scale:?}"
                     );
-                    assert!(
+                    assert_eq!(
                         tree.find("composer").is_none(),
-                        "center mode hides Composer at {width} {scale:?}"
+                        center,
+                        "composer visibility at {width} {scale:?}"
                     );
                     let panel = tree.find("inspector-panel").expect("inspector-panel");
                     assert_eq!(panel.value.as_deref(), Some(t("inspector.tab_changes")));
-                    assert!(tree.find("inspector-back").is_some());
+                    assert_eq!(tree.find("inspector-back").is_some(), center);
                     assert!(tree.find("inspector-collapse").is_some());
                     assert!(tree.find("inspector-tabs").is_none());
                     assert!(tree.find("inspector-expand").is_none());
                     assert!(tree.find("changes").is_some());
+                    assert_eq!(
+                        tree.find("connection-status").unwrap().value.as_deref(),
+                        Some(t("rail.connection_local_connected"))
+                    );
                     view.select_inspector_tab(InspectorTab::Terminal, cx);
                 })
             });
@@ -10265,7 +10325,7 @@ mod tests {
                     let tree = view.accessibility_tree(window, cx);
                     tree.validate().unwrap();
                     assert!(tree.find("terminal").is_some());
-                    assert!(tree.find("timeline").is_none());
+                    assert_eq!(tree.find("timeline").is_none(), center);
                     assert_eq!(
                         view.projection.terminal.session_id.as_deref(),
                         Some("term-keep")
@@ -10283,7 +10343,12 @@ mod tests {
                     tree.validate().unwrap();
                     assert!(tree.find("resources").is_some());
                     let request = AxRequest {
-                        identifier: "inspector-back".into(),
+                        identifier: if center {
+                            "inspector-back"
+                        } else {
+                            "inspector-collapse"
+                        }
+                        .into(),
                         action: AxAction::Press,
                         value: None,
                     };
@@ -10293,6 +10358,16 @@ mod tests {
             });
             cx.refresh().unwrap();
             cx.run_until_parked();
+            if !center {
+                cx.update(|_, cx| {
+                    view.update(cx, |view, cx| {
+                        view.inspector_motion.snap(0.0);
+                        cx.notify();
+                    });
+                });
+                cx.refresh().unwrap();
+                cx.run_until_parked();
+            }
             cx.update(|window, cx| {
                 let view = view.read(cx);
                 assert!(!view.inspector_open);
@@ -10301,12 +10376,23 @@ mod tests {
                 assert!(tree.find("timeline").is_some());
                 assert!(tree.find("composer").is_some());
                 assert!(tree.find("inspector-back").is_none());
+                assert!(tree.find("inspector-panel").is_none());
                 assert_eq!(view.text_input.read(cx).text(), "keep center draft");
                 assert_eq!(
                     view.timeline_list.logical_scroll_top().item_ix,
                     scroll_before
                 );
-                assert!(view.composer_focus_handle(cx).is_focused(window));
+                if center {
+                    assert!(view.composer_focus_handle(cx).is_focused(window));
+                }
+                assert_eq!(
+                    tree.find("connection-status").unwrap().value.as_deref(),
+                    Some(t("rail.connection_local_connected"))
+                );
+                assert!(matches!(
+                    view.projection.connection,
+                    ConnectionState::Connected { .. }
+                ));
                 assert_eq!(
                     view.projection.terminal.session_id.as_deref(),
                     Some("term-keep")
@@ -10314,6 +10400,7 @@ mod tests {
                 assert!(view.terminal_pending_create_workspace.is_none());
                 assert!(view.terminal_pending_close.is_none());
                 assert_eq!(view.projection.active_run_id.as_deref(), Some("r-1"));
+                assert!(view.projection.pending_approval.is_none());
             });
         }
     }
@@ -10607,8 +10694,8 @@ mod tests {
         });
     }
 
-    /// GUI2-05：面板选择器键盘切换；中央模式 pending approval 提示返回，
-    /// 不默认批准。
+    /// GUI2-05：面板选择器键盘切换；中央模式 pending approval 提示返回后，
+    /// 本地 pending_approval 投影保持。未校验审批命令派发。
     #[gpui::test]
     fn inspector_panel_selector_keyboard_and_approval_hint(cx: &mut gpui::TestAppContext) {
         use crate::projection::PendingApproval;

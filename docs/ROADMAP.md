@@ -102,12 +102,12 @@
 | ✅ 完成（模拟验收）；独立 review 初审 P2 修复后复审 PASS；真实 Host、真窗口、系统 IME 与像素待验 | [GUI2-02 · 对话阅读层级与 Composer 人工验收](plan/gui2-02-conversation-composer.md) | 消息阅读层级、代码 / 表格块内横滚与原文复制、消息菜单三种输入路径、模型 / 供应商管理入口、Settings 往返保持与三档字号 Composer 几何经 GPUI 主路径模拟通过。 |
 | ✅ 完成（模拟验收）；独立 review 初审 P2 / 复审 P3 修复后最终 PASS；真实 Host、真窗口、原生 AX 与像素待验 | [GUI2-03 · 任务与操作快捷查找人工验收](plan/gui2-03-quick-search.md) | 侧栏与 Cmd+K 打开、当前 Snapshot 任务 / 页面查找、方向键 / Enter / Esc、草稿隔离、无结果与断线 gate 经 GPUI / AX 路径模拟通过；断线范围文案补齐本地浏览器。 |
 | ✅ 完成（模拟验收）；独立 review 初审 3 项 P2 修复后复审 PASS；真实 Host、真窗口、原生 AX、系统按键像素与真实历史分页待验 | [GUI2-04 · 当前对话查找与回合定位人工验收](plan/gui2-04-conversation-navigation.md) | 当前已加载正文查找、命中循环 / 无结果、长对话回合目录滚动定位、流式转持久身份、阅读模式解锚与切任务清空经 GPUI / AX 路径模拟通过。 |
+| ✅ 完成（模拟验收）；独立 review 初审 P2 修复后复审 PASS；真实 Host、真窗口、原生 AX bridge、真实像素、PTY、浏览器与文件系统事实待验 | [GUI2-05 · 工作面板与窄窗可达性人工验收](plan/gui2-05-work-panels.md) | 宽窗并排与窄窗中央呈现、Changes / Terminal / Resources 往返保持、既有面板错误 / 空态与文件 / 浏览器路径经 GPUI / AX 路径模拟通过。 |
 
 ### 待验收
 
 | 状态 | 任务 | 简介 |
 | --- | --- | --- |
-| 等待人工验收 | [GUI2-05 · 工作面板与窄窗可达性人工验收](plan/gui2-05-work-panels.md) | 验收 Inspector 的并排 / 中央呈现及已接通工作面板。 |
 | 等待人工验收 | [GUI2-06 · 设置查找与行式信息组织人工验收](plan/gui2-06-settings-search.md) | 验收设置页面 / 行查找、定位、权限控件和供应商信息层级。 |
 | 等待人工验收 | [GUI2-07 · 受影响主路径与旧缺口收口验收](plan/gui2-07-main-path-acceptance.md) | 汇总 GUI2 各项验收证据，闭合跨壳层、对话和面板的剩余缺口。 |
 | 等待人工验收 | [GUI3-01 · 工具调用可扫读人工验收](plan/gui3-01-tool-summaries.md) | 验收工具 headline、目标、展开内容与真实执行状态。 |

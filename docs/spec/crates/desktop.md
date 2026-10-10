@@ -492,6 +492,8 @@ GUI2-03：`quick_find_navigation_layout_and_drafts` 覆盖侧栏 AX 入口与 `C
 
 GUI2-04：`conversation_find_identity_reading_and_turns` 覆盖 Header 与 `Cmd+F`、已加载用户 / 助手正文（思考不入结果）、命中计数与 Enter / Shift+Enter / 上下按钮循环、无结果禁用、历史加载中范围、长对话回合目录滚动后对聚焦末回合按 Enter 关闭并定位该行、流式转持久后仍只有一条助手正文且选中 / 锚点 / 滚动落在该行、阅读模式、手动滚动解锚、显式回底恢复跟随、回底后重新命中再经 `on_session_clicked` 切走清空导航并在切回时恢复 Composer 草稿。原生 AX、系统按键像素、真实 Host 与真实历史分页仍待验。
 
+GUI2-05：`work_panel_center_mode_reaches_all_tabs_and_restores_conversation` 覆盖 1440×1024 的 100%/125%/150% 并排，以及 1080×720 三档和 1280×720 的 150% 中央呈现；AX 打开后切换 Changes / Terminal / Resources，返回后草稿、Timeline 阅读位置和连接文案保持，terminal create/close 的本地 pending 仍为空。active_run_id 与 pending_approval 只断言本地投影保持，未校验取消 / 审批命令派发。`inspector_panel_selector_keyboard_and_approval_hint` 覆盖中央模式待审批提示返回后本地 pending_approval 投影保持，未校验审批命令派发。Changes 文件状态、双列行号与长行横滚模型沿用 `hunk_line_numbers_advance_from_header_and_fail_closed` 与 `empty_files_copy_and_horizontal_browse_follow_host_and_ends`。真窗口、原生 AX、真实像素、真实 Host、PTY、浏览器与文件系统外部事实，以及鼠标横滚和切文件回到左端仍待验；完整终端输入见 GUI4。
+
 UX-09：新增 `text_scale_feedback_expires_without_clearing_errors`，使用可控 GPUI 时钟覆盖连续字号反馈 / 旧计时取消 / 新错误保留（改落 StatusBar 右栏，不再回收 Composer 行高），并检查 MCP 空态配置指引；既有 i18n 与错误恢复回归补充双语词条及终端实际布局 AX 断言。
 
 UX-06：复用并更新角色 / Provider AX 布局与三窗回归，覆盖连接优先排序、角色位置与未生效说明、实际滚动框、三窗来源 / 已用 / 剩余、剩余未知与过期；新增一个分钟精度倒计时主路径测试（含 6995 分钟 → 4d 20h 35m）。真实额度与倒计时验收见 [路线图](../../ROADMAP.md)。
