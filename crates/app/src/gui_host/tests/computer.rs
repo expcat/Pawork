@@ -1132,3 +1132,108 @@ async fn read_image(adapter: &GuiHostAdapter, session: &SessionId, sequence: u64
     crate::services::extension::base64_decode(data["data"].as_str().expect("base64"))
         .expect("decode")
 }
+
+/// 模拟目标只进真实 TargetRegistry 的 requested 集：不绑定窗口、不启动进程。
+/// 随后的 list / approve / revoke 走正式 GUI 命令，撤销后条目消失。
+#[tokio::test]
+async fn fixture_simulated_target_is_listed_approved_and_revoked() {
+    let (adapter, _dir, session) = adapter_with_session().await;
+    let error = adapter
+        .fixture_note_simulated_target("dev.pawork.fixture.simulated")
+        .await
+        .expect_err("no active run");
+    assert!(
+        error.contains("expected exactly one active gui run"),
+        "{error}"
+    );
+
+    let run = RunId::from("run-cu18-sim");
+    adapter
+        .core
+        .read()
+        .await
+        .open_target_scope(&pawork_computer_use::target::Scope::new(
+            "ws-cu17",
+            "run-cu18-sim",
+        ));
+    adapter.runs.register(
+        ActiveGuiRun {
+            run_id: run.clone(),
+            session_id: session.clone(),
+            workspace_id: WorkspaceId::from("ws-cu17"),
+            workspace_roots: Vec::new(),
+            started_at_ms: 1,
+        },
+        CancellationToken::new(),
+    );
+
+    let snapshot = adapter
+        .fixture_note_simulated_target("dev.pawork.fixture.simulated")
+        .await
+        .expect("register simulated target");
+    assert_eq!(snapshot["targets"].as_array().expect("targets").len(), 1);
+    assert_eq!(
+        snapshot["targets"][0]["bundle_id"],
+        "dev.pawork.fixture.simulated"
+    );
+    assert_eq!(snapshot["targets"][0]["grant"], json!(null));
+    assert_eq!(snapshot["targets"][0]["bound_window"], json!(null));
+    let again = adapter
+        .fixture_note_simulated_target("dev.pawork.fixture.simulated")
+        .await
+        .expect("idempotent register");
+    assert_eq!(again["targets"].as_array().expect("targets").len(), 1);
+
+    let response = adapter
+        .query(&query_envelope(AppQuery::ComputerTargetList {
+            session_id: session.clone(),
+        }))
+        .await
+        .expect("list");
+    let AppResponse::Data(data) = response else {
+        panic!("target list returns data");
+    };
+    let targets = data["targets"].as_array().expect("targets");
+    assert_eq!(targets.len(), 1);
+    assert!(targets[0].get("grant").is_none(), "{targets:?}");
+    assert!(targets[0].get("bound_window").is_none(), "{targets:?}");
+    assert_eq!(
+        targets[0]["target"]["app"]["bundle_id"],
+        "dev.pawork.fixture.simulated"
+    );
+
+    adapter
+        .command(&command_envelope(AppCommand::ComputerTargetApprove(
+            pawork_protocol::ComputerTargetApproveParams {
+                session_id: session.clone(),
+                run_id: run.clone(),
+                target: application_target("dev.pawork.fixture.simulated"),
+                kind: ComputerGrantKind::Once,
+            },
+        )))
+        .await
+        .expect("approve");
+    let granted = adapter.fixture_target_snapshot().await;
+    assert_eq!(granted["targets"][0]["grant"], "once");
+
+    adapter
+        .command(&command_envelope(AppCommand::ComputerTargetRevoke(
+            pawork_protocol::ComputerTargetRevokeParams {
+                session_id: session.clone(),
+                run_id: run,
+                target: application_target("dev.pawork.fixture.simulated"),
+            },
+        )))
+        .await
+        .expect("revoke");
+    let response = adapter
+        .query(&query_envelope(AppQuery::ComputerTargetList {
+            session_id: session,
+        }))
+        .await
+        .expect("list after revoke");
+    let AppResponse::Data(data) = response else {
+        panic!("target list returns data");
+    };
+    assert_eq!(data["targets"], json!([]), "{data}");
+}

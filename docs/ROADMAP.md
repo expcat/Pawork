@@ -38,7 +38,7 @@
 | 实现与自动门禁完成；真实桥 + fake extension 模拟人工验收通过；独立 review / 复审 PASS；真实浏览器 / 系统安装 / 真实像素与竞态待环境 | [CU-15 · 外部 Chrome / Edge 的真实后台控制](plan/cu-15-external-browser.md) | P4 | MV3 扩展 + native messaging 桥（pawork_browser_bridge）+ Host external_browser 工具 + Desktop ext_ 分流；可模拟链路已验收，真实安装与浏览器验收保留待验。 |
 | ✅ 完成（模拟验收） | [CU-16 · 应用与网站范围的 Host 审批](plan/cu-16-target-approvals.md) | P1 | 当前 GUI 审批到共享台账与正式工具链的 12 项定向测试通过，源码无改，独立 review PASS；原生网站缺来源仍拒绝，系统权限独立待验。 |
 | ✅ 完成（Host 侧模拟验收）；独立 review PASS | [CU-17 · GUI 观测查询与协议版本接入](plan/cu-17-gui-observation-protocol.md) | P5 | 为 GUI 提供有界目标状态与截图证据查询，保留 Host 作为唯一入口；真窗消费侧验收归 CU-18/19。 |
-| 已实现；自动门禁通过，真窗验收覆盖入口/空态/刷新/断线重连；empty 态与授权回执端到端待 CU-20 目标登记后人工验收 | [CU-18 · GUI 目标选择与权限交互](plan/cu-18-gui-target-approvals.md) | P5 | 让用户选择后台操作目标并管理应用/网站授权。 |
+| ✅ 完成（真窗模拟验收）；独立 review PASS；真实系统授权与原生目标待环境 | [CU-18 · GUI 目标选择与权限交互](plan/cu-18-gui-target-approvals.md) | P5 | 让用户选择后台操作目标并管理应用/网站授权。 |
 | 已实现；自动门禁通过；真窗验收覆盖证据区空态（no_workspace / no_run）与 observation_list 真实往返；观测行 / 停止状态机待活动 run（环境阻塞，见任务记录） | [CU-19 · GUI 截图证据与停止状态](plan/cu-19-gui-evidence-stop.md) | P5 | 让用户查看实际操作前后证据，并可靠停止后台任务。 |
 | 自动回归通过；CU-06/07/08 探针动作验收与 CU-14 滚动复验完成、回放核对零重执行；GUI 模型链路被用户配置 fail-closed 拒绝（行为正确），观测行/停止状态机、CU-15 扩展、并发无干扰与真实接管让出待人工验收 | [CU-20 · macOS 后台能力端到端验收与文档收口](plan/cu-20-native-acceptance.md) | P6 | 闭合首阶段本机后台核心能力，证明用户可持续工作且操作证据完整。 |
 

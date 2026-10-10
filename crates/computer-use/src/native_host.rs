@@ -491,6 +491,14 @@ pub trait NativeControl: NativePerform {
     fn revoke(&self, scope: &Scope, target: &TargetIdentity);
     fn grant_kind(&self, scope: &Scope, target: &TargetIdentity) -> Option<GrantKind>;
     fn target_states(&self) -> Vec<TargetState>;
+    /// Record an application the run wants approved. Does not resolve a
+    /// bundle, launch a process, bind a window, or call the probe.
+    /// Website targets stay fail-closed inside the registry.
+    fn note_requested_application(
+        &self,
+        scope: &Scope,
+        target: &TargetIdentity,
+    ) -> Result<(), TargetError>;
     fn active_scopes(&self) -> Vec<Scope>;
     /// CU-10 #5：同步等待 GUI 目标审批（同锁谓词 + Condvar 唤醒）。
     /// 语义见 NativeHost::wait_for_requested_grant。
@@ -585,6 +593,18 @@ impl<S: NativeSurface> NativeHost<S> {
 
     pub fn target_states(&self) -> Vec<TargetState> {
         self.lock().target_states()
+    }
+
+    /// Record an application target without resolving or launching it.
+    /// Production tool dispatch still resolves installed apps through
+    /// [Self::request_target]. This entry exists so a fixture can place a
+    /// simulated identity into the same registry the GUI later lists.
+    pub fn note_requested_application(
+        &self,
+        scope: &Scope,
+        target: &TargetIdentity,
+    ) -> Result<(), TargetError> {
+        self.lock().request_target(scope, target)
     }
 
     pub fn active_scopes(&self) -> Vec<Scope> {
@@ -1510,6 +1530,14 @@ impl<S: NativeSurface> NativeControl for NativeHost<S> {
 
     fn target_states(&self) -> Vec<TargetState> {
         NativeHost::target_states(self)
+    }
+
+    fn note_requested_application(
+        &self,
+        scope: &Scope,
+        target: &TargetIdentity,
+    ) -> Result<(), TargetError> {
+        NativeHost::note_requested_application(self, scope, target)
     }
 
     fn active_scopes(&self) -> Vec<Scope> {

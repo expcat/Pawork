@@ -992,6 +992,57 @@ impl GuiHostAdapter {
     }
 }
 
+#[cfg(any(test, feature = "ui-fixture"))]
+impl GuiHostAdapter {
+    /// 把模拟应用登记进当前唯一活动 GUI run 的真实 TargetRegistry。
+    /// 不解析、不启动、不探测本机应用。0 个或多于 1 个活动 run 时拒绝。
+    pub async fn fixture_note_simulated_target(&self, bundle_id: &str) -> Result<Value, String> {
+        let runs = self.runs.active();
+        if runs.len() != 1 {
+            return Err(format!(
+                "expected exactly one active gui run, found {}",
+                runs.len()
+            ));
+        }
+        let run = &runs[0];
+        self.core.read().await.fixture_note_requested_application(
+            run.workspace_id.as_str(),
+            run.run_id.as_str(),
+            bundle_id,
+        )?;
+        Ok(self.fixture_target_snapshot().await)
+    }
+
+    /// 活动 GUI run 与 TargetRegistry 的只读快照。不触发原生探测。
+    pub async fn fixture_target_snapshot(&self) -> Value {
+        use pawork_computer_use::approval::{GrantKind, TargetIdentity};
+        let states = self.core.read().await.target_states();
+        let runs = self.runs.active();
+        json!({
+            "active_runs": runs.iter().map(|run| json!({
+                "run_id": run.run_id.as_str(),
+                "session_id": run.session_id.as_str(),
+                "workspace_id": run.workspace_id.as_str(),
+            })).collect::<Vec<_>>(),
+            "targets": states.iter().map(|state| json!({
+                "bundle_id": state.target.app().bundle_id,
+                "kind": match &state.target {
+                    TargetIdentity::Application { .. } => "application",
+                    TargetIdentity::Website { .. } => "website",
+                },
+                "workspace_id": state.scope.workspace_id,
+                "run_id": state.scope.run_id,
+                "grant": state.grant.map(|kind| match kind {
+                    GrantKind::Once => "once",
+                    GrantKind::ForRun => "for_run",
+                }),
+                "bound_window": state.window.as_ref().map(|handle| handle.as_str().to_string()),
+                "dispatch_paused": state.dispatch_paused,
+            })).collect::<Vec<_>>(),
+        })
+    }
+}
+
 // Timeline 条目映射已下沉 pawork-protocol::projection（R3 波 C）；保留原名
 // 供 app 内 timeline() 与既有 re-export 消费，wire 形状不变。
 pub use pawork_protocol::projection::project_event as project_timeline_item;

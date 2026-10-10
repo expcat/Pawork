@@ -5,6 +5,12 @@
 //! - serve：以真实 GuiServer + fixture 脚本 provider 起 host，写 barrier；
 //! - self-check：内置 client 验证 snapshot / RunStart / Resume Replay；
 //! - snapshot-dump：进程内 snapshot() 归一化后写 JSON（Phase C golden 基线）。
+//!
+//! serve 额外消费 barrier（只在本 example，不进生产二进制）：
+//! register_simulated_target.request 为 JSON {"bundle_id":"..."} 或空文件，
+//! 把模拟应用登记进当前唯一活动 GUI run 的真实 TargetRegistry，不解析、
+//! 不启动、不探测本机进程，成功写 register_simulated_target.done。
+//! dump_targets.request 写 dump_targets.done，内容是活动 run 与登记快照。
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -16,11 +22,10 @@ use async_trait::async_trait;
 use pawork_app::devfixture::{self, SeedSpec};
 use pawork_app::{AppCore, GuiHostAdapter};
 use pawork_domain::{
-    CancellationToken, CanonicalModelRequest, CommandId, ContentPart, MessageRole, ModelDefinition,
-    ImageSource, ModelCapabilities, ModelId, ModelProvider, ModelResponseSummary, ProviderError,
-    ProviderErrorKind,
-    ProviderEventSink, ResolvedCredential, SessionId, StopReason, TextContent, Timestamp,
-    TokenUsage, WorkspaceId,
+    CancellationToken, CanonicalModelRequest, CommandId, ContentPart, ImageSource, MessageRole,
+    ModelCapabilities, ModelDefinition, ModelId, ModelProvider, ModelResponseSummary,
+    ProviderError, ProviderErrorKind, ProviderEventSink, ResolvedCredential, SessionId, StopReason,
+    TextContent, Timestamp, TokenUsage, WorkspaceId,
 };
 use pawork_gui_server::{GuiHost, GuiServer, GuiServerConfig};
 use pawork_protocol::app::registry::gui_supported_capabilities;
@@ -503,6 +508,7 @@ async fn cmd_serve(args: &[String]) -> Result<(), String> {
     }
     let core = Arc::new(tokio::sync::RwLock::new(core));
     let adapter = GuiHostAdapter::from_locked(Arc::clone(&core), approvals);
+    let target_adapter = adapter.clone();
     let pty = adapter.pty();
 
     let data_dir = parsed.root.join("data");
@@ -550,9 +556,22 @@ async fn cmd_serve(args: &[String]) -> Result<(), String> {
         "serve_stop.request",
         "drop_socket.request",
         "drop_socket.done",
+        "register_simulated_target.request",
+        "register_simulated_target.done",
+        "register_simulated_target.failed",
+        "dump_targets.request",
+        "dump_targets.done",
+        "dump_targets.failed",
     ] {
         let _ = std::fs::remove_file(barriers.join(name));
     }
+    let target_watch = {
+        let barriers = barriers.clone();
+        let log_path = log_path.clone();
+        tokio::spawn(
+            async move { watch_simulated_targets(target_adapter, barriers, log_path).await },
+        )
+    };
     write_barrier(
         &barriers,
         "host_ready",
@@ -623,6 +642,8 @@ async fn cmd_serve(args: &[String]) -> Result<(), String> {
         }
     }
     drop(connections);
+    target_watch.abort();
+    let _ = target_watch.await;
     if let Err(error) = pty.shutdown().await {
         log(&log_path, format!("pty shutdown failed: {error}"))?;
     }
@@ -652,6 +673,82 @@ async fn watch_stop_request(barriers: &Path) {
     loop {
         if request.is_file() {
             return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+const SIMULATED_BUNDLE_ID: &str = "dev.pawork.fixture.simulated";
+
+fn simulated_bundle_from_request(text: &str) -> Result<String, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Ok(SIMULATED_BUNDLE_ID.to_string());
+    }
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        let bundle = value
+            .get("bundle_id")
+            .and_then(Value::as_str)
+            .unwrap_or(SIMULATED_BUNDLE_ID)
+            .trim();
+        if bundle.is_empty() {
+            return Err("bundle_id 为空".into());
+        }
+        return Ok(bundle.to_string());
+    }
+    if trimmed
+        .chars()
+        .any(|ch| ch.is_control() || ch.is_whitespace())
+    {
+        return Err("bundle_id 含空白".into());
+    }
+    Ok(trimmed.to_string())
+}
+
+async fn watch_simulated_targets(adapter: GuiHostAdapter, barriers: PathBuf, log_path: PathBuf) {
+    let register = barriers.join("register_simulated_target.request");
+    let dump = barriers.join("dump_targets.request");
+    loop {
+        if register.is_file() {
+            let body = std::fs::read_to_string(&register).unwrap_or_default();
+            let _ = std::fs::remove_file(&register);
+            match simulated_bundle_from_request(&body) {
+                Ok(bundle) => match adapter.fixture_note_simulated_target(&bundle).await {
+                    Ok(snapshot) => {
+                        let _ = log(&log_path, format!("registered simulated target {bundle}"));
+                        let _ =
+                            write_barrier(&barriers, "register_simulated_target.done", snapshot);
+                    }
+                    Err(error) => {
+                        let _ = log(
+                            &log_path,
+                            format!("register simulated target failed: {error}"),
+                        );
+                        let _ = write_barrier(
+                            &barriers,
+                            "register_simulated_target.failed",
+                            json!({"error": error, "bundle_id": bundle}),
+                        );
+                    }
+                },
+                Err(error) => {
+                    let _ = log(
+                        &log_path,
+                        format!("register simulated target rejected: {error}"),
+                    );
+                    let _ = write_barrier(
+                        &barriers,
+                        "register_simulated_target.failed",
+                        json!({"error": error}),
+                    );
+                }
+            }
+        }
+        if dump.is_file() {
+            let _ = std::fs::remove_file(&dump);
+            let snapshot = adapter.fixture_target_snapshot().await;
+            let _ = log(&log_path, "dumped target registry snapshot");
+            let _ = write_barrier(&barriers, "dump_targets.done", snapshot);
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }

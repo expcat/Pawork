@@ -748,6 +748,35 @@ impl AppCore {
         self.native.close_scope(scope);
     }
 
+    /// ui-fixture / tests：把模拟应用登记进真实 TargetRegistry。
+    /// 不解析 bundle、不启动进程、不绑定窗口、不调用 probe。
+    /// scope 必须已由 run 起始打开；网站目标由 registry fail-closed。
+    #[cfg(any(test, feature = "ui-fixture"))]
+    pub fn fixture_note_requested_application(
+        &self,
+        workspace_id: &str,
+        run_id: &str,
+        bundle_id: &str,
+    ) -> Result<(), String> {
+        let bundle_id = bundle_id.trim();
+        if bundle_id.is_empty()
+            || bundle_id.len() > 200
+            || bundle_id
+                .chars()
+                .any(|ch| ch.is_control() || ch.is_whitespace())
+        {
+            return Err("simulated bundle id is empty or contains whitespace".into());
+        }
+        let scope = Scope::new(workspace_id, run_id);
+        let target = TargetIdentity::application(pawork_computer_use::target::AppIdentity {
+            bundle_id: bundle_id.to_string(),
+            family: pawork_computer_use::target::AppFamily::Appkit,
+        });
+        self.native
+            .note_requested_application(&scope, &target)
+            .map_err(|error| error.to_string())
+    }
+
     /// 装配后补全 host 状态（config + 凭证后端）。
     pub(crate) fn with_state(
         mut self,
