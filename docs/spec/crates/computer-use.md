@@ -137,6 +137,8 @@ CU-10 native R3 补修交付（2026-10-09，待复审）：删除首组豁免，
 
 历史 R6 只读复核确认方案可供用户裁决，当时源码与 R4 逐字节不变。等批方案去掉未证必要的普通通知 generation，采用原锁的真实谓词循环与 Condvar；本轮已落地该接口，原授权代次与单次凭证不放宽。修后验证另行记录，不沿用旧版通过结果。
 
+CU-24 设计与拒绝边界（2026-10-10）：锁屏使用仍无生产路径，`Environment` 契约只表达 `isolated_desktop` 与 `native_background`；新增 `locked_use_environment_is_rejected_by_the_contract` 钉住两值序列化并证明 `locked_use` 观测 JSON 反序列化失败。设计要求宿主活跃 turn 签发单次短期解锁尝试，普通 Once / ForRun 批准不解锁；停用先撤销尝试并恢复锁定，卸载失败保持拒绝态。特权组件、系统安装与授权、真实锁屏序列均未实施 / 未验收，不以普通 AX 后台能力替代。
+
 ## 8. 相关文档
 
 [部署说明](../../../crates/computer-use/README.md) · [待验收项](../../ROADMAP.md) · [设计](../../design.md#computer-use-首版) · [参照调研](../../references.md#computer-use-实现调研2026-09-17) · [架构](../../architecture.md) · [安全](../security.md) · [CU-02 任务文档](../../plan/cu-02-target-contracts.md) · [CU-03 任务文档](../../plan/cu-03-app-window-discovery.md) · [CU-04 任务文档](../../plan/cu-04-window-observation.md) · [CU-05 任务文档](../../plan/cu-05-accessibility-tree.md) · [CU-09 任务文档](../../plan/cu-09-ownership-cancellation.md) · [CU-06 任务文档](../../plan/cu-06-semantic-actions.md) · [CU-07 任务文档](../../plan/cu-07-background-text-keys.md) · [CU-08 任务文档](../../plan/cu-08-background-pointer.md) · [CU-17 任务文档](../../plan/cu-17-gui-observation-protocol.md)

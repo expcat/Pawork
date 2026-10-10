@@ -3119,6 +3119,37 @@ mod tests {
     }
 
     #[test]
+    fn locked_use_environment_is_rejected_by_the_contract() {
+        // CU-24 boundary pin: the wire contract cannot express a locked-screen
+        // environment. Contract simulation only, not macOS authorization or
+        // real locked-screen validation (docs/plan/cu-24-macos-locked-use.md).
+        assert_eq!(
+            serde_json::to_value(Environment::IsolatedDesktop).unwrap(),
+            serde_json::json!("isolated_desktop")
+        );
+        assert_eq!(
+            serde_json::to_value(Environment::NativeBackground).unwrap(),
+            serde_json::json!("native_background")
+        );
+
+        let observation = serde_json::json!({
+            "observation_id": "o-1-1",
+            "environment": "native_background",
+            "window": "w-1-1",
+            "image_width": 1280,
+            "image_height": 720,
+            "window_width": 2560.0,
+            "window_height": 1440.0,
+        });
+        let decoded: TargetObservation = serde_json::from_value(observation.clone()).unwrap();
+        assert_eq!(decoded.environment, Environment::NativeBackground);
+
+        let mut locked = observation;
+        locked["environment"] = serde_json::json!("locked_use");
+        assert!(serde_json::from_value::<TargetObservation>(locked).is_err());
+    }
+
+    #[test]
     fn handles_from_a_previous_host_instance_are_unknown() {
         let (mut registry, window) = bound(AppFamily::Appkit);
         // Handles embed a process-level startup namespace (pid + nanos), so a
