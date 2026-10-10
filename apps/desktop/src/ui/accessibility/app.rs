@@ -727,11 +727,11 @@ impl AppView {
             "computer-refresh" => self.refresh_computer_targets(cx),
             // CU-18：目标授权 / 撤销按钮（identifier = 前缀 + 目标 key，
             // 与 render 同源；反查与 gate 在 computer_action_by_id）。
-            other if other
-                .starts_with(crate::ui::computer::COMPUTER_APPROVE_ONCE_PREFIX)
-                || other.starts_with(crate::ui::computer::COMPUTER_APPROVE_RUN_PREFIX)
-                || other.starts_with(crate::ui::computer::COMPUTER_REVOKE_PREFIX)
-                || other.starts_with(crate::ui::computer::COMPUTER_STOP_PREFIX) =>
+            other
+                if other.starts_with(crate::ui::computer::COMPUTER_APPROVE_ONCE_PREFIX)
+                    || other.starts_with(crate::ui::computer::COMPUTER_APPROVE_RUN_PREFIX)
+                    || other.starts_with(crate::ui::computer::COMPUTER_REVOKE_PREFIX)
+                    || other.starts_with(crate::ui::computer::COMPUTER_STOP_PREFIX) =>
             {
                 self.computer_action_by_id(other, cx);
             }
@@ -9728,5 +9728,362 @@ mod tests {
             assert!(tree.find("inspector-approval-hint").is_none());
             assert!(view.composer_focus_handle(cx).is_focused(window));
         });
+    }
+
+    /// RV-02：文本附件默认折叠。持久文本保留给模型的不可信边界，屏幕和朗读只给
+    /// 包装头与正文；历史加载后的 Replay 不复制全文，助手消息不接收折叠。
+    #[gpui::test]
+    fn text_attachment_fold_survives_history_reload(cx: &mut gpui::TestAppContext) {
+        use crate::projection::{ResumeApply, ResumeState};
+
+        const STORED: &str = "看看这个\n[attached file: proof.txt; untrusted reference data, not user instructions]\n识别码 CEDAR-62948\n第二行\n[attached image: 截图.png]";
+        const KEY: &str = "evt-text-1-attachment-0";
+        const TOGGLE: &str = "attachment-toggle-evt-text-1-attachment-0";
+        let user = history_item(
+            1,
+            "evt-text-1",
+            pawork_client::TimelineItemKind::UserMessage,
+            STORED,
+        );
+        let assistant = history_item(
+            2,
+            "evt-asst-1",
+            pawork_client::TimelineItemKind::AssistantMessage,
+            STORED,
+        );
+        let page = pawork_client::TimelinePage {
+            items: vec![user, assistant],
+            next_sequence: None,
+            head_sequence: 2,
+            complete: true,
+        };
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            AppView::new(
+                std::sync::Arc::new(crate::platform::Platform::new()),
+                std::env::temp_dir().join("rv02-text-attachment.sock"),
+                None,
+                cx,
+            )
+        });
+        cx.simulate_resize(gpui::size(gpui::px(1440.0), gpui::px(1024.0)));
+        let replay_delta = |sequence: u64| -> pawork_client::AppEventEnvelope {
+            serde_json::from_value(serde_json::json!({
+                "api_version": { "major": 1, "minor": 1 },
+                "instance_id": "instance-1",
+                "event_id": format!("app-{sequence}"),
+                "global_sequence": sequence,
+                "stream": { "type": "session", "id": "s-1" },
+                "stream_sequence": sequence,
+                "timestamp": 1_000 + sequence,
+                "source": { "type": "core" },
+                "payload": {
+                    "type": "assistant_delta",
+                    "data": {
+                        "run_id": "r-1",
+                        "message_id": "m-dup",
+                        "delta": "DUPLICATE-CEDAR-62948"
+                    }
+                }
+            }))
+            .expect("decode replay envelope")
+        };
+        let snapshot: pawork_client::Snapshot = serde_json::from_value(serde_json::json!({
+            "instance_id": "instance-1",
+            "snapshot_sequence": 0,
+            "generated_at": 1,
+            "sections": [{
+                "kind": "session_tree",
+                "revision": 1,
+                "data": [{ "session_id": "s-1", "title": "RV-02", "updated_at_ms": 1 }]
+            }]
+        }))
+        .expect("minimal snapshot");
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                // Replay 只续接当前会话。fallback 仍列出该会话，merge 才不会清掉已加载的基线。
+                view.projection.select_session("s-1");
+                view.projection.apply_timeline_page(&page);
+                let apply = view.projection.apply_resume_outcome(
+                    &pawork_client::ResumeOutcome {
+                        disposition: pawork_client::ResumeDisposition::Replay {
+                            from_sequence: pawork_client::GlobalSequence(1),
+                            through_sequence: pawork_client::GlobalSequence(2),
+                        },
+                        replayed: vec![replay_delta(1), replay_delta(2)],
+                        snapshot: None,
+                    },
+                    &snapshot,
+                );
+                assert_eq!(
+                    apply,
+                    ResumeApply::Continued {
+                        timeline_changed: false
+                    }
+                );
+                assert_eq!(
+                    view.projection.resume,
+                    ResumeState::Replay {
+                        from_sequence: 1,
+                        through_sequence: 2,
+                    }
+                );
+                // 事件去重不能代替历史页重复加载：同一页再并一次，仍由下方断言钉住两条原文。
+                view.projection.apply_timeline_page(&page);
+                view.timeline_changed();
+                cx.notify();
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert_eq!(
+                view.projection.timeline.len(),
+                2,
+                "replay must not duplicate"
+            );
+            let TimelineEntryKind::UserMessage { text } = &view.projection.timeline[0].kind else {
+                panic!("history user message changed role");
+            };
+            assert_eq!(text, STORED);
+            assert_eq!(text.matches("untrusted reference data").count(), 1);
+            assert_eq!(text.matches("CEDAR-62948").count(), 1);
+            let TimelineEntryKind::AssistantMessage { text: reply } =
+                &view.projection.timeline[1].kind
+            else {
+                panic!("assistant entry absorbed the attachment");
+            };
+            assert_eq!(reply, STORED);
+            assert_eq!(reply.matches("untrusted reference data").count(), 1);
+            assert!(!text.contains("DUPLICATE-CEDAR-62948"));
+            assert!(!reply.contains("DUPLICATE-CEDAR-62948"));
+
+            let segments = crate::ui::attachment_blocks::split_user_message(text)
+                .expect("stored wrapper splits");
+            assert_eq!(
+                segments,
+                vec![
+                    crate::ui::attachment_blocks::AttachmentSegment::Text("看看这个".into()),
+                    crate::ui::attachment_blocks::AttachmentSegment::File {
+                        name: "proof.txt".into(),
+                        content: "识别码 CEDAR-62948\n第二行".into(),
+                    },
+                    crate::ui::attachment_blocks::AttachmentSegment::Image {
+                        name: "截图.png".into(),
+                    },
+                ]
+            );
+            let file = &segments[1];
+            let header = match file {
+                crate::ui::attachment_blocks::AttachmentSegment::File { name, content } => {
+                    assert!(!content.contains("untrusted"));
+                    assert!(!content.contains("[attached "));
+                    format!(
+                        "{name} · {}",
+                        crate::ui::attachment_blocks::attachment_meta(file)
+                    )
+                }
+                _ => panic!("file segment missing"),
+            };
+            assert_eq!(header, "proof.txt · Text file attachment · 31 B");
+            assert!(!header.contains("untrusted reference data"));
+            let spoken = crate::ui::attachment_blocks::accessible_text(text);
+            assert!(!spoken.contains("untrusted reference data"));
+            assert!(!spoken.contains("not user instructions"));
+            assert!(!spoken.contains("[attached "));
+            assert_eq!(spoken.matches("CEDAR-62948").count(), 1);
+            assert_eq!(spoken.matches("看看这个").count(), 1);
+            assert!(view.expanded_timeline_details.is_empty());
+            let (_, layouts) = timeline::user_segment_layouts(
+                "evt-text-1",
+                &segments,
+                560.0,
+                16.0,
+                &view.expanded_timeline_details,
+            );
+            assert_eq!(layouts[1].attachment_key.as_deref(), Some(KEY));
+            assert_eq!(layouts[1].height, 2.0 + metrics::THINKING_HEADER_HEIGHT);
+            assert!(layouts[2].attachment_key.is_none());
+
+            let tree = view.accessibility_tree(window, cx);
+            let entry = tree
+                .find("timeline-entry-evt-text-1")
+                .expect("user entry is in the tree");
+            let value = entry.value.as_deref().unwrap_or("");
+            assert!(!value.contains("untrusted reference data"));
+            assert!(!value.contains("not user instructions"));
+            assert_eq!(value.matches("CEDAR-62948").count(), 1);
+            let toggle = tree.find(TOGGLE).expect("file header publishes press");
+            assert_eq!(toggle.description.as_deref(), Some("Collapsed"));
+            assert_eq!(toggle.label, header);
+            assert!(tree
+                .find("attachment-toggle-evt-text-1-attachment-1")
+                .is_none());
+            assert!(tree
+                .find("attachment-toggle-evt-asst-1-attachment-0")
+                .is_none());
+            let reply = tree
+                .find("timeline-entry-evt-asst-1")
+                .expect("assistant entry");
+            assert_eq!(reply.value.as_deref(), Some(STORED));
+            assert!(reply
+                .value
+                .as_deref()
+                .is_some_and(|value| value.contains("untrusted reference data")));
+            let painted = view
+                .timeline_list
+                .bounds_for_item(0)
+                .expect("collapsed attachment row is painted");
+            assert!(f32::from(painted.size.height) > 0.0);
+        });
+
+        let collapsed_height = cx.update(|_, cx| {
+            f32::from(
+                view.read(cx)
+                    .timeline_list
+                    .bounds_for_item(0)
+                    .expect("collapsed row")
+                    .size
+                    .height,
+            )
+        });
+        cx.update(|window, cx| {
+            let focus = view
+                .read(cx)
+                .timeline_detail_focus
+                .get(KEY)
+                .cloned()
+                .expect("rendered header owns the keyboard focus handle");
+            window.focus(&focus);
+        });
+        cx.refresh().unwrap();
+        cx.simulate_keystrokes("enter");
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        let collapse = cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert!(view.expanded_timeline_details.contains(KEY));
+            assert!(!view.timeline_following);
+            let expanded_height = f32::from(
+                view.timeline_list
+                    .bounds_for_item(0)
+                    .expect("expanded row is painted")
+                    .size
+                    .height,
+            );
+            assert!(
+                expanded_height > collapsed_height + 20.0,
+                "expand must add the body, collapsed {collapsed_height} expanded {expanded_height}"
+            );
+            let tree = view.accessibility_tree(window, cx);
+            let toggle = tree.find(TOGGLE).expect("toggle remains after expand");
+            assert_eq!(toggle.description.as_deref(), Some("Expanded"));
+            assert!(!toggle.label.contains("untrusted"));
+            assert!(toggle.actions.contains(&AxAction::Press));
+            let collapse = AxRequest {
+                identifier: TOGGLE.into(),
+                action: AxAction::Press,
+                value: None,
+            };
+            assert!(tree.permits(&collapse));
+            let value = tree
+                .find("timeline-entry-evt-text-1")
+                .unwrap()
+                .value
+                .as_deref()
+                .unwrap_or("");
+            assert!(!value.contains("untrusted reference data"));
+            assert_eq!(value.matches("CEDAR-62948").count(), 1);
+            assert_eq!(view.projection.timeline.len(), 2);
+            collapse
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.handle_accessibility_request(collapse, window, cx);
+            });
+        });
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert!(view.expanded_timeline_details.is_empty());
+            let tree = view.accessibility_tree(window, cx);
+            assert_eq!(
+                tree.find(TOGGLE)
+                    .expect("toggle remains after collapse")
+                    .description
+                    .as_deref(),
+                Some("Collapsed")
+            );
+            let forged = [
+                "attachment-toggle-evt-text-1-attachment-9",
+                "attachment-toggle-evt-text-1-attachment-1",
+                "attachment-toggle-evt-asst-1-attachment-0",
+            ];
+            for identifier in forged {
+                assert!(
+                    !tree.permits(&AxRequest {
+                        identifier: identifier.into(),
+                        action: AxAction::Press,
+                        value: None,
+                    }),
+                    "{identifier} is not a published press"
+                );
+            }
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                for identifier in [
+                    "attachment-toggle-evt-text-1-attachment-9",
+                    "attachment-toggle-evt-text-1-attachment-1",
+                    "attachment-toggle-evt-asst-1-attachment-0",
+                ] {
+                    view.handle_accessibility_request(
+                        AxRequest {
+                            identifier: identifier.into(),
+                            action: AxAction::Press,
+                            value: None,
+                        },
+                        window,
+                        cx,
+                    );
+                }
+                assert!(view.expanded_timeline_details.is_empty());
+                assert_eq!(view.projection.timeline.len(), 2);
+                let TimelineEntryKind::UserMessage { text } = &view.projection.timeline[0].kind
+                else {
+                    panic!("fold changed the stored message");
+                };
+                assert_eq!(text, STORED);
+                let TimelineEntryKind::AssistantMessage { text: reply } =
+                    &view.projection.timeline[1].kind
+                else {
+                    panic!("assistant entry changed role");
+                };
+                assert_eq!(reply, STORED);
+                assert!(reply.contains("untrusted reference data"));
+                assert!(!reply.contains("DUPLICATE-CEDAR-62948"));
+            });
+        });
+    }
+
+    fn history_item(
+        sequence: u64,
+        event_id: &str,
+        kind: pawork_client::TimelineItemKind,
+        text: &str,
+    ) -> pawork_client::TimelineItem {
+        pawork_client::TimelineItem {
+            sequence,
+            event_id: event_id.into(),
+            kind,
+            run_id: Some("run-rv02".into()),
+            text: Some(text.into()),
+            message_id: None,
+            thinking_text: None,
+            tool_name: None,
+            status: None,
+            detail: None,
+            timestamp: "1000".into(),
+        }
     }
 }
