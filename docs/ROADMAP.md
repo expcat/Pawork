@@ -52,7 +52,7 @@
 | 条件性 | [CU-22 · Windows 独立会话 / VM 后台能力](plan/cu-22-windows-isolation.md) | 后续平台 | 通过 Rust Windows 系统 API 实现独立环境中的应用、窗口、UIA、截图和输入。 |
 | 条件性 | [CU-23 · Wayland 隔离后台路线可行性](plan/cu-23-wayland-feasibility.md) | 后续平台 | 验证 Wayland 是否存在满足无干扰目标的独立桌面截图与输入路线。 |
 | 设计完成；契约拒绝模拟通过；独立 review / 复审 PASS；系统安装/授权与真实锁屏待环境 | [CU-24 · macOS 锁屏使用独立设计与验证](plan/cu-24-macos-locked-use.md) | 后续能力 | 研究并验证锁屏下的受限后台操作，不把普通 AX 后台操作等同锁屏支持。 |
-| 条件性 | [CU-25 · 显式授权的目标音频采集](plan/cu-25-audio.md) | 后续能力 | 补齐目标音频录制或模型使用链路，并明确二者的能力边界。 |
+| 设计完成；契约拒绝模拟通过；独立 review / 复审 PASS；系统授权/真实采集与模型音频待环境 | [CU-25 · 显式授权的目标音频采集](plan/cu-25-audio.md) | 后续能力 | 补齐目标音频录制或模型使用链路，并明确二者的能力边界。 |
 
 ## 待裁决：API 与产品取舍
 

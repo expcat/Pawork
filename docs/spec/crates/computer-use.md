@@ -139,6 +139,8 @@ CU-10 native R3 补修交付（2026-10-09，待复审）：删除首组豁免，
 
 CU-24 设计与拒绝边界（2026-10-10）：锁屏使用仍无生产路径，`Environment` 契约只表达 `isolated_desktop` 与 `native_background`；新增 `locked_use_environment_is_rejected_by_the_contract` 钉住两值序列化并证明 `locked_use` 观测 JSON 反序列化失败。设计要求宿主活跃 turn 签发单次短期解锁尝试，普通 Once / ForRun 批准不解锁；停用先撤销尝试并恢复锁定，卸载失败保持拒绝态。特权组件、系统安装与授权、真实锁屏序列均未实施 / 未验收，不以普通 AX 后台能力替代。
 
+CU-25 设计与拒绝边界（2026-10-10）：目标音频仍无生产入口，动作、观察、环境契约与 macOS 权限预检均不含音频。测试 fixture 钉住默认关闭、真实范围未证隔离即 Unsupported、撤销 / 停止 / 取消 / 终态拒绝后续请求、预算拒绝与最终 NotImplemented；设计要求已启动流立即中止并丢弃迟到缓冲。真实采集、OS 音频授权、在途释放与 Provider 音频输入待环境，保存录音不等于模型收到音频。
+
 ## 8. 相关文档
 
 [部署说明](../../../crates/computer-use/README.md) · [待验收项](../../ROADMAP.md) · [设计](../../design.md#computer-use-首版) · [参照调研](../../references.md#computer-use-实现调研2026-09-17) · [架构](../../architecture.md) · [安全](../security.md) · [CU-02 任务文档](../../plan/cu-02-target-contracts.md) · [CU-03 任务文档](../../plan/cu-03-app-window-discovery.md) · [CU-04 任务文档](../../plan/cu-04-window-observation.md) · [CU-05 任务文档](../../plan/cu-05-accessibility-tree.md) · [CU-09 任务文档](../../plan/cu-09-ownership-cancellation.md) · [CU-06 任务文档](../../plan/cu-06-semantic-actions.md) · [CU-07 任务文档](../../plan/cu-07-background-text-keys.md) · [CU-08 任务文档](../../plan/cu-08-background-pointer.md) · [CU-17 任务文档](../../plan/cu-17-gui-observation-protocol.md)

@@ -1,6 +1,6 @@
 # CU-25 · 显式授权的目标音频采集
 
-> 状态：条件性待开发（后续能力）。前置：[CU-02](cu-02-target-contracts.md)、[CU-16](cu-16-target-approvals.md)、[CU-20](cu-20-native-acceptance.md)。更新：2026-10-06。
+> 状态：设计与契约拒绝模拟完成；独立 review / 复审 PASS；真实采集、系统授权与模型音频输入待环境。前置：[CU-02](cu-02-target-contracts.md)、[CU-16](cu-16-target-approvals.md)、[CU-20](cu-20-native-acceptance.md)。更新：2026-10-10。
 
 [返回 ROADMAP](../ROADMAP.md#computer-use-rust-升级)
 
@@ -35,5 +35,14 @@ LCU 音频是原 runtime 的可选录制 API；保存录音不等于把音频送
 
 ## 完成记录
 
-未实施；自动验证与真实验收均待执行。满足本任务全部条件后填写实现、实际命令、定向回归、真实/人工结果、遗留缺口和日期，再将 ROADMAP 对应项标为 ✅。
+### 2026-10-10 设计与模拟边界
 
+按用户限定，本轮只推进设计与可模拟拒绝边界：不启用目标音频、不申请麦克风或屏幕音频权限、不启动真实采集、不调用 Provider，不把保存文件冒充模型已听到音频。设计与原始证据在 `/tmp/pawork-cu25-audio-design/evidence/`。
+
+当前生产路径没有目标音频入口：`Environment` 仍只有 `isolated_desktop` / `native_background`，十个 `NativeActionKind` 与两种 `ObservationKind` 均无音频，macOS 权限预检只有 Screen Recording / Accessibility，Host/Provider 也没有音频内容编码链。设计默认关闭；Once / ForRun 目标授权不能顺便开启音频；桌面、系统混音、窗口、网站与未证实隔离的应用范围一律 Unsupported，不回退录全桌面，麦克风保持关闭。关闭、停止、取消、撤销与任务终态先拒绝新请求；若流已启动，立即请求中止、拒收并丢弃迟到缓冲、释放系统资源与 Host 侧引用，结果未知时 fail-closed 如实报告。用户侧录音与模型输入分开，保存文件不等于模型听到音频。
+
+实现与验证：生产代码无改动，新增测试内 fixture `audio_capture_is_rejected_by_the_contract` 模拟未启用、范围不可隔离、撤销后重试、停止、取消、任务结束、时长 / 字节超限与最终 NotImplemented；fixture 不启动流、不触发权限、不调用 Provider，也不覆盖在途中止。`cargo test -p pawork-computer-use --offline --lib` 101 passed / 0 failed、exit 0；这是契约与 fixture 模拟，不是系统授权或真实音频验收。
+
+待真实环境：应用级音频是否可隔离、OS 音频权限授予与撤销、真实流开始后的停止与释放，以及单独裁决后的 Provider 音频往返。上述未验项未完成前本任务不标 ✅。
+
+独立 review（2026-10-10，Sol max，thread `01a1254b-fee3-7952-9c54-eec1035c842c`）：R1 初审 turn `01a1254c-0329-7c62-a872-dd28beea6e5e` 报 1 个 P2（在途采集停止 / 释放设计不足）与 2 个 P3（测试可缩小、视频事实表述不准）。Grok xhigh thread `01a1253f-37e7-7250-943f-f72d0d2273cb` 补在途中止与迟到缓冲丢弃设计、删除恒零计数与静态标签扫描、修正 Chat 编码 video_url 的事实；design.md SHA256 `80d198773afb46692b806e7af016320cf9a877d22e0f43adddcb048e2385580a`，R2 快照 12,796 字节、SHA256 `9b38aa91f0230656bb8a4189a3f5a64b6f3261e58da13e1766e60a4b6683c39a`。复审 turn `01a12555-f42e-7482-80ab-abaa048dae05` PASS；结论限定设计与模拟，不代表目标音频能力已实现或验收。
