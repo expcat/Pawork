@@ -100,12 +100,12 @@
 | ✅ 完成（模拟验收）；独立 review / 复审 PASS；真实 Host、网络、Provider 与窗口待验 | [RV-11 · 子代理断线与恢复人工验收](plan/rv-11-subagent-reconnect.md) | 断线保留代理列表、选中项、正文与阅读位置并作废在途代际；同会话重连保留内容，权威列表移除原代理时收敛选中，切会话才清空。 |
 | ✅ 完成（模拟验收）；独立 review PASS；真实 Host、真窗口、系统缩放与像素待验 | [GUI2-01 · 工作台壳、首页与侧栏人工验收](plan/accept-gui-workbench.md) | 首页新建、项目 / 无项目切换、侧栏分组折叠、草稿与选择保持、连接状态层级经真实投影 / AX / 键盘路径模拟通过。 |
 | ✅ 完成（模拟验收）；独立 review 初审 P2 修复后复审 PASS；真实 Host、真窗口、系统 IME 与像素待验 | [GUI2-02 · 对话阅读层级与 Composer 人工验收](plan/gui2-02-conversation-composer.md) | 消息阅读层级、代码 / 表格块内横滚与原文复制、消息菜单三种输入路径、模型 / 供应商管理入口、Settings 往返保持与三档字号 Composer 几何经 GPUI 主路径模拟通过。 |
+| ✅ 完成（模拟验收）；独立 review 初审 P2 / 复审 P3 修复后最终 PASS；真实 Host、真窗口、原生 AX 与像素待验 | [GUI2-03 · 任务与操作快捷查找人工验收](plan/gui2-03-quick-search.md) | 侧栏与 Cmd+K 打开、当前 Snapshot 任务 / 页面查找、方向键 / Enter / Esc、草稿隔离、无结果与断线 gate 经 GPUI / AX 路径模拟通过；断线范围文案补齐本地浏览器。 |
 
 ### 待验收
 
 | 状态 | 任务 | 简介 |
 | --- | --- | --- |
-| 等待人工验收 | [GUI2-03 · 任务与操作快捷查找人工验收](plan/gui2-03-quick-search.md) | 验收当前 Snapshot 范围内的任务、页面和安全导航查找。 |
 | 等待人工验收 | [GUI2-04 · 当前对话查找与回合定位人工验收](plan/gui2-04-conversation-navigation.md) | 验收已加载正文查找、长对话回合目录与阅读位置保持。 |
 | 等待人工验收 | [GUI2-05 · 工作面板与窄窗可达性人工验收](plan/gui2-05-work-panels.md) | 验收 Inspector 的并排 / 中央呈现及已接通工作面板。 |
 | 等待人工验收 | [GUI2-06 · 设置查找与行式信息组织人工验收](plan/gui2-06-settings-search.md) | 验收设置页面 / 行查找、定位、权限控件和供应商信息层级。 |

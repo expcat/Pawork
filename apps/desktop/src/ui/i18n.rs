@@ -112,8 +112,8 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "当前任务列表 · ↑↓ 选择 · Enter 打开",
         ),
         "quick.offline" => (
-            "Offline · Local appearance and diagnostics only",
-            "已断线 · 仅本地外观与诊断可用",
+            "Offline · Local appearance, diagnostics, and browser only",
+            "已断线 · 仅本地外观、诊断与浏览器可用",
         ),
         "quick.tasks" => ("Tasks · Most recent first", "任务 · 最近更新优先"),
         "quick.pages" => ("Pages", "页面"),

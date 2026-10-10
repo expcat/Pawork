@@ -55,7 +55,8 @@ fn quick_search_accent_mark() -> gpui::Div {
         .bg(dark().accent.primary)
 }
 
-// 页面标题与设置行均来自 settings_search_entries()；Cmd+K 断线 gate 仍只允许 Appearance / Advanced。
+// 页面标题与设置行均来自 settings_search_entries()；断线设置页只允许
+// Appearance / Advanced，不依赖 Host 的浏览器面板仍保留。
 
 pub(super) struct QuickSearch {
     pub open: bool,
@@ -765,6 +766,13 @@ mod tests {
         view.projection.active_session_id = Some("s-00".into());
     }
 
+    fn expect_copy(label: &str, english: &str, chinese: &str) {
+        assert!(
+            label == english || label == chinese,
+            "unexpected copy {label:?}"
+        );
+    }
+
     #[gpui::test]
     fn quick_find_navigation_layout_and_drafts(cx: &mut gpui::TestAppContext) {
         let platform = Arc::new(Platform::new());
@@ -783,6 +791,61 @@ mod tests {
         cx.refresh().unwrap();
         cx.simulate_keystrokes("cmd-k");
         cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |v, cx| {
+                let results = v.quick_search_results();
+                let pages: Vec<_> = results
+                    .iter()
+                    .filter_map(|result| match result.target {
+                        SearchTarget::Page(page) => Some(page),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(
+                    pages,
+                    vec![
+                        SettingsPage::Providers,
+                        SettingsPage::Appearance,
+                        SettingsPage::Advanced,
+                    ]
+                );
+                assert!(results
+                    .iter()
+                    .all(|result| { !matches!(result.target, SearchTarget::SettingsRow { .. }) }));
+                let panels: Vec<_> = results
+                    .iter()
+                    .filter_map(|result| match result.target {
+                        SearchTarget::Panel(tab) => Some(tab),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(
+                    panels,
+                    vec![
+                        InspectorTab::Changes,
+                        InspectorTab::Terminal,
+                        InspectorTab::Files,
+                        InspectorTab::Resources,
+                        InspectorTab::Browser,
+                    ]
+                );
+                assert_eq!(
+                    results
+                        .iter()
+                        .filter(|result| matches!(result.target, SearchTarget::Task(_)))
+                        .count(),
+                    40
+                );
+                let tree = v.quick_search_ax(window, cx);
+                let scope = tree.find("quick-search-scope").expect("scope");
+                let label = scope.label.clone();
+                expect_copy(
+                    &label,
+                    "Current task list · ↑↓ select · Enter open",
+                    "当前任务列表 · ↑↓ 选择 · Enter 打开",
+                );
+            });
+        });
         for (width, height) in [(1440.0, 1024.0), (1080.0, 720.0)] {
             for scale in [
                 font::TextScale::Percent100,
@@ -834,11 +897,26 @@ mod tests {
             assert_eq!(v.projection.active_session_id.as_deref(), Some("s-00"));
         });
         cx.simulate_keystrokes("escape");
+        cx.refresh().unwrap();
         cx.update(|window, cx| {
             view.update(cx, |v, cx| {
                 assert!(!v.quick_search.open);
                 assert!(v.text_input.read(cx).focus_handle(cx).is_focused(window));
-                v.open_quick_search(window, cx);
+                assert!(v
+                    .accessibility_tree(window, cx)
+                    .find("quick-search")
+                    .is_some_and(|button| button.actions.contains(&AxAction::Press)));
+                v.handle_accessibility_request(
+                    AxRequest {
+                        identifier: "quick-search".into(),
+                        action: AxAction::Press,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+                assert!(v.quick_search.open);
+                assert!(v.quick_search.focus.is_focused(window));
                 v.quick_search
                     .input
                     .update(cx, |input, cx| input.set_text("中文", cx));
@@ -863,6 +941,29 @@ mod tests {
             })
         });
         cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |v, cx| {
+                assert!(v.quick_search_results().is_empty());
+                let tree = v.quick_search_ax(window, cx);
+                let empty = tree.find("quick-search-empty").expect("empty");
+                let empty_label = empty.label.clone();
+                expect_copy(
+                    &empty_label,
+                    "No results in the current list",
+                    "当前列表中没有结果",
+                );
+                let scope_label = tree
+                    .find("quick-search-scope")
+                    .expect("scope")
+                    .label
+                    .clone();
+                expect_copy(
+                    &scope_label,
+                    "Current task list · ↑↓ select · Enter open",
+                    "当前任务列表 · ↑↓ 选择 · Enter 打开",
+                );
+            });
+        });
         cx.simulate_keystrokes("enter");
         cx.update(|_, cx| {
             view.update(cx, |v, cx| {
@@ -883,10 +984,12 @@ mod tests {
             assert_eq!(v.projection.active_session_id.as_deref(), Some("s-01"));
             assert!(v.scope_workspace_id.is_none());
             assert_eq!(v.composer_drafts["s-00"], "保留草稿");
-            assert!(v
-                .status_hint
-                .as_ref()
-                .is_some_and(|s| s == t("quick.filter_cleared")));
+            let hint = v.status_hint.clone().expect("filter cleared hint");
+            expect_copy(
+                &hint,
+                "Project filter cleared to show the selected task",
+                "已解除项目筛选，显示所选任务",
+            );
         });
     }
 
@@ -935,6 +1038,14 @@ mod tests {
                     SearchTarget::Page(SettingsPage::Appearance | SettingsPage::Advanced)
                         | SearchTarget::Panel(InspectorTab::Browser)
                 )));
+                let tree = v.quick_search_ax(window, cx);
+                let scope = tree.find("quick-search-scope").expect("offline scope");
+                let label = scope.label.clone();
+                expect_copy(
+                    &label,
+                    "Offline · Local appearance, diagnostics, and browser only",
+                    "已断线 · 仅本地外观、诊断与浏览器可用",
+                );
                 v.activate_quick_result(SearchTarget::Task("s-01".into()), window, cx);
                 v.handle_accessibility_request(
                     AxRequest {
