@@ -11,6 +11,9 @@
 //! 把模拟应用登记进当前唯一活动 GUI run 的真实 TargetRegistry，不解析、
 //! 不启动、不探测本机进程，成功写 register_simulated_target.done。
 //! dump_targets.request 写 dump_targets.done，内容是活动 run 与登记快照。
+//! fixture:observe-hang <http(s)-url>：navigate 后两次真实 browser screenshot，
+//! 然后停在模型轮询里等取消；barriers/observe_more.request 再补一次截图。
+//! 图像只来自 Desktop WebView 的正式工具回执，不写假观测。
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -131,6 +134,11 @@ fn fixture_log_dir() -> &'static OnceLock<PathBuf> {
     &LOG_DIR
 }
 
+fn fixture_barrier_dir() -> &'static OnceLock<PathBuf> {
+    static BARRIER_DIR: OnceLock<PathBuf> = OnceLock::new();
+    &BARRIER_DIR
+}
+
 fn note_browser_trace(line: &str) {
     eprintln!("[ui_fixture] {line}");
     let Some(dir) = fixture_log_dir().get() else {
@@ -212,6 +220,7 @@ async fn fixture_core(root: &Path, spec: &SeedSpec, profile: &str) -> Result<App
     let logs = root.join("logs");
     std::fs::create_dir_all(&logs).map_err(|error| format!("创建 fixture logs 失败：{error}"))?;
     let _ = fixture_log_dir().set(logs);
+    let _ = fixture_barrier_dir().set(barrier_dir(root));
     core.switch_model(None, "fixture-model")
         .await
         .map_err(|error| format!("fixture model discovery failed: {error}"))?;
@@ -253,13 +262,132 @@ impl ModelProvider for FixtureDispatchProvider {
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, ProviderError> {
         eprintln!("[ui_fixture] provider stream called");
-        let script = script_for_request(request);
+        let script = match observe_hang_turn(request, &cancel).await {
+            Some(script) => script,
+            None => script_for_request(request),
+        };
         let outcome = MockProvider::new(script)
             .stream(request, sink, cancel)
             .await;
         eprintln!("[ui_fixture] provider stream done: ok={}", outcome.is_ok());
         outcome
     }
+}
+
+fn latest_user_line(request: &CanonicalModelRequest) -> String {
+    request
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.role == MessageRole::User)
+        .map(|message| {
+            message
+                .content
+                .iter()
+                .filter_map(|part| match part {
+                    ContentPart::Text(TextContent { text }) => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<String>()
+        })
+        .unwrap_or_default()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+/// 正式 browser 工具链上的有界观测：一次导航、两张截图，然后停住。
+/// 停住时返回 None，由 observe_hang_turn 等取消或补拍。
+fn observe_hang_action(request: &CanonicalModelRequest, url: &str) -> Option<MockScript> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Some(
+            MockScript::new()
+                .text("fixture observe stopped: url must be http(s)")
+                .complete(),
+        );
+    }
+    let seen = seen_tools(request);
+    if let Some(last) = seen.last() {
+        if last.is_error {
+            let detail = truncate_trace(&last.text);
+            note_browser_trace(&format!("observe-hang stop error {detail}"));
+            return Some(
+                MockScript::new()
+                    .text(format!("fixture observe stopped: {detail}"))
+                    .complete(),
+            );
+        }
+    }
+    let shots = seen.iter().filter(|item| is_screenshot(item)).count();
+    let reads = seen
+        .iter()
+        .filter(|item| !item.is_error && item.text.contains("dom_revision"))
+        .count();
+    if shots >= 2 {
+        return None;
+    }
+    if reads >= 1 {
+        note_browser_trace(&format!("observe-hang screenshot shots={shots}"));
+        return Some(tool_use("browser", json!({"action": "screenshot"})));
+    }
+    note_browser_trace(&format!("observe-hang navigate {url}"));
+    Some(tool_use("browser", json!({"action":"navigate","url":url})))
+}
+
+fn is_screenshot(item: &SeenTool) -> bool {
+    // navigate / read 的文本元数据也带 viewport 与 generation，不能据此计数。
+    // 真实截图是 Image part；上下文裁剪后只剩 image trimmed 说明。
+    item.has_image || item.text.contains("image trimmed:")
+}
+
+fn take_observe_more() -> bool {
+    let Some(dir) = fixture_barrier_dir().get() else {
+        return false;
+    };
+    let path = dir.join("observe_more.request");
+    if !path.is_file() {
+        return false;
+    }
+    let _ = std::fs::remove_file(&path);
+    note_browser_trace("observe-hang extra screenshot");
+    let _ = write_barrier(dir, "observe_more.done", json!({"action": "screenshot"}));
+    true
+}
+
+/// fixture:observe-hang 不走 script_for_request：两张截图之后必须停在
+/// 这次模型调用里，活动 run 才能继续等停止或补拍。
+async fn observe_hang_turn(
+    request: &CanonicalModelRequest,
+    cancel: &CancellationToken,
+) -> Option<MockScript> {
+    let prefix = latest_user_line(request);
+    let Some(url) = prefix
+        .strip_prefix("fixture:observe-hang ")
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+    else {
+        return None;
+    };
+    if let Some(script) = observe_hang_action(request, url) {
+        return Some(script);
+    }
+    note_browser_trace("observe-hang waiting for observe_more or cancel");
+    loop {
+        if cancel.is_cancelled() || take_observe_more() {
+            break;
+        }
+        tokio::select! {
+            _ = cancel.cancelled() => break,
+            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+        }
+    }
+    if cancel.is_cancelled() {
+        note_browser_trace("observe-hang cancelled");
+        return Some(MockScript::new().wait_for_cancellation());
+    }
+    Some(tool_use("browser", json!({"action": "screenshot"})))
 }
 
 fn script_for_request(request: &CanonicalModelRequest) -> MockScript {
@@ -562,6 +690,8 @@ async fn cmd_serve(args: &[String]) -> Result<(), String> {
         "dump_targets.request",
         "dump_targets.done",
         "dump_targets.failed",
+        "observe_more.request",
+        "observe_more.done",
     ] {
         let _ = std::fs::remove_file(barriers.join(name));
     }

@@ -1,6 +1,6 @@
 # CU-19 · GUI 截图证据与停止状态
 
-> 状态：已实现；自动门禁通过；真窗验收覆盖证据区空态与 observation_list 真实往返，观测行 / 停止状态机待活动 run（环境阻塞）。前置：[CU-09](cu-09-ownership-cancellation.md)、[CU-10](cu-10-action-observe.md)、[CU-17](cu-17-gui-observation-protocol.md)。更新：2026-10-07。
+> 状态：✅ 完成（真窗模拟验收）；独立 review / 复审 PASS；真实 Provider、原生目标、系统授权与并发接管待 CU-20。前置：[CU-09](cu-09-ownership-cancellation.md)、[CU-10](cu-10-action-observe.md)、[CU-17](cu-17-gui-observation-protocol.md)。更新：2026-10-10。
 
 [返回 ROADMAP](../ROADMAP.md#computer-use-rust-升级)
 
@@ -47,6 +47,14 @@
 
 **真窗验收**（2026-10-07，证据 /tmp/cu19/evidence.md，截图不入库）：no_workspace 与 no_run 两态像素确认证据区渲染（「观测证据 · 0 条观测 · 暂无观测证据。」），AX 组 help "ready · 0 targets · 0 observations" 证明 observation_list 对真实 Host 的成功往返（会话切换后重查同样成功）。
 
-**遗留缺口**：观测行（真实截图分块加载 / chip / 跟随）与停止状态机真窗未端到端验收——两条路径都需要活动 computer-use run 产生截图与登记目标，GUI RunStart 被用户全局配置 opencode-go disabled_models（含 glm-5.3-flash）按 ADR-055 D4 fail-closed 拒绝（[CU-18](cu-18-gui-target-approvals.md) 已记录同一环境事实）；按验证口径未换模型、未改用户配置，该部分由单测与 AX 钉板覆盖，待 CU-20 目标登记与 native 操作接入后一并人工验收。
+**2026-10-07 遗留缺口**：观测行（真实截图分块加载 / chip / 跟随）与停止状态机真窗未端到端验收——两条路径都需要活动 computer-use run 产生截图与登记目标，GUI RunStart 被用户全局配置 opencode-go disabled_models（含 glm-5.3-flash）按 ADR-055 D4 fail-closed 拒绝（[CU-18](cu-18-gui-target-approvals.md) 已记录同一环境事实）；按验证口径未换模型、未改用户配置，该部分由单测与 AX 钉板覆盖。该阻塞已于 2026-10-10 通过 fixture 模拟活动 run 收口，见下节。
+
+**2026-10-10 活动 run 真窗模拟验收**（证据 `/tmp/pawork-cu19-gui-evidence-stop-acceptance/evidence/`，截图不入库）：在现有 `ui_fixture` 增加最小 `fixture:observe-hang <http(s)-url>` 前缀——先走正式 browser navigate，再自动发出两张真实 screenshot，随后停在模型调用中等待取消；`barriers/observe_more.request` 可在同一挂起轮次继续补拍。图像只来自 Desktop WebView 的正式工具回执，不写假观测。第一张截图经 GUI API 1.27 分块读取并真实解码显示为「当前」；第二张到达时自动跟随最新，旧行转「历史」；手动选中历史后第三张到达不抢选，同进程刷新保持选中身份。CU-18 的 `register_simulated_target.request` 登记模拟目标后显示目标卡与停止入口。关闭窗口、结束 GUI 进程、重连 Host 前后 registry 中同一 run 与目标均保留；重新打开后点击「停止任务」，时间线由运行中进入「运行已取消」，Host 快照变为 active_runs=[] / targets=[]，fixture 日志以 cancelled 结束且后续无新派发。计数修正复验确认 navigate 不再被误计为截图，顺序为 navigate → screenshot(shots=0) → screenshot(shots=1) → waiting → extra screenshot → cancelled。
+
+**验收边界**：「正在停止任务」与「停止已受理」两个瞬时状态短于 AX 采样窗口，五次采样均直达终态；确认查询失败与结果未知没有可持住失败夹具，本次未模拟。新 GUI 进程不恢复上一进程内存中的手动选中历史，同进程刷新保持。本验收使用 MockProvider/fixture 与本地页面，真实 Provider、原生 App 目标、系统授权与用户并发接管仍归 CU-20；不把这些模拟结果登记为真实平台验收。
+
+**补充验证**：`rustfmt --check --edition 2021 --config skip_children=true crates/app/examples/ui_fixture.rs` exit 0；`cargo check -p pawork-app --example ui_fixture --features ui-fixture --offline` exit 0（3m02s，仅既有 warning；首次缺 `ui-fixture` feature 的命令 exit 101，已按错误提示修正后通过）。本任务无新增/修改测试，真实运行日志、JPEG 解码与 Host/registry 快照覆盖 fixture 行为。
+
+**独立 review / 复审**（2026-10-10）：唯一 Sol max reviewer（thread `01a124f1-f16e-73f0-8bff-10dba56dd460`）初审 R1 提出 P2——补拍监听固定 root/barriers，而启动清理遵循 `PAWORK_UI_BARRIER_DIR`，覆盖目录下补拍不可达且默认目录旧请求不清理。原 Grok xhigh 执行线程按最小建议改为 `fixture_barrier_dir().set(barrier_dir(root))`，并用覆盖目录复验 request 消费、done 回执、默认目录 stale 隔离与取消终态；rustfmt、cargo check、cargo build 均 exit 0。R2 快照 18116 bytes / SHA256 `cc450845ecf7ba4659acade654bd2da4beac13f8bad4320527a924d380a338a0`。复审 turn `01a124fe-7a5b-7c12-a35c-ee76738e4094` PASS：原 P2 修复，无新增阻断或非阻断问题。
 
 同步更新：[GUI 设计](../gui-design.md) §8、[desktop crate Spec](../spec/crates/desktop.md) 模块地图与 §4.7/§7。
