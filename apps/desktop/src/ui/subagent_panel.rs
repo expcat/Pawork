@@ -1958,4 +1958,361 @@ mod tests {
             (denial.to_string(), false)
         );
     }
+
+    fn ax_mentions(nodes: &[AxNode], needle: &str) -> usize {
+        fn walk(node: &AxNode, needle: &str) -> usize {
+            let mut count = node.label.matches(needle).count();
+            if let Some(value) = &node.value {
+                count += value.matches(needle).count();
+            }
+            if let Some(description) = &node.description {
+                count += description.matches(needle).count();
+            }
+            for child in &node.children {
+                count += walk(child, needle);
+            }
+            count
+        }
+        nodes.iter().map(|node| walk(node, needle)).sum()
+    }
+
+    fn receipt_fixture() -> String {
+        let fence = "`".repeat(3);
+        let padding = (0..12)
+            .map(|ix| format!("pad-{ix}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "Receipt body is readable.\n\n- list-alpha\n\n{fence}rust\nfn kept() {{}}\n{fence}\n{}\n{padding}",
+            "x".repeat(520)
+        )
+    }
+
+    /// RV-05 主路径：长回执走与 Timeline 相同的 Markdown，默认折叠；AX Press
+    /// 展开后全文随外层滚动，不另开结果盒滚动区。助手正文落地后结果盒不再
+    /// 渲染第二份。
+    #[gpui::test]
+    fn subagent_result_receipt_reads_markdown_and_folds(cx: &mut gpui::TestAppContext) {
+        let receipt = receipt_fixture();
+        assert!(receipt.chars().count() > 600);
+        assert!(receipt.lines().count() > 10);
+        assert_eq!(
+            subagent_result_summary(&receipt),
+            "Receipt body is readable."
+        );
+
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("rv05-subagent-result.sock");
+        let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
+        cx.simulate_resize(gpui::size(gpui::px(1440.0), gpui::px(800.0)));
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.active_session_id = Some("parent".into());
+                view.projection.connection = crate::projection::ConnectionState::Connected {
+                    instance_id: "test".into(),
+                };
+                assert!(view
+                    .projection
+                    .subagent_conversation
+                    .select_agent("child-0"));
+                let request_id = view.projection.subagent_activity.begin_loading("parent");
+                view.handle_controller_event(
+                    crate::controller::ControllerEvent::SubagentListLoaded {
+                        session_id: "parent".into(),
+                        request_id,
+                        data: pawork_client::SubagentListData {
+                            agents: vec![crate::projection::SubagentInfo {
+                                agent_id: "child-0".into(),
+                                session_id: "child-0".into(),
+                                parent_run_id: "run-0".into(),
+                                title: "Agent 0".into(),
+                                provider_id: "test-provider".into(),
+                                model_id: "test-model".into(),
+                                status: "completed".into(),
+                                result: Some(receipt.clone()),
+                                effort: None,
+                            }],
+                        },
+                    },
+                    cx,
+                );
+                view.inspector_open = true;
+                view.inspector_motion.width(
+                    true,
+                    true,
+                    std::time::Instant::now() - std::time::Duration::from_secs(1),
+                );
+                view.inspector_tab = super::super::inspector::InspectorTab::Subagent;
+                view.close_open_menu(cx);
+                assert!(view.expanded_subagent_details.is_empty());
+                cx.notify();
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+
+        let result_id = "subagent-result-child-0";
+        let toggle_id = "subagent-result-toggle-child-0";
+        let collapsed = cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().unwrap();
+            assert_eq!(ax_mentions(&tree.children, "fn kept"), 0);
+            assert_eq!(ax_mentions(&tree.children, "list-alpha"), 0);
+            let node = tree.find(result_id).expect("collapsed result box");
+            assert_eq!(node.role, AxRole::StaticText);
+            let toggle = tree.find(toggle_id).expect("collapsed result toggle");
+            assert_eq!(toggle.role, AxRole::Button);
+            assert!(toggle.actions.contains(&AxAction::Press));
+            assert_eq!(toggle.label, "Show full result");
+            node.value.clone().unwrap_or_default()
+        });
+        assert_eq!(collapsed, "Receipt body is readable.");
+
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.handle_accessibility_request(
+                    crate::ui::accessibility::AxRequest {
+                        identifier: toggle_id.into(),
+                        action: AxAction::Press,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+
+        let (wheel_at, result_before, outer_before) = cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert!(view.expanded_subagent_details.contains("child-0:result"));
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().unwrap();
+            let node = tree.find(result_id).expect("expanded result box");
+            let expected = subagent_ax_text(&receipt);
+            assert_eq!(node.value.as_deref(), Some(expected.as_str()));
+            assert!(expected.contains("list-alpha"));
+            assert!(expected.contains("fn kept() {}"));
+            let toggle = tree.find(toggle_id).expect("expanded result toggle");
+            assert_eq!(toggle.label, "Show less");
+            assert!(toggle.actions.contains(&AxAction::Press));
+            let copies =
+                super::super::markdown::message_code_copies("subagent-result-child-0", &receipt);
+            assert_eq!(copies.len(), 1);
+            assert!(copies[0].content.contains("fn kept() {}"));
+            let code_bounds = view.settings_element_layouts[&copies[0].identifier].bounds();
+            assert!(f32::from(code_bounds.size.width) > 0.0);
+            assert!(f32::from(code_bounds.size.height) > 0.0);
+            let result = view
+                .subagent_item_layouts
+                .get("child-0:result")
+                .expect("result scroll handle");
+            let result_max = f32::from(result.max_offset().height);
+            let outer_max = f32::from(
+                view.subagent_conversation_scroll
+                    .handle()
+                    .max_offset()
+                    .height,
+            );
+            assert!(
+                result_max <= crate::ui::theme::metrics::SCROLL_EPSILON,
+                "result box must not be its own vertical scroller, max_offset.y={result_max}"
+            );
+            assert!(
+                outer_max > 1.0,
+                "expanded receipt must overflow the transcript, max_offset.y={outer_max}"
+            );
+            let viewport = view.subagent_conversation_scroll.handle().bounds();
+            let visible = result.bounds().intersect(&viewport);
+            assert!(f32::from(visible.size.width) > 16.0);
+            assert!(f32::from(visible.size.height) > 16.0);
+            let at = gpui::point(
+                visible.origin.x + gpui::px(8.0),
+                visible.origin.y + gpui::px(4.0),
+            );
+            assert!(at.y < result.bounds().origin.y + gpui::px(28.0));
+            (
+                at,
+                result.offset(),
+                view.subagent_conversation_scroll.handle().offset(),
+            )
+        });
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: wheel_at,
+            delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(-80.0))),
+            ..Default::default()
+        });
+        cx.update(|_, cx| {
+            let view = view.read(cx);
+            let result_after = view
+                .subagent_item_layouts
+                .get("child-0:result")
+                .expect("result scroll handle")
+                .offset();
+            let outer_after = view.subagent_conversation_scroll.handle().offset();
+            assert_eq!(
+                result_after, result_before,
+                "wheel inside the result box must not move an inner offset"
+            );
+            assert_ne!(
+                outer_after, outer_before,
+                "wheel inside the result box must scroll the outer transcript"
+            );
+        });
+
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.handle_accessibility_request(
+                    crate::ui::accessibility::AxRequest {
+                        identifier: toggle_id.into(),
+                        action: AxAction::Press,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert!(!view.expanded_subagent_details.contains("child-0:result"));
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().unwrap();
+            assert_eq!(
+                tree.find(result_id)
+                    .and_then(|node| node.value.clone())
+                    .as_deref(),
+                Some("Receipt body is readable.")
+            );
+            assert_eq!(
+                tree.find(toggle_id).map(|node| node.label.as_str()),
+                Some("Show full result")
+            );
+            assert_eq!(ax_mentions(&tree.children, "fn kept"), 0);
+            assert_eq!(ax_mentions(&tree.children, "list-alpha"), 0);
+        });
+
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                // 滚轮已脱钩。贴底后再喂时间线，结果盒与助手正文才能同时进 AX 视口。
+                view.subagent_conversation_scroll.jump_to_bottom();
+                let generation = view.projection.subagent_conversation.begin_loading();
+                view.handle_controller_event(
+                    crate::controller::ControllerEvent::SubagentTimelineLoaded {
+                        session_id: "child-0".into(),
+                        generation,
+                        page: timeline_page(vec![history_item(
+                            1,
+                            "assistant_message",
+                            serde_json::json!({
+                                "text": receipt,
+                                "message_id": "m-receipt"
+                            }),
+                        )]),
+                    },
+                    cx,
+                );
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert!(view.projection.timeline.is_empty());
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().unwrap();
+            assert_eq!(
+                tree.find(result_id)
+                    .and_then(|node| node.value.clone())
+                    .as_deref(),
+                Some(crate::ui::i18n::t("subagents.result_in_transcript"))
+            );
+            assert!(tree.find(toggle_id).is_none());
+            assert_eq!(ax_mentions(&tree.children, "fn kept() {}"), 1);
+            let event_id = view
+                .projection
+                .subagent_conversation
+                .timeline
+                .iter()
+                .find_map(|entry| match &entry.kind {
+                    crate::projection::TimelineEntryKind::AssistantMessage { text }
+                        if text.trim() == receipt =>
+                    {
+                        Some(entry.event_id.as_str())
+                    }
+                    _ => None,
+                })
+                .expect("assistant receipt");
+            let copies = super::super::markdown::message_code_copies(
+                &format!("subagent-{event_id}"),
+                &receipt,
+            );
+            assert_eq!(copies.len(), 1);
+            let code_bounds = view.settings_element_layouts[&copies[0].identifier].bounds();
+            assert!(f32::from(code_bounds.size.width) > 0.0);
+            assert!(f32::from(code_bounds.size.height) > 0.0);
+        });
+    }
+
+    /// RV-05 边界：Host 回执最多 2000 个字符。相等、两侧空白，或恰好 2000
+    /// 字符的前缀算同一份；1999 与其它字符串不算。空助手正文跳过。
+    #[test]
+    fn subagent_result_dedup_follows_host_prefix_boundary() {
+        let body = "甲".repeat(2500);
+        let prefix_2000: String = body.chars().take(2000).collect();
+        let prefix_1999: String = body.chars().take(1999).collect();
+        let other_2000 = "乙".repeat(2000);
+        assert_eq!(prefix_2000.chars().count(), 2000);
+        assert_eq!(prefix_1999.chars().count(), 1999);
+        assert_eq!(other_2000.chars().count(), 2000);
+
+        let untouched = SubagentConversationState::default();
+        assert!(!subagent_result_matches_reply(&prefix_2000, &untouched));
+        assert!(!subagent_result_matches_reply(&body, &untouched));
+
+        let mut blanks = SubagentConversationState::default();
+        assert!(blanks.select_agent("child-0"));
+        let generation = blanks.begin_loading();
+        blanks.apply_page(
+            "child-0",
+            generation,
+            &timeline_page(vec![
+                history_item(1, "assistant_message", serde_json::json!({ "text": " \n" })),
+                history_item(2, "assistant_message", serde_json::json!({ "text": "\t" })),
+            ]),
+        );
+        assert!(!subagent_result_matches_reply(&body, &blanks));
+        assert!(!subagent_result_matches_reply(&prefix_2000, &blanks));
+
+        let stored = format!("\n{body} \n");
+        let mut conversation = SubagentConversationState::default();
+        assert!(conversation.select_agent("child-0"));
+        let generation = conversation.begin_loading();
+        conversation.apply_page(
+            "child-0",
+            generation,
+            &timeline_page(vec![
+                history_item(1, "assistant_message", serde_json::json!({ "text": " \n" })),
+                history_item(
+                    2,
+                    "assistant_message",
+                    serde_json::json!({ "text": stored, "message_id": "m-body" }),
+                ),
+                history_item(3, "assistant_message", serde_json::json!({ "text": "\t" })),
+            ]),
+        );
+        assert!(subagent_result_matches_reply(&prefix_2000, &conversation));
+        assert!(!subagent_result_matches_reply(&prefix_1999, &conversation));
+        assert!(subagent_result_matches_reply(&body, &conversation));
+        assert!(subagent_result_matches_reply(
+            &format!("  {body}\n"),
+            &conversation
+        ));
+        assert!(!subagent_result_matches_reply("other", &conversation));
+        assert!(!subagent_result_matches_reply(&other_2000, &conversation));
+    }
 }
