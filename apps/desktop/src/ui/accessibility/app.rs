@@ -7242,6 +7242,490 @@ mod tests {
         });
     }
 
+    fn press_published_ax(
+        cx: &mut gpui::VisualTestContext,
+        view: &gpui::Entity<AppView>,
+        identifier: &str,
+    ) {
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                let request = {
+                    let tree = view.accessibility_tree(window, cx);
+                    let request = AxRequest {
+                        identifier: identifier.to_string(),
+                        action: AxAction::Press,
+                        value: None,
+                    };
+                    assert!(tree.permits(&request), "{identifier} must publish Press");
+                    request
+                };
+                view.handle_accessibility_request(request, window, cx);
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+    }
+
+    /// GUI2-01 模拟验收：同一条渲染路径覆盖首页、真实 Snapshot 的项目 /
+    /// 无项目切换、分组与折叠键盘、Settings 往返，以及连接状态不伪装。
+    /// 真窗口、系统缩放、真实像素、真实 Host 与真实 Provider 不在此证明。
+    #[gpui::test]
+    fn workbench_home_rail_projection_ax_and_keyboard(cx: &mut gpui::TestAppContext) {
+        use crate::ui::theme::font::TextScale;
+        use gpui::{px, size};
+
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("gui2-01-workbench.sock");
+        let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
+        cx.run_until_parked();
+
+        for (width, height) in [(1440.0, 1024.0), (1080.0, 720.0)] {
+            for scale in [
+                TextScale::Percent100,
+                TextScale::Percent125,
+                TextScale::Percent150,
+            ] {
+                let large = scale == TextScale::Percent150;
+                let expected_rail = if large {
+                    shell_layout::RAIL_LARGE_TEXT_WIDTH
+                } else if width <= shell_layout::NARROW_WIDTH_MAX {
+                    shell_layout::RAIL_NARROW_WIDTH
+                } else {
+                    metrics::SIDEBAR_WIDTH
+                };
+                cx.simulate_resize(size(px(width), px(height)));
+                cx.update(|window, cx| {
+                    view.update(cx, |view, cx| {
+                        view.projection.set_connection(ConnectionState::Connected {
+                            instance_id: "gui2-01".into(),
+                        });
+                        view.projection.active_session_id = None;
+                        view.projection.sessions.clear();
+                        view.text_scale = scale;
+                        window.set_rem_size(px(scale.rem_pixels()));
+                        cx.notify();
+                    })
+                });
+                cx.refresh().unwrap();
+                cx.run_until_parked();
+                cx.update(|window, cx| {
+                    let view = view.read(cx);
+                    let tree = view.accessibility_tree(window, cx);
+                    tree.validate().unwrap();
+                    assert_eq!(
+                        tree.find("workspace-empty-title").unwrap().label,
+                        workspace_empty_title()
+                    );
+                    assert_eq!(
+                        tree.find("workspace-empty-hint").unwrap().label,
+                        view.welcome_hint()
+                    );
+                    assert!(tree.find("header-new-task").unwrap().enabled);
+                    assert!(tree.find("header-title").is_none());
+                    let rail = tree.find("task-rail").unwrap().bounds;
+                    assert!(
+                        (rail.width - expected_rail).abs() < 1.0,
+                        "rail {} expected {expected_rail} at {width}x{height} {scale:?}",
+                        rail.width
+                    );
+                    assert!(
+                        tree.find("workspace-header").unwrap().bounds.height
+                            >= metrics::HEADER_HEIGHT
+                    );
+                    assert_eq!(
+                        tree.find("connection-status").unwrap().value.as_deref(),
+                        Some(t("rail.connection_local_connected"))
+                    );
+                    assert!(tree.find("reconnect").is_none());
+                    assert!(tree.find("connection-retry").is_none());
+                    assert!(tree.find("connection-notice").is_none());
+                    for id in [
+                        "workspace-empty-title",
+                        "workspace-empty-hint",
+                        "header-new-task",
+                        "add-task",
+                        "project-scope",
+                        "task-rail-grouping",
+                        "open-settings",
+                        "connection-status",
+                    ] {
+                        let bounds = tree.find(id).unwrap().bounds;
+                        assert!(
+                            bounds.width > 0.0
+                                && bounds.height > 0.0
+                                && bounds.x >= 0.0
+                                && bounds.y >= 0.0
+                                && bounds.x + bounds.width <= width + 1.0
+                                && bounds.y + bounds.height <= height + 1.0,
+                            "{id} {:?} outside {width}x{height}",
+                            bounds
+                        );
+                    }
+                });
+            }
+        }
+
+        cx.simulate_resize(size(px(1440.0), px(1024.0)));
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.text_scale = TextScale::Percent100;
+                window.set_rem_size(px(TextScale::Percent100.rem_pixels()));
+                view.projection.set_connection(ConnectionState::Connected {
+                    instance_id: "gui2-01".into(),
+                });
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        press_published_ax(cx, &view, "header-new-task");
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert!(
+                view.projection.sessions.is_empty(),
+                "homepage New task must not invent a session without a Host receipt"
+            );
+            assert!(view.open_menu.is_none());
+            assert!(view.composer_focus_handle(cx).is_focused(window));
+            assert_eq!(view.projection.active_session_id, None);
+        });
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.text_input
+                    .update(cx, |input, cx| input.reset_text("首页草稿", cx));
+            })
+        });
+
+        let snapshot: pawork_client::Snapshot = serde_json::from_value(serde_json::json!({
+            "instance_id": "gui2-01",
+            "snapshot_sequence": 1,
+            "generated_at": 1,
+            "sections": [
+                {"kind": "workspaces", "revision": 1, "data": [
+                    {"id": "ws-a", "name": "Alpha", "trusted": true}
+                ]},
+                {"kind": "session_tree", "revision": 1, "data": [
+                    {"session_id": "s-free", "title": "Free notes", "updated_at_ms": 2},
+                    {
+                        "session_id": "s-alpha",
+                        "title": "Alpha notes",
+                        "workspace_id": "ws-a",
+                        "updated_at_ms": 1
+                    }
+                ]}
+            ]
+        }))
+        .expect("workbench snapshot");
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.merge_snapshot(&snapshot);
+                assert_eq!(view.projection.sessions.len(), 2);
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+
+        press_published_ax(cx, &view, "session-s-free");
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert_eq!(view.no_session_draft, "首页草稿");
+            assert_eq!(view.projection.active_session_id.as_deref(), Some("s-free"));
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().unwrap();
+            assert_eq!(tree.find("header-title").unwrap().label, "Free notes");
+            assert_eq!(
+                tree.find("composer-workspace").unwrap().value.as_deref(),
+                Some(t("composer.no_project_chip"))
+            );
+            assert!(tree.find("session-s-free").unwrap().selected);
+            assert!(!tree.find("session-s-alpha").unwrap().selected);
+            assert!(view.text_input.read(cx).text().is_empty());
+        });
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.text_input
+                    .update(cx, |input, cx| input.reset_text("自由草稿", cx));
+            })
+        });
+        press_published_ax(cx, &view, "session-s-alpha");
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert_eq!(
+                view.composer_drafts.get("s-free").map(String::as_str),
+                Some("自由草稿")
+            );
+            assert_eq!(
+                view.projection.active_session_id.as_deref(),
+                Some("s-alpha")
+            );
+            let tree = view.accessibility_tree(window, cx);
+            assert_eq!(tree.find("header-title").unwrap().label, "Alpha notes");
+            assert_eq!(
+                tree.find("composer-workspace").unwrap().value.as_deref(),
+                Some(
+                    t("composer.workspace_scope")
+                        .replace("{}", "Alpha")
+                        .as_str()
+                )
+            );
+            assert!(tree.find("session-s-alpha").unwrap().selected);
+            assert!(!tree.find("session-s-free").unwrap().selected);
+            assert!(view.text_input.read(cx).text().is_empty());
+        });
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.text_input
+                    .update(cx, |input, cx| input.reset_text("项目草稿", cx));
+            })
+        });
+
+        press_published_ax(cx, &view, "task-rail-grouping");
+        press_published_ax(cx, &view, "task-rail-grouping");
+        cx.update(|_, cx| {
+            let view = view.read(cx);
+            assert_eq!(view.grouping, TaskRailGrouping::Projects);
+            assert!(view.open_menu.is_none());
+            assert_eq!(
+                view.projection.active_session_id.as_deref(),
+                Some("s-alpha")
+            );
+            assert_eq!(view.text_input.read(cx).text(), "项目草稿");
+            assert_eq!(view.no_session_draft, "首页草稿");
+            assert_eq!(
+                view.composer_drafts.get("s-free").map(String::as_str),
+                Some("自由草稿")
+            );
+            assert!(view.collapsed_projects.is_empty());
+        });
+
+        press_published_ax(cx, &view, "project-ws-a");
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().unwrap();
+            assert_eq!(
+                tree.find("project-ws-a").unwrap().description.as_deref(),
+                Some("Collapsed")
+            );
+            assert!(tree.find("session-s-alpha").is_none());
+            assert_eq!(
+                view.projection.active_session_id.as_deref(),
+                Some("s-alpha")
+            );
+            assert_eq!(view.text_input.read(cx).text(), "项目草稿");
+            assert!(view.collapsed_projects.contains("ws-a"));
+        });
+        cx.update(|window, cx| {
+            let handle = view
+                .read(cx)
+                .rail_row_focus
+                .get("project-ws-a")
+                .cloned()
+                .expect("rendered project header owns a focus handle");
+            window.focus(&handle);
+        });
+        cx.refresh().unwrap();
+        cx.simulate_keystrokes("right");
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            assert_eq!(
+                tree.find("project-ws-a").unwrap().description.as_deref(),
+                Some("Expanded")
+            );
+            assert!(tree.find("session-s-alpha").unwrap().selected);
+            assert_eq!(view.text_input.read(cx).text(), "项目草稿");
+        });
+        cx.simulate_keystrokes("left");
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            assert_eq!(
+                tree.find("project-ws-a").unwrap().description.as_deref(),
+                Some("Collapsed")
+            );
+            assert!(tree.find("session-s-alpha").is_none());
+            assert_eq!(
+                view.projection.active_session_id.as_deref(),
+                Some("s-alpha")
+            );
+            assert_eq!(view.text_input.read(cx).text(), "项目草稿");
+        });
+
+        press_published_ax(cx, &view, "open-settings");
+        cx.update(|_, cx| {
+            assert_eq!(view.read(cx).route, AppRoute::Settings);
+        });
+        press_published_ax(cx, &view, "settings-back");
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert_eq!(view.route, AppRoute::Workspace);
+            assert_eq!(
+                view.projection.active_session_id.as_deref(),
+                Some("s-alpha")
+            );
+            assert_eq!(view.text_input.read(cx).text(), "项目草稿");
+            assert_eq!(
+                view.accessibility_tree(window, cx)
+                    .find("header-title")
+                    .unwrap()
+                    .label,
+                "Alpha notes"
+            );
+        });
+
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.set_connection(ConnectionState::Failed {
+                    reason: "connection refused by test host".into(),
+                });
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().unwrap();
+            assert_eq!(
+                tree.find("connection-status").unwrap().value.as_deref(),
+                Some(t("rail.connection_local_disconnected"))
+            );
+            let notice = tree.find("connection-notice").unwrap();
+            assert!(notice.label.contains("connection refused by test host"));
+            assert!(tree.find("reconnect").is_some());
+            assert!(tree.find("connection-retry").is_some());
+            assert_eq!(tree.find("header-title").unwrap().label, "Alpha notes");
+            assert_eq!(view.text_input.read(cx).text(), "项目草稿");
+        });
+
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.set_connection(ConnectionState::Connecting);
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let tree = view.read(cx).accessibility_tree(window, cx);
+            assert_eq!(
+                tree.find("connection-status").unwrap().value.as_deref(),
+                Some(t("rail.connection_local_connecting"))
+            );
+            assert!(tree.find("reconnect").is_none());
+            assert!(tree.find("connection-retry").is_none());
+            let notice = tree.find("connection-notice").unwrap().label.as_str();
+            assert!(
+                !notice.contains("connection refused by test host"),
+                "connecting must not keep the old failure: {notice}"
+            );
+        });
+
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.set_connection(ConnectionState::Connected {
+                    instance_id: "gui2-01".into(),
+                });
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            assert_eq!(
+                tree.find("connection-status").unwrap().value.as_deref(),
+                Some(t("rail.connection_local_connected"))
+            );
+            assert!(tree.find("connection-notice").is_none());
+            assert!(tree.find("reconnect").is_none());
+            assert!(tree.find("connection-retry").is_none());
+            assert_eq!(view.text_input.read(cx).text(), "项目草稿");
+        });
+
+        // 折叠后的当前任务行不可见；展开后再核对 150% 窄窗的标题与动作框。
+        press_published_ax(cx, &view, "project-ws-a");
+        cx.simulate_resize(size(px(1080.0), px(720.0)));
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.text_scale = TextScale::Percent150;
+                window.set_rem_size(px(TextScale::Percent150.rem_pixels()));
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().unwrap();
+            let rail = tree.find("task-rail").unwrap().bounds;
+            assert!((rail.width - shell_layout::RAIL_LARGE_TEXT_WIDTH).abs() < 1.0);
+            let title = tree
+                .find(&session_title_identifier("s-alpha"))
+                .unwrap()
+                .bounds;
+            let rename = tree
+                .find(&session_rename_identifier("s-alpha"))
+                .unwrap()
+                .bounds;
+            let archive = tree
+                .find(&session_archive_identifier("s-alpha"))
+                .unwrap()
+                .bounds;
+            assert!(
+                !ax_rects_overlap(title, rename),
+                "title {title:?} rename {rename:?}"
+            );
+            assert!(
+                !ax_rects_overlap(title, archive),
+                "title {title:?} archive {archive:?}"
+            );
+            let project = tree.find("project-ws-a").unwrap().bounds;
+            // 列表内容必须落在 AX 侧栏框内。底行不同：render 让左栏铺满窗口，
+            // 状态栏只占右侧，AX 框停在状态栏上沿；150% 换行后的连接状态
+            // 可以进入这条左侧带，只要不越栏宽、不出窗口、不盖住项目头。
+            for (id, bounds) in [
+                ("project-ws-a", project),
+                ("session-title", title),
+                ("rename", rename),
+                ("archive", archive),
+            ] {
+                assert!(
+                    bounds.x + bounds.width <= rail.x + rail.width + 1.0
+                        && bounds.y + bounds.height <= rail.y + rail.height + 1.0,
+                    "{id} {:?} outside rail {:?}",
+                    bounds,
+                    rail
+                );
+            }
+            let status = tree.find("connection-status").unwrap().bounds;
+            let window_height = f32::from(window.viewport_size().height);
+            assert!(
+                status.x >= rail.x - 1.0
+                    && status.x + status.width <= rail.x + rail.width + 1.0
+                    && status.y >= 0.0
+                    && status.y + status.height <= window_height + 1.0
+                    && !ax_rects_overlap(status, project),
+                "connection-status {status:?} outside visual rail {rail:?} window {window_height}"
+            );
+            let header_title = tree.find("header-title").unwrap().bounds;
+            let expand = tree.find("inspector-expand").unwrap().bounds;
+            assert!(
+                !ax_rects_overlap(header_title, expand),
+                "header title {header_title:?} overlaps inspector-expand {expand:?}"
+            );
+        });
+    }
+
     /// UX-05：20 项目录的当前项、搜索恢复与键盘滚动共用实际布局。
     #[gpui::test]
     fn model_menu_ax_culls_rows_outside_clipped_frame(cx: &mut gpui::TestAppContext) {

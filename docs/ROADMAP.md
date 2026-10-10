@@ -98,12 +98,12 @@
 | ✅ 完成（模拟验收）；独立 review / 复审 PASS；真实窗口与像素待验 | [RV-06 · 子代理标签字号人工验收](plan/rv-06-subagent-font-sizes.md) | 100% / 125% / 150% 字号与侧栏 / 中央布局下，超宽标题换行、chip 宽度钳制、状态点与焦点环完整由产品自行收敛；GPUI 测试窗口模拟通过。 |
 | ✅ 完成（模拟验收）；独立 review / 多轮复审 PASS；原生 AX bridge、VoiceOver、真窗口与像素待验 | [RV-07 · 子代理正文键盘与朗读人工验收](plan/rv-07-subagent-accessibility.md) | 正文与展开按钮共用 GPUI 焦点句柄并进入 Tab 链；AX Focus、Enter 与 Press 走正式路径，离屏焦点由产品滚入视口，同帧滚底覆盖后可重试。 |
 | ✅ 完成（模拟验收）；独立 review / 复审 PASS；真实 Host、网络、Provider 与窗口待验 | [RV-11 · 子代理断线与恢复人工验收](plan/rv-11-subagent-reconnect.md) | 断线保留代理列表、选中项、正文与阅读位置并作废在途代际；同会话重连保留内容，权威列表移除原代理时收敛选中，切会话才清空。 |
+| ✅ 完成（模拟验收）；独立 review PASS；真实 Host、真窗口、系统缩放与像素待验 | [GUI2-01 · 工作台壳、首页与侧栏人工验收](plan/accept-gui-workbench.md) | 首页新建、项目 / 无项目切换、侧栏分组折叠、草稿与选择保持、连接状态层级经真实投影 / AX / 键盘路径模拟通过。 |
 
 ### 待验收
 
 | 状态 | 任务 | 简介 |
 | --- | --- | --- |
-| 等待人工验收 | [GUI2-01 · 工作台壳、首页与侧栏人工验收](plan/accept-gui-workbench.md) | 验收首页、Header 和侧栏在真实任务、项目与连接状态下的可达性。 |
 | 等待人工验收 | [GUI2-02 · 对话阅读层级与 Composer 人工验收](plan/gui2-02-conversation-composer.md) | 验收用户与助手消息、长内容阅读和模型管理入口。 |
 | 等待人工验收 | [GUI2-03 · 任务与操作快捷查找人工验收](plan/gui2-03-quick-search.md) | 验收当前 Snapshot 范围内的任务、页面和安全导航查找。 |
 | 等待人工验收 | [GUI2-04 · 当前对话查找与回合定位人工验收](plan/gui2-04-conversation-navigation.md) | 验收已加载正文查找、长对话回合目录与阅读位置保持。 |

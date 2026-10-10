@@ -1,6 +1,6 @@
 # GUI2-01 · 工作台壳、首页与侧栏人工验收
 
-> 状态：等待人工验收。更新：2026-10-06。
+> 状态：✅ 完成（模拟验收）；独立 review PASS。真实 Host、真窗口、系统缩放、真实像素与真实 Provider 待验。更新：2026-10-11。
 
 [返回 ROADMAP](../ROADMAP.md#等待人工验收)
 
@@ -27,4 +27,11 @@
 
 ## 完成记录
 
-待填写实际环境、输入、结果、日期、用户确认与证据位置。历史日志不冒充当次验证；截图不写入仓库。满足全部完成条件后同步本文件，并将 ROADMAP 对应项标为 ✅。
+2026-10-11 在真实 AppView 投影、GPUI `TestAppContext`、AX 分发与键盘路径中模拟验收，基线 `c2ed48a69571f46d2b7312dbfdef01acc567c2fe`。产品代码无改，新增 `workbench_home_rail_projection_ax_and_keyboard` 并同步 desktop Spec。
+
+- **模拟验收通过**：首页 Ghost New task 的 AX Press 在无 Host 回执时不建会话，焦点进入 Composer；Snapshot 在无项目 Free notes 与 Alpha 间切换时标题、composer workspace 与草稿保留；分组往返不改当前选择；项目头 AX Press 与 ←/→ 可折叠 / 展开；Settings 往返后标题、选择与草稿保留。已连接空闲不出现重试或错误；Failed 底行为 Local · Disconnected，主区 notice 保留测试 Host 拒绝原因；Connecting 清旧错且不显示重试。
+- **布局边界**：150% 窄窗下连接状态底边越过 AX sidebar 内容框，但左栏渲染铺满窗口、StatusBar 只占右侧，底行仍在窗口内、不越栏宽、不盖项目头；断言按真实几何改写。
+- **自动门禁通过**：定向 cargo 过滤集 6 passed / 0 failed / 283 filtered，exit 0；`rustfmt --edition 2021 --check apps/desktop/src/ui/accessibility/app.rs` 与 `git diff --check` exit 0。
+- **待验边界**：真实 Host、真窗口、系统缩放、真实像素与真实 Provider 未验；本记录不登记为真人窗口验收。
+
+证据：`/tmp/pawork-gui2-01-workbench/evidence/`（命令、输出、结论、diff 与 SHA256）。独立 review（Sol max，thread `01a1277c-be1c-7a12-a358-94a9175befdd`）turn `01a1277c-c159-7653-a9e6-caba5d28292b` PASS。本地提交由指挥用 `/tmp/pawork-final-commit.py` 精确执行；提交哈希记录在证据 `COMMIT.json`，不推送。

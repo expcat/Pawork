@@ -566,7 +566,7 @@ Context 投影回归覆盖目录 context window 的 0 哨兵显示为 unavailabl
 - **FollowScroll 的滚轮时序假设**：`on_scroll_wheel` 直读已应用（未钳制）的 offset——依赖 vendored gpui 0.2.2 的 Bubble 相监听逆序分发（内部偏移应用先于用户监听）；升级 gpui 时须重核，做 delta 投影会把增量计两次。
 - **UI fixture barrier 钩子（R1 Wave B，测试专用）**：启动读 env `PAWORK_UI_BARRIER_DIR`（main.rs；空值视同未设置，`--probe` / `--probe-smoke` 不发射）。未设置时全程零开销：不 spawn tick、无任何文件 IO。设置后由 ui/mod.rs 既有 1s tick 兼任发射点：已连接 && 无进行中 timeline 分页（`open_session` 置位、complete / `open session` 失败 / `Disconnected` 复位）&& 本 tick 窗口无 ControllerEvent 时重写 `<dir>/timeline_stable`（JSON 含 settle_seq 单调自增 / session_id / entry_count / at_ms / detail）；开始连接、打开会话或收到任一 ControllerEvent 时先删除旧 `timeline_stable` 与 `approval_visible`，防只等存在性的 driver 误收陈旧信号。`pending_approval` 存在且已稳定 → 重写 `approval_visible`（含 tool 名），消失 → 保持删除；目录不存在时由 `BarrierSink::new` 惰性创建。写入 tmp+rename 原子替换、任何 IO 失败静默跳过；`projection/` 保持纯状态机零 IO。controller 在未连接、无 TimelinePage 响应或翻页达到上限时发 `SessionOpenFailed{session_id}`，UI 仅在该 session 仍为 active 时复位分页状态。
 
-`welcome_and_rail_follow_actual_layout` 定向回归覆盖首页状态、实测 AX 和两种尺寸 × 三档字号；不改变协议、创建写口或持久化。
+`welcome_and_rail_follow_actual_layout` 定向回归覆盖首页状态、实测 AX 和两种尺寸 × 三档字号；不改变协议、创建写口或持久化。`workbench_home_rail_projection_ax_and_keyboard` 在同一条渲染路径上覆盖首页 New task 的 AX Press（无 Host 回执不建会话、焦点到 Composer）、真实 Snapshot 下项目 / 无项目切换并保持标题与草稿、分组往返、项目头 AX Press 与 ←/→ 折叠、Settings 往返，以及已连接空闲不伪装断线；宽窄窗与三档字号下入口框落在窗口内。150% 窄窗的列表内容落在 AX 侧栏框内；连接状态底行对照全高左栏（状态栏只占右侧，AX 框停在状态栏上沿），要求不越栏宽、不出窗口、不盖住项目头。真窗口、系统缩放、真实像素、真实 Host 与真实 Provider 仍待人工验收。
 
 2026-09-24 文件夹读取补充：macOS / Linux x86_64、aarch64 使用持有的目录描述符与 `openat(NOFOLLOW)` 逐组件读取，拒绝选择后目录/符号链接替换导致的越界；其它平台入口禁用并显示平台要求。未新增依赖。
 
