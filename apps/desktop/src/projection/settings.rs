@@ -909,6 +909,7 @@ pub struct SubagentConversationState {
     pub loading: bool,
     /// 分页代际：每次 begin_loading 自增；回执携带发起时的代际，不匹配
     /// 即为过期链（Refresh / 终态重查并发时旧链的迟到失败不得污染新链）。
+    /// 断线 `mark_disconnected` 再自增一次，废弃断开前的在途代际。
     pub load_generation: u32,
     /// 分页 / 断连失败的如实原因；成功页到达即清除。
     pub error: Option<String>,
@@ -973,6 +974,14 @@ impl SubagentConversationState {
             }
         }
         false
+    }
+
+    /// 断线收口（RV-11）：保留选中代理与已加载正文，结束在途加载并废弃
+    /// 其代际。断开前发出的迟到页 / 失败因此 fail-closed，不会改写保留
+    /// 内容，也不会在重连后的新代际上碰撞。
+    pub fn mark_disconnected(&mut self) {
+        self.loading = false;
+        self.load_generation = self.load_generation.saturating_add(1);
     }
 }
 

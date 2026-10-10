@@ -1958,11 +1958,13 @@ impl AppView {
                     .clear();
                 // RV-11：断线保留子代理面板已加载内容（代理列表 / 选中
                 // 项 / 对话正文与阅读位置），只清瞬时在途标记并标记过期；
-                // 重连后由 refresh_open_inspector_tab 重查权威数据。
+                // 对话代际一并作废，断开前的迟到页不能改写保留正文。
+                // 重连后由 refresh_open_inspector_tab 重查权威数据；同一会话
+                // 的基线重开也不重置这段状态（见 open_session）。
                 self.projection
                     .subagent_activity
                     .mark_disconnected(reason.clone());
-                self.projection.subagent_conversation.loading = false;
+                self.projection.subagent_conversation.mark_disconnected();
                 let stale_reason = format!("connection lost · {reason}");
                 self.handshake_info = None;
                 if self.settings_page == SettingsPage::About {
@@ -2645,17 +2647,42 @@ impl AppView {
                     .projection
                     .subagent_activity
                     .apply_loaded(&session_id, request_id, data)
-                    && self.inspector_tab == InspectorTab::Subagent
-                    && self.projection.subagent_conversation.agent_id.is_none()
                 {
-                    let first = self
+                    // 成功回执是权威列表。原选中代理已不在其中（父会话分支
+                    // 变了，或它退出展示集合）时，选中项和旧正文都失效：
+                    // 清掉后正文走未选择空态，而不是停在 Loading，也不把
+                    // 旧正文继续当成有效内容。查询失败不走这里，旧内容保留。
+                    // 从未选中时仍自动选中列表第一项；失效清除不再改选别人。
+                    let selection_dropped = self
                         .projection
-                        .subagent_activity
-                        .display_agents()
-                        .first()
-                        .map(|a| a.agent_id.clone());
-                    if let Some(id) = first {
-                        self.select_subagent_agent(&id, cx);
+                        .subagent_conversation
+                        .agent_id
+                        .as_ref()
+                        .is_some_and(|id| {
+                            !self
+                                .projection
+                                .subagent_activity
+                                .agents
+                                .iter()
+                                .any(|agent| &agent.agent_id == id)
+                        });
+                    if !selection_dropped
+                        && self.inspector_tab == InspectorTab::Subagent
+                        && self.projection.subagent_conversation.agent_id.is_none()
+                    {
+                        let first = self
+                            .projection
+                            .subagent_activity
+                            .display_agents()
+                            .first()
+                            .map(|agent| agent.agent_id.clone());
+                        if let Some(id) = first {
+                            self.select_subagent_agent(&id, cx);
+                        }
+                    }
+                    if selection_dropped {
+                        self.projection.subagent_conversation = Default::default();
+                        self.subagent_conversation_scroll.jump_to_bottom();
                     }
                 }
             }
@@ -3112,6 +3139,9 @@ impl AppView {
     }
 
     fn open_session(&mut self, session_id: String, cx: &mut Context<Self>) {
+        // 必须在 select_session 之前记下：select 会把 active 写成目标会话。
+        let reopening_current =
+            self.projection.active_session_id.as_deref() == Some(session_id.as_str());
         self.cancel_file_attachment_picker();
         // task 切换会重建 Timeline；先关闭可能锚在旧条目或旧上下文上的浮层，
         // 避免快捷键切换后留下不可见但仍接管键盘的 MenuKind。
@@ -3135,12 +3165,14 @@ impl AppView {
         self.timeline_following = true;
         // 会话切换：清空旧会话 diff 状态并重新拉取（拉取时机之一）。
         self.changes.reset_for_session();
-        // 子代理观测（浮层卡 + 对话栏）按会话绑定：切走即清空，不跨会话
-        // 展示旧会话的子代理。
-        self.projection.subagent_activity = Default::default();
-        self.projection.subagent_conversation = Default::default();
-        // 子代理对话栏同步归零：旧偏移 / 脱钩态不泄漏进新会话。
-        self.subagent_conversation_scroll.jump_to_bottom();
+        // 子代理观测按会话绑定。切到另一会话才清空并贴底，避免旧正文、
+        // 选中项和脱钩阅读位置泄漏。同一会话重开（SnapshotRequired /
+        // Fresh 重连）保留已加载对话，下面的 refresh 只重查权威数据。
+        if !reopening_current {
+            self.projection.subagent_activity = Default::default();
+            self.projection.subagent_conversation = Default::default();
+            self.subagent_conversation_scroll.jump_to_bottom();
+        }
         self.controller.open_session(session_id);
         self.refresh_changes(cx);
         if self.inspector_open && self.inspector_tab == InspectorTab::Resources {

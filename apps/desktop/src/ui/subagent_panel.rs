@@ -1888,37 +1888,154 @@ pub(super) fn subagent_ax(view: &AppView, window: &Window, frame: AxRect) -> AxN
 mod tests {
     use super::*;
 
-    /// RV-11 主路径：断线保留子代理面板已加载的代理列表与选中对话，只清
-    /// 在途瞬时标记并记录过期原因；阅读位置不重置贴底。
+    /// RV-11：断线保留子代理列表、选中正文和脱钩阅读位置；刷新 / 取消 /
+    /// 换代理以及过期回执都不改写。同一会话重连重查失败也不删内容。
+    /// 成功列表不再包含原选中代理时清除失效选中与旧正文，不停留 Loading。
+    /// 换会话才清空。
     #[gpui::test]
     fn disconnected_preserves_subagent_panel_content(cx: &mut gpui::TestAppContext) {
         let platform = std::sync::Arc::new(crate::platform::Platform::new());
         let socket = std::env::temp_dir().join("rv11-subagent-disconnected.sock");
         let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
-        cx.update(|_, cx| {
+        cx.simulate_resize(gpui::size(gpui::px(1440.0), gpui::px(800.0)));
+
+        let mut body = String::from("RV11-BODY-KEEP");
+        for index in 0..80 {
+            body.push(char::from(10));
+            body.push_str("kept-line-");
+            body.push_str(&index.to_string());
+        }
+        let body = body;
+
+        let (list_request, loaded_generation, in_flight_request) = cx.update(|_, cx| {
             view.update(cx, |view, cx| {
                 view.projection.active_session_id = Some("parent".into());
                 view.projection.connection = crate::projection::ConnectionState::Connected {
-                    instance_id: "test".into(),
+                    instance_id: "instance-1".into(),
                 };
-                let activity = &mut view.projection.subagent_activity;
-                activity.session_id = Some("parent".into());
-                activity.cancelling = Some("child-0".into());
-                activity.agents = vec![crate::projection::SubagentInfo {
-                    agent_id: "child-0".into(),
-                    session_id: "child-0".into(),
-                    parent_run_id: "run-0".into(),
-                    title: "Agent 0".into(),
-                    provider_id: "test-provider".into(),
-                    model_id: "test-model".into(),
-                    status: "running".into(),
-                    result: None,
-                    effort: None,
-                }];
-                view.projection
-                    .subagent_conversation
-                    .select_agent("child-0");
-                let request_id = view.projection.subagent_activity.begin_loading("parent");
+                view.inspector_open = true;
+                view.inspector_motion.width(
+                    true,
+                    true,
+                    std::time::Instant::now() - std::time::Duration::from_secs(1),
+                );
+                view.select_inspector_tab(super::super::inspector::InspectorTab::Subagent, cx);
+                let list_request = view.projection.subagent_activity.request_id;
+                assert_ne!(list_request, 0, "打开页签会发出列表查询");
+                assert_eq!(
+                    view.projection.subagent_activity.error.as_deref(),
+                    Some("not connected"),
+                    "没有 Host client 时列表查询当场失败"
+                );
+                view.handle_controller_event(
+                    crate::controller::ControllerEvent::SubagentListLoaded {
+                        session_id: "parent".into(),
+                        request_id: list_request,
+                        data: pawork_client::SubagentListData {
+                            agents: vec![running_agent("child-0"), running_agent("child-1")],
+                        },
+                    },
+                    cx,
+                );
+                assert_eq!(
+                    view.projection.subagent_conversation.agent_id.as_deref(),
+                    Some("child-0"),
+                    "列表到达且未选中时代理自动选中第一个运行中的子代理"
+                );
+                assert_eq!(view.projection.subagent_activity.agents.len(), 2);
+                assert_eq!(
+                    view.projection.subagent_activity.error.as_deref(),
+                    Some("not connected"),
+                    "选中触发的第二次刷新失败，但不删除已有代理"
+                );
+                let in_flight_request = view.projection.subagent_activity.request_id;
+                assert_ne!(in_flight_request, 0);
+                assert_ne!(in_flight_request, list_request);
+                view.projection.subagent_activity.cancelling = Some("child-0".into());
+                let loaded_generation = view.projection.subagent_conversation.load_generation;
+                view.handle_controller_event(
+                    crate::controller::ControllerEvent::SubagentTimelineLoaded {
+                        session_id: "child-0".into(),
+                        generation: loaded_generation,
+                        page: body_page(&body),
+                    },
+                    cx,
+                );
+                assert!(assistant_text(&view.projection.subagent_conversation)
+                    .starts_with("RV11-BODY-KEEP"));
+                view.projection.subagent_activity.error = None;
+                (list_request, loaded_generation, in_flight_request)
+            })
+        });
+        let _ = list_request;
+
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+
+        let wheel_at = cx.update(|_, cx| {
+            let current = view.read(cx);
+            let scroll = current.subagent_conversation_scroll.handle();
+            let max = f32::from(scroll.max_offset().height);
+            assert!(
+                max > 200.0,
+                "fixture must overflow the transcript, max_offset={max}"
+            );
+            assert!(
+                current.subagent_conversation_scroll.is_following()
+                    && current.subagent_conversation_scroll.is_scrolled_to_bottom(),
+                "loaded transcript starts following the bottom"
+            );
+            let bounds = scroll.bounds();
+            assert!(
+                f32::from(bounds.size.width) > 16.0 && f32::from(bounds.size.height) > 16.0,
+                "transcript viewport {bounds:?}"
+            );
+            gpui::point(
+                bounds.origin.x + gpui::px(8.0),
+                bounds.origin.y + gpui::px(8.0),
+            )
+        });
+
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: wheel_at,
+            delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(-160.0))),
+            ..Default::default()
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let current = view.read(cx);
+            assert!(
+                current.subagent_conversation_scroll.is_following()
+                    && current.subagent_conversation_scroll.is_scrolled_to_bottom(),
+                "negative wheel at the bottom stays clamped"
+            );
+        });
+
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: wheel_at,
+            delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(160.0))),
+            ..Default::default()
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+
+        let (parked_following, parked_offset) = cx.update(|_, cx| {
+            let current = view.read(cx);
+            assert!(
+                !current.subagent_conversation_scroll.is_following()
+                    && !current.subagent_conversation_scroll.is_scrolled_to_bottom(),
+                "positive wheel leaves the bottom and unhooks"
+            );
+            (
+                current.subagent_conversation_scroll.is_following(),
+                current.subagent_conversation_scroll.handle().offset(),
+            )
+        });
+
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                let generation_before = view.projection.subagent_conversation.load_generation;
                 view.handle_controller_event(
                     crate::controller::ControllerEvent::Disconnected {
                         reason: "socket closed".into(),
@@ -1926,45 +2043,406 @@ mod tests {
                     cx,
                 );
                 let activity = &view.projection.subagent_activity;
-                assert_eq!(activity.agents.len(), 1, "断线保留代理列表");
+                assert_eq!(
+                    activity
+                        .agents
+                        .iter()
+                        .map(|agent| agent.agent_id.as_str())
+                        .collect::<Vec<_>>(),
+                    vec!["child-0", "child-1"]
+                );
                 assert!(!activity.loading);
-                assert!(activity.cancelling.is_none(), "在途取消不会再有回执");
-                assert_eq!(
-                    activity.stale_reason.as_deref(),
-                    Some("socket closed"),
-                    "记录原始 reason 供本地化前缀展示"
-                );
+                assert!(activity.cancelling.is_none());
+                assert_eq!(activity.request_id, 0);
+                assert_eq!(activity.stale_reason.as_deref(), Some("socket closed"));
+                assert!(activity.error.is_none());
                 let conversation = &view.projection.subagent_conversation;
-                assert_eq!(
-                    conversation.agent_id.as_deref(),
-                    Some("child-0"),
-                    "断线保留选中代理"
-                );
+                assert_eq!(conversation.agent_id.as_deref(), Some("child-0"));
                 assert!(!conversation.loading);
-                assert!(matches!(
-                    view.projection.connection,
-                    crate::projection::ConnectionState::Disconnected { .. }
-                ));
-                view.select_subagent_agent("child-other", cx);
+                assert!(conversation.error.is_none());
+                assert_eq!(conversation.load_generation, generation_before + 1);
+                assert_eq!(assistant_text(conversation), body);
                 assert_eq!(
-                    view.projection.subagent_conversation.agent_id.as_deref(),
-                    Some("child-0")
+                    view.subagent_conversation_scroll.is_following(),
+                    parked_following
                 );
-                view.handle_controller_event(
-                    crate::controller::ControllerEvent::SubagentListLoaded {
-                        session_id: "parent".into(),
-                        request_id,
-                        data: pawork_client::SubagentListData { agents: Vec::new() },
-                    },
-                    cx,
+                assert_eq!(
+                    view.subagent_conversation_scroll.handle().offset(),
+                    parked_offset
                 );
-                assert_eq!(view.projection.subagent_activity.agents.len(), 1);
+
+                view.refresh_subagent_conversation();
+                view.cancel_selected_subagent(cx);
+                view.select_subagent_agent("child-1", cx);
+                assert_eq!(view.projection.subagent_activity.request_id, 0);
                 assert_eq!(
                     view.projection.subagent_activity.stale_reason.as_deref(),
                     Some("socket closed")
                 );
+                assert!(view.projection.subagent_activity.cancelling.is_none());
+                assert_eq!(
+                    view.projection.subagent_conversation.agent_id.as_deref(),
+                    Some("child-0")
+                );
+                assert_eq!(
+                    view.projection.subagent_conversation.load_generation,
+                    generation_before + 1
+                );
+
+                view.handle_controller_event(
+                    crate::controller::ControllerEvent::SubagentListLoaded {
+                        session_id: "parent".into(),
+                        request_id: in_flight_request,
+                        data: pawork_client::SubagentListData { agents: Vec::new() },
+                    },
+                    cx,
+                );
+                view.handle_controller_event(
+                    crate::controller::ControllerEvent::SubagentListLoaded {
+                        session_id: "other-session".into(),
+                        request_id: in_flight_request,
+                        data: pawork_client::SubagentListData {
+                            agents: vec![running_agent("child-foreign")],
+                        },
+                    },
+                    cx,
+                );
+                view.handle_controller_event(
+                    crate::controller::ControllerEvent::SubagentTimelineLoaded {
+                        session_id: "child-0".into(),
+                        generation: loaded_generation,
+                        page: timeline_page(vec![history_item(
+                            99,
+                            "assistant_message",
+                            serde_json::json!({
+                                "text": "RV11-OLD-GEN",
+                                "message_id": "m-old"
+                            }),
+                        )]),
+                    },
+                    cx,
+                );
+                view.handle_controller_event(
+                    crate::controller::ControllerEvent::SubagentTimelineFailed {
+                        session_id: "child-1".into(),
+                        generation: view.projection.subagent_conversation.load_generation,
+                        reason: "other agent".into(),
+                    },
+                    cx,
+                );
+                assert_eq!(view.projection.subagent_activity.agents.len(), 2);
+                assert_eq!(assistant_text(&view.projection.subagent_conversation), body);
+                assert!(view.projection.subagent_conversation.error.is_none());
+                assert!(!assistant_text(&view.projection.subagent_conversation)
+                    .contains("RV11-OLD-GEN"));
             });
         });
+
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let current = view.read(cx);
+            assert_eq!(
+                current.subagent_conversation_scroll.handle().offset(),
+                parked_offset
+            );
+            assert!(!current.subagent_conversation_scroll.is_following());
+            let tree = current.accessibility_tree(window, cx);
+            let group = tree.find("inspector-subagent").expect("subagent group");
+            let value = group.value.clone().unwrap_or_default();
+            let banner = t("subagents.stale_banner");
+            assert_eq!(banner, "Disconnected · content may be outdated");
+            assert!(value.contains(banner), "{value}");
+            assert!(value.contains(" · socket closed"), "{value}");
+            assert!(!value.contains("Loading"), "{value}");
+            for id in [
+                "subagent-refresh",
+                "subagent-cancel",
+                "subagent-select-child-0",
+                "subagent-select-child-1",
+            ] {
+                let node = tree
+                    .find(id)
+                    .unwrap_or_else(|| panic!("{id} missing from AX"));
+                assert!(!node.enabled, "{id} must be disabled while disconnected");
+            }
+        });
+
+        {
+            let mut reconnect =
+                |disposition: pawork_client::ResumeDisposition,
+                 snapshot: Option<pawork_client::Snapshot>| {
+                    cx.update(|_, cx| {
+                        view.update(cx, |view, cx| {
+                            let (sender, receiver) = smol::channel::bounded(4);
+                            view.on_connected(
+                                rv11_snapshot(),
+                                Some(pawork_client::ResumeOutcome {
+                                    disposition,
+                                    replayed: Vec::new(),
+                                    snapshot,
+                                }),
+                                rv11_handshake(),
+                                receiver,
+                                cx,
+                            );
+                            drop(sender);
+                        });
+                    });
+                    cx.run_until_parked();
+                };
+            reconnect(
+                pawork_client::ResumeDisposition::UpToDate {
+                    current_sequence: pawork_client::GlobalSequence(4),
+                },
+                None,
+            );
+            reconnect(
+                pawork_client::ResumeDisposition::SnapshotRequired {
+                    earliest_available_sequence: pawork_client::GlobalSequence(1),
+                },
+                Some(rv11_snapshot()),
+            );
+        }
+
+        let live_generation = cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                assert!(matches!(
+                    view.projection.connection,
+                    crate::projection::ConnectionState::Connected { .. }
+                ));
+                assert_eq!(view.projection.subagent_activity.agents.len(), 2);
+                assert_eq!(
+                    view.projection.subagent_activity.error.as_deref(),
+                    Some("not connected")
+                );
+                assert!(view.projection.subagent_activity.stale_reason.is_none());
+                assert_eq!(
+                    view.projection.subagent_conversation.agent_id.as_deref(),
+                    Some("child-0")
+                );
+                assert_eq!(assistant_text(&view.projection.subagent_conversation), body);
+                assert!(!view.subagent_conversation_scroll.is_following());
+                assert_eq!(
+                    view.subagent_conversation_scroll.handle().offset(),
+                    parked_offset
+                );
+                let live_generation = view.projection.subagent_conversation.load_generation;
+                assert!(live_generation > loaded_generation);
+                view.handle_controller_event(
+                    crate::controller::ControllerEvent::SubagentTimelineFailed {
+                        session_id: "child-0".into(),
+                        generation: live_generation.saturating_sub(1),
+                        reason: "previous generation".into(),
+                    },
+                    cx,
+                );
+                assert!(view.projection.subagent_conversation.error.is_none());
+                view.handle_controller_event(
+                    crate::controller::ControllerEvent::SubagentTimelineLoaded {
+                        session_id: "child-0".into(),
+                        generation: live_generation,
+                        page: body_page(&body),
+                    },
+                    cx,
+                );
+                let conversation = &view.projection.subagent_conversation;
+                assert_eq!(conversation.timeline.len(), 1);
+                assert_eq!(
+                    assistant_text(conversation)
+                        .matches("RV11-BODY-KEEP")
+                        .count(),
+                    1
+                );
+                assert!(conversation.error.is_none());
+                assert!(!conversation.loading);
+                assert!(!view.subagent_conversation_scroll.is_following());
+                assert_eq!(
+                    view.subagent_conversation_scroll.handle().offset(),
+                    parked_offset
+                );
+                live_generation
+            })
+        });
+
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                let request_id = view.projection.subagent_activity.begin_loading("parent");
+                view.handle_controller_event(
+                    crate::controller::ControllerEvent::SubagentListLoaded {
+                        session_id: "parent".into(),
+                        request_id,
+                        data: pawork_client::SubagentListData {
+                            agents: vec![running_agent("child-1")],
+                        },
+                    },
+                    cx,
+                );
+                assert_eq!(
+                    view.projection
+                        .subagent_activity
+                        .agents
+                        .iter()
+                        .map(|agent| agent.agent_id.as_str())
+                        .collect::<Vec<_>>(),
+                    vec!["child-1"],
+                    "权威列表移除原选中代理后只保留仍在列表中的代理"
+                );
+                assert!(!view.projection.subagent_activity.loading);
+                assert!(view.projection.subagent_activity.error.is_none());
+                assert!(view.projection.subagent_activity.stale_reason.is_none());
+                assert!(view.projection.subagent_conversation.agent_id.is_none());
+                assert!(view.projection.subagent_conversation.timeline.is_empty());
+                assert!(!view.projection.subagent_conversation.loading);
+                assert!(view.projection.subagent_conversation.error.is_none());
+                assert!(!assistant_text(&view.projection.subagent_conversation)
+                    .contains("RV11-BODY-KEEP"));
+                assert!(view.subagent_conversation_scroll.is_following());
+                view.handle_controller_event(
+                    crate::controller::ControllerEvent::SubagentTimelineLoaded {
+                        session_id: "child-0".into(),
+                        generation: live_generation,
+                        page: body_page("RV11-REMOVED-BODY"),
+                    },
+                    cx,
+                );
+                assert!(view.projection.subagent_conversation.agent_id.is_none());
+                assert!(view.projection.subagent_conversation.timeline.is_empty());
+                assert!(!view.projection.subagent_conversation.loading);
+            });
+        });
+
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let current = view.read(cx);
+            let tree = current.accessibility_tree(window, cx);
+            let group = tree.find("inspector-subagent").expect("subagent group");
+            let value = group.value.clone().unwrap_or_default();
+            assert_eq!(value, "No subagent selected", "{value}");
+            assert!(!value.contains("Loading"), "{value}");
+            assert!(!value.contains("RV11-BODY-KEEP"), "{value}");
+            assert!(tree.find("subagent-select-child-0").is_none());
+            let kept = tree
+                .find("subagent-select-child-1")
+                .expect("remaining agent chip");
+            assert!(kept.enabled);
+        });
+
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.select_subagent_agent("child-1", cx);
+                assert_eq!(
+                    view.projection.subagent_conversation.agent_id.as_deref(),
+                    Some("child-1")
+                );
+                assert!(view.projection.subagent_conversation.timeline.is_empty());
+                assert!(view.subagent_conversation_scroll.is_following());
+                let parent_request = view.projection.subagent_activity.request_id;
+                view.open_session("other-task".into(), cx);
+                assert!(view.projection.subagent_conversation.agent_id.is_none());
+                assert!(view.projection.subagent_conversation.timeline.is_empty());
+                assert!(view.projection.subagent_activity.agents.is_empty());
+                assert_eq!(
+                    view.projection.subagent_activity.session_id.as_deref(),
+                    Some("other-task")
+                );
+                assert!(view.subagent_conversation_scroll.is_following());
+                view.handle_controller_event(
+                    crate::controller::ControllerEvent::SubagentTimelineLoaded {
+                        session_id: "child-0".into(),
+                        generation: live_generation,
+                        page: timeline_page(vec![history_item(
+                            7,
+                            "assistant_message",
+                            serde_json::json!({
+                                "text": "RV11-LEAK",
+                                "message_id": "m-leak"
+                            }),
+                        )]),
+                    },
+                    cx,
+                );
+                view.handle_controller_event(
+                    crate::controller::ControllerEvent::SubagentListLoaded {
+                        session_id: "parent".into(),
+                        request_id: parent_request,
+                        data: pawork_client::SubagentListData {
+                            agents: vec![running_agent("child-0"), running_agent("child-1")],
+                        },
+                    },
+                    cx,
+                );
+                assert!(view.projection.subagent_conversation.agent_id.is_none());
+                assert!(view.projection.subagent_conversation.timeline.is_empty());
+                assert!(view.projection.subagent_activity.agents.is_empty());
+                assert_eq!(
+                    view.projection.subagent_activity.session_id.as_deref(),
+                    Some("other-task")
+                );
+                assert!(
+                    !assistant_text(&view.projection.subagent_conversation).contains("RV11-LEAK")
+                );
+            });
+        });
+    }
+
+    fn running_agent(id: &str) -> crate::projection::SubagentInfo {
+        crate::projection::SubagentInfo {
+            agent_id: id.into(),
+            session_id: id.into(),
+            parent_run_id: "run-0".into(),
+            title: format!("Agent {id}"),
+            provider_id: "test-provider".into(),
+            model_id: "test-model".into(),
+            status: "running".into(),
+            result: None,
+            effort: None,
+        }
+    }
+
+    fn body_page(text: &str) -> pawork_client::TimelinePage {
+        timeline_page(vec![history_item(
+            1,
+            "assistant_message",
+            serde_json::json!({ "text": text, "message_id": "m-rv11" }),
+        )])
+    }
+
+    fn assistant_text(conversation: &SubagentConversationState) -> String {
+        conversation
+            .timeline
+            .iter()
+            .find_map(|entry| match &entry.kind {
+                crate::projection::TimelineEntryKind::AssistantMessage { text } => {
+                    Some(text.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    fn rv11_snapshot() -> pawork_client::Snapshot {
+        serde_json::from_value(serde_json::json!({
+            "instance_id": "instance-1",
+            "snapshot_sequence": 4,
+            "generated_at": 4,
+            "sections": [{
+                "kind": "session_tree",
+                "revision": 1,
+                "data": [{ "session_id": "parent", "title": "Parent", "updated_at_ms": 4 }]
+            }]
+        }))
+        .expect("rv11 snapshot")
+    }
+
+    fn rv11_handshake() -> crate::controller::DesktopHandshakeInfo {
+        crate::controller::DesktopHandshakeInfo {
+            runtime_id: "runtime-rv11".into(),
+            api_version: "1.9".into(),
+            capabilities: vec!["events".into(), "snapshots".into()],
+            host_data_dir: None,
+        }
     }
 
     fn history_item(sequence: u64, kind: &str, extra: serde_json::Value) -> serde_json::Value {
