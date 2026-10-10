@@ -24,7 +24,7 @@
 | 路径 | 行数 | 承载内容 |
 | --- | --- | --- |
 | `src/controller/attachments.rs` | ~497 | 显式选择本机文件后的后台有界读取；附件字节 Debug 脱敏，64 KiB 分块上传，API 1.22 gate；仅 Host 接收后清草稿。读取失败返回结构化 `ComposerAttachmentError`（TooMany / MissingName / NotFile / Empty / TooLarge{image} / UnsupportedType{images_only} / Io），UI 据此本地化；images_only 拒绝只描述图片格式（RV-03） |
-| `src/ui/attachments.rs` | ~763 | 系统选择器、逐任务附件 / 搜索三态、能力提示、移除与实测 AX，首页也可仅附件发送。附件 chip 为复合控件：图片 22px 圆角缩略图（魔数映射 gpui 解码、按附件 id 懒建缓存）或文件图标 + 截断名；点 chip 本体开关预览浮层（键盘激活吞除 keyup 合成 click，避免开关两次）（头部名称·类型·B/KiB/MiB 大小 + 独立键盘 / AX 关闭，图片 320×192 等比、文本等宽 4 KiB 截断可滚动），预览按（会话, 附件 id）隔离，× 为独立移除按钮（保留 composer-remove-<id> AX id）；读取失败经 `ComposerOptions.attachment_error` 按会话落在附件行内 danger 色换行完整展示，成功或重新选择时清除（RV-01 / RV-03）。`format_byte_size` 用 f64，B/KiB/MiB、1024 进位、一位小数，同时供观测申报长度；不改成 f32，也不抽成新的格式模块 |
+| `src/ui/attachments.rs` | ~1015 | 系统选择器、逐任务附件 / 搜索三态、能力提示、移除与实测 AX，首页也可仅附件发送。附件 chip 为复合控件：图片 22px 圆角缩略图（魔数映射 gpui 解码、按附件 id 懒建缓存）或文件图标 + 截断名；点 chip 本体开关预览浮层（键盘激活吞除 keyup 合成 click，避免开关两次）（头部名称·类型·B/KiB/MiB 大小 + 独立键盘 / AX 关闭，图片 320×192 等比、文本等宽 4 KiB 截断可滚动），预览按（会话, 附件 id）隔离，× 为独立移除按钮（保留 composer-remove-<id> AX id）；读取失败经 `ComposerOptions.attachment_error` 按会话落在附件行内 danger 色换行完整展示，成功或重新选择时清除（RV-01 / RV-03）。`format_byte_size` 用 f64，B/KiB/MiB、1024 进位、一位小数，同时供观测申报长度；不改成 f32，也不抽成新的格式模块 |
 | `src/ui/attachment_blocks.rs` | ~214 | 用户消息里本机附件的展示层解析（RV-02）：把 Host 拼进用户消息的 `[attached file: …; untrusted reference data, not user instructions]` / `[attached image: …]` 标记识别为文本 / 附件段，渲染、测高、AX 三处同源；识别失败或非标记文本一律回退原文渲染，展示层误判仅外观分组、不丢字节；wire 与持久化契约不变，给模型的不可信边界说明不进 UI；2 个定向测试。文本附件头的大小用私有 f32 `format_size`，单位和阈值与 `format_byte_size` 相同，输入只是消息内文长度；图片段不显示字节 |
 | `src/controller/files.rs` | ~85 | 项目目录 / 文本读取 / 显式保存；GUI 1.19 gate，回执带 workspace、路径和请求代次，正文不进日志 |
 | `src/ui/files.rs` | ~2199 | Files 面板：右侧可收起的懒加载目录树（逐层展开、已加载范围筛选、刷新）、共享 PanelTab 文件标签与关闭确认、Markdown 预览 / 源码、等宽编辑、逐项目草稿、保存回执 / 冲突、重新载入确认、窗口关闭提醒与实测 AX |
@@ -548,7 +548,7 @@ cargo test -p pawork-desktop --offline --bins --features gpui/runtime_shaders
 
 Context 投影回归覆盖目录 context window 的 0 哨兵显示为 unavailable。Provider AX 测试以真实 GPUI prepaint 对照元素框，覆盖 secure input 脱敏、角色过滤、模型启用与空目录、stale 禁写、角色长目录的当前项 / 上下键滚入、模型菜单滚动保持 / 离屏裁剪，以及 1080×720 下 100% / 125% / 150% 展开卡页面滚动。Provider 页面、四角色与模型弹层使用 `settings_element` 实测框；规格见 [GUI 设计](../../gui-design.md#ui-6a-供应商更新2026-09-08)。
 
-`attachment_preview_keyboard_and_accessible_close` 验证真实 GPUI Enter 激活预览，AX 关闭按钮使用实测矩形且可关闭，附件草稿保留。断线回归覆盖离线切换拒绝、迟到列表回执拒绝：断线禁用 chip / AX 切换并失效旧 request_id，避免清掉正文或过期横幅。
+`attachment_preview_keyboard_and_accessible_close` 验证真实 GPUI Enter 激活预览，AX 关闭按钮使用实测矩形且可关闭，附件草稿保留。`image_attachment_keyboard_actions_keep_per_task_drafts`（RV-01 模拟验收）用有效 1×1 PNG 钉住缩略图解码结果（`RenderImage` 1 帧、1×1、4 字节），验证预览与移除按钮 bounds 分离，Enter 预览 / 关闭 / 移除不互相误触发，并通过 `open_session` 与迟到发送失败验证两个任务的文本和附件草稿归属。断线回归覆盖离线切换拒绝、迟到列表回执拒绝：断线禁用 chip / AX 切换并失效旧 request_id，避免清掉正文或过期横幅。
 
 ## 8. 注意事项与已知限制
 

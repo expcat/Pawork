@@ -783,4 +783,233 @@ mod tests {
             })
         });
     }
+
+    /// RV-01：图片缩略图、预览和移除是独立键盘动作；切任务与迟到发送失败
+    /// 不把文本或附件草稿带到另一个任务。
+    #[gpui::test]
+    fn image_attachment_keyboard_actions_keep_per_task_drafts(cx: &mut gpui::TestAppContext) {
+        use gpui::{px, size};
+        // 1×1 RGB PNG。sips 读到 pixelWidth/pixelHeight 均为 1；无效魔数不能代替它。
+        const SHOT_PNG: &[u8] = &[
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
+            0x00, 0x90, 0x77, 0x53, 0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00, 0xc9, 0xfe, 0x92,
+            0xef, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ];
+        let platform = Arc::new(Platform::new());
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            AppView::new(
+                platform,
+                std::env::temp_dir().join("rv01-image-attachment.sock"),
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        cx.simulate_resize(size(px(1440.0), px(1024.0)));
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.active_session_id = Some("task-a".into());
+                view.text_input
+                    .update(cx, |input, cx| input.set_text("甲草稿", cx));
+                view.composer_options.insert(
+                    Some("task-a".into()),
+                    ComposerOptions {
+                        attachments: vec![ComposerAttachment {
+                            id: "shot".into(),
+                            name: "shot.png".into(),
+                            bytes: Arc::new(SHOT_PNG.to_vec()),
+                            image: true,
+                        }],
+                        ..Default::default()
+                    },
+                );
+                view.composer_drafts
+                    .insert("task-b".into(), "乙草稿".into());
+                view.composer_options.insert(
+                    Some("task-b".into()),
+                    ComposerOptions {
+                        attachments: vec![ComposerAttachment {
+                            id: "note".into(),
+                            name: "note.txt".into(),
+                            bytes: Arc::new(b"note".to_vec()),
+                            image: false,
+                        }],
+                        ..Default::default()
+                    },
+                );
+                cx.notify();
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        let preview_bounds = cx
+            .debug_bounds("composer-preview-shot")
+            .expect("thumbnail chip bounds");
+        let remove_bounds = cx
+            .debug_bounds("composer-remove-shot")
+            .expect("remove button bounds");
+        let preview_right =
+            f32::from(preview_bounds.origin.x) + f32::from(preview_bounds.size.width);
+        assert!(f32::from(preview_bounds.size.width) > 0.0);
+        assert!(f32::from(preview_bounds.size.height) > 0.0);
+        assert!(f32::from(remove_bounds.size.width) > 0.0);
+        assert!(f32::from(remove_bounds.size.height) > 0.0);
+        assert!(
+            f32::from(remove_bounds.origin.x) + 0.5 >= preview_right,
+            "remove hit target overlaps the thumbnail chip"
+        );
+        cx.update(|_, cx| {
+            view.update(cx, |view, _| {
+                assert!(
+                    view.composer_attachment_images.contains_key("shot"),
+                    "png magic must take the thumbnail decode path"
+                );
+                assert!(!view.composer_attachment_images.contains_key("note"));
+                assert!(view.composer_attachment_preview.is_none());
+            });
+        });
+        cx.update(|window, cx| {
+            let image = view
+                .read(cx)
+                .composer_attachment_images
+                .get("shot")
+                .cloned()
+                .expect("thumbnail image");
+            let rendered = image
+                .get_render_image(window, cx)
+                .expect("layout must finish decoding the png");
+            assert_eq!(rendered.frame_count(), 1);
+            let decoded = rendered.size(0);
+            assert_eq!((decoded.width.0, decoded.height.0), (1, 1));
+            assert_eq!(rendered.as_bytes(0).map(|bytes| bytes.len()), Some(4));
+        });
+
+        cx.update(|window, cx| {
+            window.focus(&view.read(cx).settings_action_focus["composer-preview-shot"]);
+        });
+        cx.refresh().unwrap();
+        cx.simulate_keystrokes("enter");
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                let target = view
+                    .composer_attachment_preview_target()
+                    .expect("keyboard preview opens the image");
+                assert_eq!(target.id, "shot");
+                assert!(target.image);
+                let image_label = view.composer_attachment_meta_label(&target);
+                let text_label = view.composer_attachment_meta_label(&ComposerAttachment {
+                    id: "note".into(),
+                    name: "note.txt".into(),
+                    bytes: Arc::new(b"note".to_vec()),
+                    image: false,
+                });
+                assert!(image_label.ends_with(" · 69 B"));
+                assert_ne!(image_label, text_label);
+                assert!(text_label.ends_with(" · 4 B"));
+                assert_eq!(view.current_composer_options().attachments.len(), 1);
+                assert_eq!(view.text_input.read(cx).text(), "甲草稿");
+                assert_eq!(
+                    view.composer_attachment_preview
+                        .as_ref()
+                        .map(|(_, id)| id.as_str()),
+                    Some("shot")
+                );
+            });
+        });
+
+        cx.refresh().unwrap();
+        cx.update(|window, cx| {
+            window.focus(&view.read(cx).settings_action_focus["composer-preview-close"]);
+        });
+        cx.refresh().unwrap();
+        cx.simulate_keystrokes("enter");
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                assert!(view.composer_attachment_preview.is_none());
+                assert_eq!(view.current_composer_options().attachments.len(), 1);
+                assert_eq!(view.text_input.read(cx).text(), "甲草稿");
+            });
+        });
+
+        let reason = "model_disabled: 当前模型已被禁用";
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.composer_sending = true;
+                view.composer_send_target = Some("task-a".into());
+                view.open_session("task-b".into(), cx);
+                assert_eq!(view.text_input.read(cx).text(), "乙草稿");
+                assert_eq!(view.current_composer_options().attachments[0].id, "note");
+                assert!(view.composer_attachment_preview_target().is_none());
+                assert_eq!(
+                    view.composer_drafts.get("task-a").map(String::as_str),
+                    Some("甲草稿")
+                );
+                assert_eq!(
+                    view.composer_options
+                        .get(&Some("task-a".into()))
+                        .map(|options| options.attachments[0].id.as_str()),
+                    Some("shot")
+                );
+                view.handle_controller_event(
+                    ControllerEvent::OperationFailed {
+                        action: "send message".into(),
+                        reason: reason.into(),
+                    },
+                    cx,
+                );
+                assert_eq!(view.text_input.read(cx).text(), "乙草稿");
+                assert_eq!(view.current_composer_options().attachments[0].id, "note");
+                assert!(view.current_composer_send_error().is_none());
+                assert_eq!(
+                    view.composer_send_errors
+                        .get(&Some("task-a".into()))
+                        .map(String::as_str),
+                    Some(reason)
+                );
+                assert_eq!(
+                    view.composer_options
+                        .get(&Some("task-a".into()))
+                        .map(|options| options.attachments.len()),
+                    Some(1)
+                );
+                view.open_session("task-a".into(), cx);
+                assert_eq!(view.text_input.read(cx).text(), "甲草稿");
+                assert_eq!(view.current_composer_options().attachments[0].id, "shot");
+                assert_eq!(view.current_composer_send_error(), Some(reason));
+                assert_eq!(
+                    view.composer_drafts.get("task-b").map(String::as_str),
+                    Some("乙草稿")
+                );
+            });
+        });
+
+        cx.refresh().unwrap();
+        cx.update(|window, cx| {
+            window.focus(&view.read(cx).settings_action_focus["composer-remove-shot"]);
+        });
+        cx.refresh().unwrap();
+        cx.simulate_keystrokes("enter");
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                assert!(
+                    view.composer_attachment_preview.is_none(),
+                    "remove must not open preview"
+                );
+                assert!(view.current_composer_options().attachments.is_empty());
+                assert_eq!(view.text_input.read(cx).text(), "甲草稿");
+                assert_eq!(
+                    view.composer_options
+                        .get(&Some("task-b".into()))
+                        .map(|options| options.attachments[0].id.as_str()),
+                    Some("note")
+                );
+                assert_eq!(
+                    view.composer_drafts.get("task-b").map(String::as_str),
+                    Some("乙草稿")
+                );
+            });
+        });
+    }
 }
