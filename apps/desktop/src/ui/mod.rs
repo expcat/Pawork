@@ -5139,6 +5139,12 @@ impl AppView {
     }
 
     fn send_current_message(&mut self, cx: &mut Context<Self>) {
+        // Settings 等非工作台页的可写 TextInput 与 Composer 共用 Enter。
+        // 搜索框和账号改名在到达这里之前返回；工作台内查找不改变路由，
+        // 显式 AX Send 仍走下面的发送。
+        if self.route != AppRoute::Workspace {
+            return;
+        }
         if !self.can_send(cx) {
             return;
         }

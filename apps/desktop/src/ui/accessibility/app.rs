@@ -11127,6 +11127,370 @@ mod tests {
         });
     }
 
+    /// GUI2-07：1440×1024 上项目任务与无项目任务的草稿穿过查找、Changes
+    /// 面板和 Settings 后仍归原任务。查找 Enter 只步进命中；Network 代理
+    /// 输入的 Enter 不发送隐藏草稿；断线不允许 Send。重连并有一个模型后，
+    /// AX Send 只锁住本地 sending / target，两条草稿都还在，也不产生
+    /// local-echo。切到另一任务后再注入 MessageSent 只清回执会话的草稿，
+    /// 不上屏到当前任务。没有 Host RunStart 回执，不能当成 Host 已接受。
+    #[gpui::test]
+    fn main_path_keeps_draft_ownership_across_surfaces(cx: &mut gpui::TestAppContext) {
+        use gpui::{px, size};
+
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("gui2-07-main-path.sock");
+        let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
+        cx.run_until_parked();
+        cx.update(|_, cx| crate::ui::install_keybindings(cx));
+        cx.simulate_resize(size(px(1440.0), px(1024.0)));
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.set_connection(ConnectionState::Connected {
+                    instance_id: "gui2-07".into(),
+                });
+                cx.notify();
+            })
+        });
+
+        let snapshot: pawork_client::Snapshot = serde_json::from_value(serde_json::json!({
+            "instance_id": "gui2-07",
+            "snapshot_sequence": 1,
+            "generated_at": 1,
+            "sections": [
+                {"kind": "workspaces", "revision": 1, "data": [
+                    {"id": "ws-a", "name": "Alpha", "trusted": true}
+                ]},
+                {"kind": "session_tree", "revision": 1, "data": [
+                    {"session_id": "s-free", "title": "Free notes", "updated_at_ms": 2},
+                    {
+                        "session_id": "s-alpha",
+                        "title": "Alpha notes",
+                        "workspace_id": "ws-a",
+                        "updated_at_ms": 1
+                    }
+                ]}
+            ]
+        }))
+        .expect("main path snapshot");
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.merge_snapshot(&snapshot);
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+
+        press_published_ax(cx, &view, "session-s-alpha");
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.text_input
+                    .update(cx, |input, cx| input.reset_text("项目草稿", cx));
+            })
+        });
+        press_published_ax(cx, &view, "session-s-free");
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.text_input
+                    .update(cx, |input, cx| input.reset_text("自由草稿", cx));
+                view.projection
+                    .timeline
+                    .entries
+                    .push(user_message(1, "loaded user turn"));
+                view.projection.timeline.entries.push(TimelineEntry {
+                    sequence: 2,
+                    event_id: "e2".into(),
+                    kind: TimelineEntryKind::AssistantMessage {
+                        text: "loaded reply".into(),
+                    },
+                    fork_boundary: None,
+                    timestamp: "2".into(),
+                    run_id: Some("r-1".into()),
+                });
+                view.timeline_changed();
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+
+        press_published_ax(cx, &view, "timeline-find");
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                assert!(view.navigation_open());
+                assert!(view.navigation_input_focused(window));
+                let request = AxRequest {
+                    identifier: "timeline-find-input".into(),
+                    action: AxAction::SetValue,
+                    value: Some("loaded".into()),
+                };
+                assert!(view.accessibility_tree(window, cx).permits(&request));
+                view.handle_accessibility_request(request, window, cx);
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert_eq!(
+                view.accessibility_tree(window, cx)
+                    .find("timeline-nav-count")
+                    .unwrap()
+                    .label,
+                "1 / 2"
+            );
+        });
+        cx.simulate_keystrokes("enter");
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert!(view.navigation_open());
+            assert!(!view.composer_sending);
+            assert!(view.composer_send_target.is_none());
+            assert_eq!(view.text_input.read(cx).text(), "自由草稿");
+            assert_eq!(
+                view.composer_drafts.get("s-alpha").map(String::as_str),
+                Some("项目草稿")
+            );
+            assert_eq!(
+                view.accessibility_tree(window, cx)
+                    .find("timeline-nav-count")
+                    .unwrap()
+                    .label,
+                "2 / 2"
+            );
+            assert!(view
+                .projection
+                .timeline
+                .iter()
+                .all(|entry| !entry.event_id.starts_with("local-echo")));
+        });
+        press_published_ax(cx, &view, "timeline-nav-close");
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert!(!view.navigation_open());
+            assert!(
+                view.accessibility_tree(window, cx)
+                    .find("timeline-find")
+                    .unwrap()
+                    .focused
+            );
+        });
+
+        press_published_ax(cx, &view, "inspector-expand");
+        // 并排开合是 180ms，测试执行器不推动 Instant。插到终宽后 Changes
+        // 入口才有实测布局，AX 才能发布 Press。
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.inspector_motion.snap(metrics::INSPECTOR_WIDTH);
+                cx.notify();
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        press_published_ax(cx, &view, "inspector-tab-changes");
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert_eq!(view.inspector_tab, InspectorTab::Changes);
+            assert!(view
+                .accessibility_tree(window, cx)
+                .find("changes")
+                .is_some());
+        });
+        press_published_ax(cx, &view, "inspector-collapse");
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.inspector_motion.snap(0.0);
+                cx.notify();
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert!(!view.inspector_open);
+            assert!(view.inspector_activity_focus.is_focused(window));
+            assert_eq!(view.projection.active_session_id.as_deref(), Some("s-free"));
+            assert_eq!(view.text_input.read(cx).text(), "自由草稿");
+            assert_eq!(
+                view.composer_drafts.get("s-alpha").map(String::as_str),
+                Some("项目草稿")
+            );
+        });
+
+        press_published_ax(cx, &view, "open-settings");
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                assert_eq!(view.route, AppRoute::Settings);
+                view.projection.settings_general.mark_ready();
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        press_published_ax(cx, &view, "settings-nav-general");
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                let request = AxRequest {
+                    identifier: "settings-proxy-input".into(),
+                    action: AxAction::Focus,
+                    value: None,
+                };
+                assert!(
+                    view.accessibility_tree(window, cx).permits(&request),
+                    "network proxy input must accept focus"
+                );
+                view.handle_accessibility_request(request, window, cx);
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert!(view
+                .settings_proxy_input
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window));
+        });
+        cx.simulate_keystrokes("enter");
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let view = view.read(cx);
+            assert!(
+                !view.composer_sending,
+                "settings proxy Enter must not dispatch the hidden workspace draft"
+            );
+            assert!(view.composer_send_target.is_none());
+            assert_eq!(view.text_input.read(cx).text(), "自由草稿");
+            assert_eq!(
+                view.composer_drafts.get("s-alpha").map(String::as_str),
+                Some("项目草稿")
+            );
+            assert_eq!(view.route, AppRoute::Settings);
+        });
+
+        press_published_ax(cx, &view, "settings-back");
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert_eq!(view.route, AppRoute::Workspace);
+            assert_eq!(view.projection.active_session_id.as_deref(), Some("s-free"));
+            assert_eq!(view.text_input.read(cx).text(), "自由草稿");
+            assert_eq!(
+                view.composer_drafts.get("s-alpha").map(String::as_str),
+                Some("项目草稿")
+            );
+            assert!(view.settings_focus.is_focused(window));
+        });
+
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection
+                    .set_connection(ConnectionState::Disconnected {
+                        reason: "test disconnect".into(),
+                    });
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            let request = AxRequest {
+                identifier: "send".into(),
+                action: AxAction::Press,
+                value: None,
+            };
+            assert!(
+                !tree.permits(&request),
+                "disconnected send is not permitted"
+            );
+            assert!(!view.composer_sending);
+            assert_eq!(view.text_input.read(cx).text(), "自由草稿");
+        });
+
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.set_connection(ConnectionState::Connected {
+                    instance_id: "gui2-07".into(),
+                });
+                view.projection.set_models(vec![ModelEntry {
+                    provider_id: "glm-coding".into(),
+                    id: "glm-5.2".into(),
+                    display_name: "GLM 5.2".into(),
+                    ..ModelEntry::default()
+                }]);
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        press_published_ax(cx, &view, "send");
+        cx.update(|_, cx| {
+            let view = view.read(cx);
+            assert!(view.composer_sending);
+            assert_eq!(view.composer_send_target.as_deref(), Some("s-free"));
+            assert_eq!(view.text_input.read(cx).text(), "自由草稿");
+            assert_eq!(
+                view.composer_drafts.get("s-alpha").map(String::as_str),
+                Some("项目草稿")
+            );
+            assert!(view
+                .projection
+                .timeline
+                .iter()
+                .all(|entry| !entry.event_id.starts_with("local-echo")));
+        });
+
+        press_published_ax(cx, &view, "session-s-alpha");
+        cx.update(|_, cx| {
+            let view = view.read(cx);
+            assert_eq!(
+                view.projection.active_session_id.as_deref(),
+                Some("s-alpha")
+            );
+            assert_eq!(view.text_input.read(cx).text(), "项目草稿");
+            assert_eq!(
+                view.composer_drafts.get("s-free").map(String::as_str),
+                Some("自由草稿")
+            );
+            assert!(view.composer_sending);
+            assert_eq!(view.composer_send_target.as_deref(), Some("s-free"));
+        });
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.handle_controller_event(
+                    crate::controller::ControllerEvent::MessageSent {
+                        session_id: "s-free".into(),
+                        run_id: "run-free".into(),
+                        text: "自由草稿".into(),
+                    },
+                    cx,
+                );
+                assert_eq!(
+                    view.projection.active_session_id.as_deref(),
+                    Some("s-alpha")
+                );
+                assert_eq!(view.text_input.read(cx).text(), "项目草稿");
+                assert!(view.composer_drafts.get("s-free").is_none());
+                assert_eq!(
+                    view.composer_drafts.get("s-alpha").map(String::as_str),
+                    Some("项目草稿")
+                );
+                assert!(view.projection.timeline.iter().all(|entry| {
+                    !entry.event_id.starts_with("local-echo")
+                        && !matches!(
+                            &entry.kind,
+                            TimelineEntryKind::UserMessage { text } if text == "自由草稿"
+                        )
+                }));
+            })
+        });
+    }
+
     fn history_item(
         sequence: u64,
         event_id: &str,
