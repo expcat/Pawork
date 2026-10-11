@@ -11491,6 +11491,665 @@ mod tests {
         });
     }
 
+    /// GUI3-01：历史工具回执经投影进入主 Timeline 后，摘要、展开行和 AX
+    /// 读的是同一份事实。鼠标、Enter、Space 与 AX Press 走正式展开路径。
+    /// 不连接 Host / Provider，不调用原生 AX，也不把测试窗口像素当作真人确认。
+    #[gpui::test]
+    fn tool_summaries_follow_projected_facts_across_pointer_keyboard_and_ax(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::{px, size};
+
+        let read_args = r#"{"path":"src/new_feature.rs"}"#;
+        let command_args = r#"{"command":"cargo test -p pawork-desktop"}"#;
+        let search_args = r#"{"pattern":"TODO","glob":"*.rs"}"#;
+        let edit_args = r#"{"path":"b.rs"}"#;
+        let write_args = r#"{"path":"src/new_feature.rs"}"#;
+        let find_args = r#"{"pattern":"**/*.rs"}"#;
+        let mcp_args = r#"{"path":"secret.rs"}"#;
+        let list_args = r#"{"path":"crates"}"#;
+        let long_result = (0..12)
+            .map(|ix| format!("line-{ix}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let many_summary = "4 tools · read_file src/new_feature.rs · run_command cargo test -p pawork-desktop · search_text TODO *.rs · … · 1 completed · 1 running · 1 failed · 1 cancelled";
+        let write_summary = "write_file src/new_feature.rs";
+        let find_summary = "find_files **/*.rs · 1 running";
+        let mcp_summary = "mcp_search";
+        let stopped_summary = "list_directory crates · 1 stopped";
+
+        let page = pawork_client::TimelinePage {
+            items: vec![
+                scan_tool_item(
+                    1,
+                    "hist-read",
+                    "r-many",
+                    pawork_client::TimelineItemKind::ToolStarted,
+                    Some("read_file"),
+                    Some("running"),
+                    None,
+                    Some(&scan_tool_context("call-read")),
+                ),
+                scan_tool_item(
+                    2,
+                    "hist-read-args",
+                    "r-many",
+                    pawork_client::TimelineItemKind::Other,
+                    None,
+                    Some("tool_arguments"),
+                    Some(read_args),
+                    Some(&scan_tool_context("call-read")),
+                ),
+                scan_tool_item(
+                    3,
+                    "hist-read-done",
+                    "r-many",
+                    pawork_client::TimelineItemKind::ToolCompleted,
+                    Some("read_file"),
+                    Some("succeeded"),
+                    Some("ok-read"),
+                    Some(&scan_tool_context("call-read")),
+                ),
+                scan_tool_item(
+                    4,
+                    "hist-cmd",
+                    "r-many",
+                    pawork_client::TimelineItemKind::ToolStarted,
+                    Some("run_command"),
+                    Some("running"),
+                    None,
+                    Some(&scan_tool_context("call-cmd")),
+                ),
+                scan_tool_item(
+                    5,
+                    "hist-cmd-args",
+                    "r-many",
+                    pawork_client::TimelineItemKind::Other,
+                    None,
+                    Some("tool_arguments"),
+                    Some(command_args),
+                    Some(&scan_tool_context("call-cmd")),
+                ),
+                scan_tool_item(
+                    6,
+                    "hist-search",
+                    "r-many",
+                    pawork_client::TimelineItemKind::ToolStarted,
+                    Some("search_text"),
+                    Some("running"),
+                    None,
+                    Some(&scan_tool_context("call-search")),
+                ),
+                scan_tool_item(
+                    7,
+                    "hist-search-args",
+                    "r-many",
+                    pawork_client::TimelineItemKind::Other,
+                    None,
+                    Some("tool_arguments"),
+                    Some(search_args),
+                    Some(&scan_tool_context("call-search")),
+                ),
+                scan_tool_item(
+                    8,
+                    "hist-search-done",
+                    "r-many",
+                    pawork_client::TimelineItemKind::ToolCompleted,
+                    Some("search_text"),
+                    Some("failed"),
+                    Some(""),
+                    Some(&scan_tool_context("call-search")),
+                ),
+                scan_tool_item(
+                    9,
+                    "hist-edit",
+                    "r-many",
+                    pawork_client::TimelineItemKind::ToolStarted,
+                    Some("edit_file"),
+                    Some("running"),
+                    None,
+                    Some(&scan_tool_context("call-edit")),
+                ),
+                scan_tool_item(
+                    10,
+                    "hist-edit-args",
+                    "r-many",
+                    pawork_client::TimelineItemKind::Other,
+                    None,
+                    Some("tool_arguments"),
+                    Some(edit_args),
+                    Some(&scan_tool_context("call-edit")),
+                ),
+                scan_tool_item(
+                    11,
+                    "hist-edit-done",
+                    "r-many",
+                    pawork_client::TimelineItemKind::ToolCompleted,
+                    Some("edit_file"),
+                    Some("cancelled"),
+                    Some("stopped by user"),
+                    Some(&scan_tool_context("call-edit")),
+                ),
+                scan_tool_item(
+                    12,
+                    "hist-write",
+                    "r-one",
+                    pawork_client::TimelineItemKind::ToolStarted,
+                    Some("write_file"),
+                    Some("running"),
+                    None,
+                    Some(&scan_tool_context("call-write")),
+                ),
+                scan_tool_item(
+                    13,
+                    "hist-write-args",
+                    "r-one",
+                    pawork_client::TimelineItemKind::Other,
+                    None,
+                    Some("tool_arguments"),
+                    Some(write_args),
+                    Some(&scan_tool_context("call-write")),
+                ),
+                scan_tool_item(
+                    14,
+                    "hist-write-done",
+                    "r-one",
+                    pawork_client::TimelineItemKind::ToolCompleted,
+                    Some("write_file"),
+                    Some("succeeded"),
+                    Some("ok"),
+                    Some(&scan_tool_context("call-write")),
+                ),
+                scan_tool_item(
+                    15,
+                    "hist-find",
+                    "r-live",
+                    pawork_client::TimelineItemKind::ToolStarted,
+                    Some("find_files"),
+                    Some("running"),
+                    None,
+                    Some(&scan_tool_context("call-find")),
+                ),
+                scan_tool_item(
+                    16,
+                    "hist-find-args",
+                    "r-live",
+                    pawork_client::TimelineItemKind::Other,
+                    None,
+                    Some("tool_arguments"),
+                    Some(find_args),
+                    Some(&scan_tool_context("call-find")),
+                ),
+                scan_tool_item(
+                    17,
+                    "hist-mcp",
+                    "r-mcp",
+                    pawork_client::TimelineItemKind::ToolStarted,
+                    Some("mcp_search"),
+                    Some("running"),
+                    None,
+                    Some(&scan_tool_context("call-mcp")),
+                ),
+                scan_tool_item(
+                    18,
+                    "hist-mcp-args",
+                    "r-mcp",
+                    pawork_client::TimelineItemKind::Other,
+                    None,
+                    Some("tool_arguments"),
+                    Some(mcp_args),
+                    Some(&scan_tool_context("call-mcp")),
+                ),
+                scan_tool_item(
+                    19,
+                    "hist-mcp-done",
+                    "r-mcp",
+                    pawork_client::TimelineItemKind::ToolCompleted,
+                    Some("mcp_search"),
+                    Some("succeeded"),
+                    Some(&long_result),
+                    Some(&scan_tool_context("call-mcp")),
+                ),
+                scan_tool_item(
+                    20,
+                    "hist-list",
+                    "r-stop",
+                    pawork_client::TimelineItemKind::ToolStarted,
+                    Some("list_directory"),
+                    Some("running"),
+                    None,
+                    Some(&scan_tool_context("call-list")),
+                ),
+                scan_tool_item(
+                    21,
+                    "hist-list-args",
+                    "r-stop",
+                    pawork_client::TimelineItemKind::Other,
+                    None,
+                    Some("tool_arguments"),
+                    Some(list_args),
+                    Some(&scan_tool_context("call-list")),
+                ),
+                scan_tool_item(
+                    22,
+                    "hist-stop",
+                    "r-stop",
+                    pawork_client::TimelineItemKind::RunCompleted,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+            ],
+            next_sequence: None,
+            head_sequence: 22,
+            complete: true,
+        };
+
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("gui3-01-tool-summaries.sock");
+        let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
+        cx.simulate_resize(size(px(1440.0), px(1024.0)));
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.set_connection(ConnectionState::Connected {
+                    instance_id: "gui3-01".into(),
+                });
+                view.projection.active_session_id = Some("s-scan".into());
+                view.projection.apply_timeline_page(&page);
+                view.timeline_changed();
+                cx.notify();
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+
+        cx.update(|_, cx| {
+            let view = view.read(cx);
+            assert_eq!(
+                view.projection.timeline.len(),
+                9,
+                "argument rows are not entries"
+            );
+            let fact = |event_id: &str| {
+                let entry = view
+                    .projection
+                    .timeline
+                    .iter()
+                    .find(|entry| entry.event_id == event_id)
+                    .unwrap_or_else(|| panic!("missing {event_id}"));
+                let TimelineEntryKind::ToolCall {
+                    name,
+                    status,
+                    detail,
+                    arguments,
+                } = &entry.kind
+                else {
+                    panic!("{event_id} is not a tool call");
+                };
+                (
+                    name.as_str(),
+                    status.as_str(),
+                    detail.as_deref(),
+                    arguments.as_deref(),
+                )
+            };
+            assert_eq!(
+                fact("hist-read"),
+                ("read_file", "succeeded", Some("ok-read"), Some(read_args))
+            );
+            assert_eq!(
+                fact("hist-cmd"),
+                ("run_command", "running", None, Some(command_args))
+            );
+            assert_eq!(
+                fact("hist-search"),
+                ("search_text", "failed", Some(""), Some(search_args))
+            );
+            assert_eq!(
+                fact("hist-edit"),
+                (
+                    "edit_file",
+                    "cancelled",
+                    Some("stopped by user"),
+                    Some(edit_args)
+                )
+            );
+            assert_eq!(
+                fact("hist-write"),
+                ("write_file", "succeeded", Some("ok"), Some(write_args))
+            );
+            assert_eq!(
+                fact("hist-find"),
+                ("find_files", "running", None, Some(find_args))
+            );
+            assert_eq!(
+                fact("hist-mcp"),
+                (
+                    "mcp_search",
+                    "succeeded",
+                    Some(long_result.as_str()),
+                    Some(mcp_args)
+                )
+            );
+            assert_eq!(
+                fact("hist-list"),
+                ("list_directory", "running", None, Some(list_args)),
+                "a finished run must not rewrite the stored tool status"
+            );
+            assert!(view.projection.timeline.iter().any(|entry| {
+                entry.event_id == "hist-stop"
+                    && entry.run_id.as_deref() == Some("r-stop")
+                    && entry.fork_boundary == Some(ForkBoundary::Completed)
+            }));
+            assert!(view.expanded_timeline_details.is_empty());
+        });
+
+        let collapsed_many = cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().expect("collapsed tool tree");
+            let many = tree
+                .find("tool-group-toggle-hist-read")
+                .expect("multi-tool summary");
+            assert_eq!(many.value.as_deref(), Some(many_summary));
+            assert_eq!(many.description.as_deref(), Some("Collapsed"));
+            assert!(many.actions.contains(&AxAction::Press));
+            assert_eq!(
+                tree.find("tool-group-toggle-hist-write")
+                    .expect("single success")
+                    .value
+                    .as_deref(),
+                Some(write_summary)
+            );
+            assert_eq!(
+                tree.find("tool-group-toggle-hist-find")
+                    .expect("single running")
+                    .value
+                    .as_deref(),
+                Some(find_summary)
+            );
+            let mcp = tree
+                .find("tool-group-toggle-hist-mcp")
+                .expect("mcp fallback");
+            assert_eq!(mcp.value.as_deref(), Some(mcp_summary));
+            assert!(!mcp.value.as_deref().unwrap_or("").contains("secret.rs"));
+            assert_eq!(
+                tree.find("tool-group-toggle-hist-list")
+                    .expect("stopped summary")
+                    .value
+                    .as_deref(),
+                Some(stopped_summary)
+            );
+            for id in [
+                "tool-row-hist-read",
+                "tool-row-hist-cmd",
+                "tool-row-hist-search",
+                "tool-row-hist-edit",
+                "tool-row-hist-write",
+                "tool-row-hist-mcp",
+                "tool-row-hist-list",
+            ] {
+                assert!(tree.find(id).is_none(), "{id} is hidden while collapsed");
+            }
+            f32::from(
+                view.timeline_list
+                    .bounds_for_item(0)
+                    .expect("multi-tool row is painted")
+                    .size
+                    .height,
+            )
+        });
+
+        click_published_center(cx, &view, "tool-group-toggle-hist-read");
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert!(view.expanded_timeline_details.contains("hist-read"));
+            assert!(!view.timeline_following);
+            let expanded = f32::from(
+                view.timeline_list
+                    .bounds_for_item(0)
+                    .expect("expanded multi-tool row is painted")
+                    .size
+                    .height,
+            );
+            assert!(
+                expanded > collapsed_many + 40.0,
+                "mouse expand must paint the rows, collapsed {collapsed_many} expanded {expanded}"
+            );
+            let tree = view.accessibility_tree(window, cx);
+            assert_eq!(
+                tree.find("tool-group-toggle-hist-read")
+                    .unwrap()
+                    .description
+                    .as_deref(),
+                Some("Expanded")
+            );
+            let read = tree.find("tool-row-hist-read").expect("read row");
+            assert_eq!(read.label, "Tool · read_file src/new_feature.rs");
+            assert_eq!(read.value.as_deref(), Some("Completed"));
+            assert_eq!(read.description.as_deref(), Some("ok-read"));
+            let command = tree.find("tool-row-hist-cmd").expect("running row");
+            assert_eq!(
+                command.label,
+                "Tool · run_command cargo test -p pawork-desktop"
+            );
+            assert_eq!(command.value.as_deref(), Some("In progress"));
+            assert_eq!(command.description.as_deref(), Some("Result not provided"));
+            let search = tree.find("tool-row-hist-search").expect("failed row");
+            assert_eq!(search.label, "Tool · search_text TODO *.rs");
+            assert_eq!(search.value.as_deref(), Some("failed"));
+            assert_eq!(search.description.as_deref(), Some("Empty result"));
+            let edit = tree.find("tool-row-hist-edit").expect("cancelled row");
+            assert_eq!(edit.label, "Tool · edit_file b.rs");
+            assert_eq!(edit.value.as_deref(), Some("cancelled"));
+            assert_eq!(edit.description.as_deref(), Some("stopped by user"));
+            assert!(tree.find("tool-row-hist-write").is_none());
+        });
+        click_published_center(cx, &view, "tool-group-toggle-hist-read");
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert!(!view.expanded_timeline_details.contains("hist-read"));
+            let tree = view.accessibility_tree(window, cx);
+            assert_eq!(
+                tree.find("tool-group-toggle-hist-read")
+                    .unwrap()
+                    .description
+                    .as_deref(),
+                Some("Collapsed")
+            );
+            assert!(tree.find("tool-row-hist-read").is_none());
+        });
+
+        focus_timeline_detail(cx, &view, "hist-write");
+        cx.simulate_keystrokes("enter");
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert!(view.expanded_timeline_details.contains("hist-write"));
+            let tree = view.accessibility_tree(window, cx);
+            let summary = tree.find("tool-group-toggle-hist-write").unwrap();
+            assert_eq!(summary.description.as_deref(), Some("Expanded"));
+            assert_eq!(summary.value.as_deref(), Some(write_summary));
+            let row = tree.find("tool-row-hist-write").expect("write row");
+            assert_eq!(row.label, "Tool · write_file src/new_feature.rs");
+            assert_eq!(row.value.as_deref(), Some("Completed"));
+            assert_eq!(row.description.as_deref(), Some("ok"));
+            assert!(!row
+                .description
+                .as_deref()
+                .unwrap_or("")
+                .contains(write_args));
+        });
+
+        press_published_ax(cx, &view, "tool-group-toggle-hist-mcp");
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            let summary = tree.find("tool-group-toggle-hist-mcp").unwrap();
+            assert_eq!(summary.value.as_deref(), Some(mcp_summary));
+            assert_eq!(summary.description.as_deref(), Some("Expanded"));
+            let row = tree.find("tool-row-hist-mcp").expect("mcp row");
+            assert_eq!(row.label, "Tool · mcp_search");
+            assert!(!row.label.contains("secret.rs"));
+            assert_eq!(row.value.as_deref(), Some("Completed"));
+            let detail = row.description.as_deref().unwrap_or("");
+            assert!(
+                detail.contains("secret.rs"),
+                "unknown params stay in the body"
+            );
+            assert!(detail.contains("line-0") && detail.contains("line-9"));
+            assert!(!detail.contains("line-10") && !detail.contains("line-11"));
+            let toggle = tree
+                .find("tool-result-toggle-hist-mcp")
+                .expect("preview toggle");
+            assert_eq!(toggle.label, "Show full result");
+            assert!(toggle.actions.contains(&AxAction::Press));
+        });
+        focus_timeline_detail(cx, &view, "hist-mcp:result");
+        cx.simulate_keystrokes("space");
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert!(view.expanded_timeline_details.contains("hist-mcp:result"));
+            let tree = view.accessibility_tree(window, cx);
+            let detail = tree
+                .find("tool-row-hist-mcp")
+                .unwrap()
+                .description
+                .clone()
+                .unwrap_or_default();
+            assert!(detail.contains("line-11"));
+            assert_eq!(
+                tree.find("tool-result-toggle-hist-mcp").unwrap().label,
+                "Show less"
+            );
+        });
+        press_published_ax(cx, &view, "tool-result-toggle-hist-mcp");
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert!(!view.expanded_timeline_details.contains("hist-mcp:result"));
+            let detail = view
+                .accessibility_tree(window, cx)
+                .find("tool-row-hist-mcp")
+                .unwrap()
+                .description
+                .clone()
+                .unwrap_or_default();
+            assert!(!detail.contains("line-11"));
+            assert!(detail.contains("line-9"));
+        });
+
+        press_published_ax(cx, &view, "tool-group-toggle-hist-list");
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            let summary = tree.find("tool-group-toggle-hist-list").unwrap();
+            assert_eq!(summary.description.as_deref(), Some("Expanded"));
+            assert_eq!(summary.value.as_deref(), Some(stopped_summary));
+            assert!(!summary.value.as_deref().unwrap_or("").contains("completed"));
+            let row = tree.find("tool-row-hist-list").expect("stopped row");
+            assert_eq!(row.label, "Tool · list_directory crates");
+            assert_eq!(row.value.as_deref(), Some("stopped"));
+            assert_eq!(row.description.as_deref(), Some("Result not provided"));
+            let TimelineEntryKind::ToolCall { status, .. } = &view
+                .projection
+                .timeline
+                .iter()
+                .find(|entry| entry.event_id == "hist-list")
+                .unwrap()
+                .kind
+            else {
+                panic!("list entry missing");
+            };
+            assert_eq!(status, "running");
+            assert_eq!(
+                tree.find("tool-group-toggle-hist-find")
+                    .unwrap()
+                    .value
+                    .as_deref(),
+                Some(find_summary)
+            );
+        });
+    }
+
+    fn click_published_center(
+        cx: &mut gpui::VisualTestContext,
+        view: &gpui::Entity<AppView>,
+        identifier: &str,
+    ) {
+        use gpui::{point, px, Modifiers};
+
+        let bounds = cx.update(|window, cx| {
+            let tree = view.read(cx).accessibility_tree(window, cx);
+            tree.validate().expect("accessibility tree");
+            tree.find(identifier)
+                .unwrap_or_else(|| panic!("missing {identifier}"))
+                .bounds
+        });
+        assert!(
+            bounds.width > 0.0 && bounds.height > 0.0,
+            "{identifier} has no painted hit target"
+        );
+        cx.simulate_click(
+            point(
+                px(bounds.x + bounds.width / 2.0),
+                px(bounds.y + bounds.height / 2.0),
+            ),
+            Modifiers::none(),
+        );
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+    }
+
+    fn focus_timeline_detail(
+        cx: &mut gpui::VisualTestContext,
+        view: &gpui::Entity<AppView>,
+        key: &str,
+    ) {
+        cx.update(|window, cx| {
+            let focus = view
+                .read(cx)
+                .timeline_detail_focus
+                .get(key)
+                .cloned()
+                .unwrap_or_else(|| panic!("missing focus {key}"));
+            window.focus(&focus);
+        });
+        cx.refresh().unwrap();
+    }
+
+    fn scan_tool_context(tool_call_id: &str) -> String {
+        serde_json::json!({ "_pawork_tool_call_id": tool_call_id }).to_string()
+    }
+
+    fn scan_tool_item(
+        sequence: u64,
+        event_id: &str,
+        run_id: &str,
+        kind: pawork_client::TimelineItemKind,
+        tool_name: Option<&str>,
+        status: Option<&str>,
+        text: Option<&str>,
+        detail: Option<&str>,
+    ) -> pawork_client::TimelineItem {
+        pawork_client::TimelineItem {
+            sequence,
+            event_id: event_id.into(),
+            kind,
+            run_id: Some(run_id.into()),
+            text: text.map(str::to_string),
+            message_id: None,
+            thinking_text: None,
+            tool_name: tool_name.map(str::to_string),
+            status: status.map(str::to_string),
+            detail: detail.map(str::to_string),
+            timestamp: "2000".into(),
+        }
+    }
+
     fn history_item(
         sequence: u64,
         event_id: &str,
