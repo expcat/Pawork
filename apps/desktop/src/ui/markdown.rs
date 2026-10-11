@@ -895,15 +895,18 @@ pub(super) fn message_body_element(
                         .flex_row()
                         .items_center()
                         .h(px(metrics::ICON_BUTTON_SIZE))
-                        .child(
-                            div().flex().flex_row().flex_1().min_w_0().child(
-                                div()
-                                    .text_size(font::BODY_SM)
-                                    .text_color(dark().text.secondary)
-                                    .truncate()
-                                    .child(language_label),
-                            ),
-                        )
+                        .child(div().flex().flex_row().flex_1().min_w_0().child({
+                            let label = div()
+                                .text_size(font::BODY_SM)
+                                .text_color(dark().text.secondary)
+                                .truncate();
+                            #[cfg(test)]
+                            let label = label.debug_selector({
+                                let key = format!("{entry_id}-code-lang-{index}={language_label}");
+                                move || key
+                            });
+                            label.child(language_label)
+                        }))
                         .child(copy_code_button(
                             view,
                             cx,

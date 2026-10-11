@@ -5224,6 +5224,155 @@ mod tests {
         });
     }
 
+    /// GUI3-03：测试平台上语言标签与 Code 回退真实出现；行内 HTTP(S) 点击和
+    /// 消息菜单打开 / 复制写到 opened_url 与剪贴板。javascript: 与 file: 不进入
+    /// 打开动作，点在正文上也不分发。长表与 CRLF 沿用 GUI2-02，不在这里重跑。
+    /// 输入是 GPUI TestAppContext，不是真窗口、系统浏览器或系统剪贴板。
+    #[gpui::test]
+    fn markdown_code_labels_and_http_links_dispatch(cx: &mut gpui::TestAppContext) {
+        use crate::ui::theme::font::TextScale;
+        use crate::ui::timeline_entry::EntryActionKind;
+        use gpui::{point, px, size, ClipboardItem, Modifiers, MouseButton};
+
+        let https = "https://example.test/inline";
+        let http = "http://docs.example.test/menu";
+        let fence = "\u{60}".repeat(3);
+        let text = format!(
+            "{https}\n\n{fence}rust\nlet a = 1;\n{fence}\n\n{fence}\nbare\n{fence}\n\n[docs]({http})\n\njavascript:alert(1)\nfile:///tmp/a\n"
+        );
+        let menu = crate::ui::markdown::message_actions(&text);
+        let opened: Vec<_> = menu
+            .iter()
+            .filter(|action| action.open)
+            .map(|action| action.content.as_str())
+            .collect();
+        assert_eq!(opened, vec![https, http]);
+
+        let (view, cx) = cx.add_window_view(|_, cx| {
+            AppView::new(
+                std::sync::Arc::new(crate::platform::Platform::new()),
+                std::env::temp_dir().join("gui3-03-markdown.sock"),
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            crate::ui::install_keybindings(cx);
+            window.set_rem_size(px(TextScale::Percent100.rem_pixels()));
+        });
+        cx.simulate_resize(size(px(1440.0), px(1024.0)));
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.connection = ConnectionState::Connected {
+                    instance_id: "gui3-03".into(),
+                };
+                view.projection.sessions = vec![rail_session_summary("task", "阅读任务", None, 1)];
+                view.projection.active_session_id = Some("task".into());
+                view.projection.timeline.entries = vec![TimelineEntry {
+                    sequence: 1,
+                    event_id: "reply".into(),
+                    timestamp: "fixture-reply".into(),
+                    run_id: None,
+                    kind: TimelineEntryKind::AssistantMessage { text },
+                    fork_boundary: None,
+                }];
+                view.timeline_changed();
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("reply-code-lang-1=rust").is_some());
+        assert!(cx.debug_bounds("reply-code-lang-1=Code").is_none());
+        assert!(cx.debug_bounds("reply-code-lang-2=Code").is_some());
+        assert!(cx.debug_bounds("reply-code-lang-2=rust").is_none());
+        assert!(cx.opened_url().is_none());
+
+        let click_inline = |cx: &mut gpui::VisualTestContext, at| {
+            cx.simulate_mouse_down(at, MouseButton::Left, Modifiers::none());
+            cx.refresh().unwrap();
+            cx.run_until_parked();
+            cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::none());
+            cx.run_until_parked();
+        };
+        let paragraph_x = |scroll: gpui::Bounds<gpui::Pixels>| scroll.origin.x - px(4.0);
+        let rust_scroll = cx.debug_bounds("reply-code-scroll-1").expect("rust scroll");
+        let bare_scroll = cx.debug_bounds("reply-code-scroll-2").expect("bare scroll");
+        click_inline(
+            cx,
+            point(paragraph_x(rust_scroll), rust_scroll.origin.y - px(66.0)),
+        );
+        assert_eq!(cx.opened_url().as_deref(), Some(https));
+
+        let bare_bottom = bare_scroll.origin.y + bare_scroll.size.height;
+        click_inline(cx, point(paragraph_x(bare_scroll), bare_bottom + px(58.0)));
+        click_inline(cx, point(paragraph_x(bare_scroll), bare_bottom + px(84.0)));
+        assert_eq!(
+            cx.opened_url().as_deref(),
+            Some(https),
+            "javascript: and file: must not dispatch"
+        );
+        click_inline(cx, point(paragraph_x(bare_scroll), bare_bottom + px(20.0)));
+        assert_eq!(cx.opened_url().as_deref(), Some(http));
+
+        let menu_point = |cx: &mut gpui::VisualTestContext, url: &str, open: bool| {
+            let trigger = cx.debug_bounds("message-actions-reply").expect("actions");
+            cx.simulate_click(trigger.center(), Modifiers::none());
+            cx.refresh().unwrap();
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                let view = view.read(cx);
+                assert!(matches!(view.open_menu, Some(MenuKind::Entry(ref id)) if id == "reply"));
+                let actions = view.entry_menu_actions("reply");
+                assert!(actions.iter().all(|action| {
+                    !matches!(&action.kind, EntryActionKind::Open(target) if !target.starts_with("http://") && !target.starts_with("https://"))
+                }));
+                let ix = actions
+                    .iter()
+                    .position(|action| match &action.kind {
+                        EntryActionKind::Open(target) if open => target == url,
+                        EntryActionKind::Copy(target) if !open => target == url,
+                        _ => false,
+                    })
+                    .expect("menu row");
+                let id = actions[ix].identifier("reply", ix);
+                let tree = view.accessibility_tree(window, cx);
+                let node = tree.find(&id).expect("menu row bounds");
+                point(
+                    px(node.bounds.x + node.bounds.width / 2.0),
+                    px(node.bounds.y + node.bounds.height / 2.0),
+                )
+            })
+        };
+        cx.update(|_, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string("sentinel-menu-copy".into()));
+            assert_eq!(
+                cx.read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .as_deref(),
+                Some("sentinel-menu-copy")
+            );
+        });
+        let copy_at = menu_point(cx, https, false);
+        cx.simulate_click(copy_at, Modifiers::none());
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            assert_eq!(
+                cx.read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .as_deref(),
+                Some(https)
+            );
+        });
+        assert_eq!(cx.opened_url().as_deref(), Some(http));
+        let open_at = menu_point(cx, https, true);
+        cx.simulate_click(open_at, Modifiers::none());
+        cx.run_until_parked();
+        assert_eq!(cx.opened_url().as_deref(), Some(https));
+    }
+
     #[gpui::test]
     fn reply_actions_copy_exact_content_and_use_closed_turn_boundary(
         cx: &mut gpui::TestAppContext,
