@@ -6663,8 +6663,46 @@ mod tests {
         }
     }
 
-    /// GUI3-06：Timeline 单项目 / Unassigned 跳过项目头；空闲无 status-dot；
-    /// 桶头 24px；三档字号任务行 36px，150% 标题 >80px，动作不遮标题。
+    fn rail_live_event(
+        session: &str,
+        sequence: u64,
+        payload: serde_json::Value,
+    ) -> crate::controller::ControllerEvent {
+        let envelope: pawork_client::AppEventEnvelope = serde_json::from_value(serde_json::json!({
+            "api_version": {"major": 1, "minor": 1},
+            "instance_id": "instance-1",
+            "event_id": format!("gui3-06-{sequence}"),
+            "global_sequence": sequence,
+            "stream": {"type": "session", "id": session},
+            "stream_sequence": sequence,
+            "timestamp": 1_700_000_000_000u64 + sequence,
+            "source": {"type": "core"},
+            "payload": payload
+        }))
+        .expect("gui3-06 live event");
+        crate::controller::ControllerEvent::Event(envelope)
+    }
+
+    fn drive_rail_live(
+        view: &gpui::Entity<AppView>,
+        cx: &mut gpui::VisualTestContext,
+        session: &str,
+        sequence: u64,
+        payload: serde_json::Value,
+    ) {
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.handle_controller_event(rail_live_event(session, sequence, payload), cx);
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+    }
+
+    /// GUI3-06：Timeline 单项目 / Unassigned 跳过项目头，折叠也不藏任务。
+    /// live 点只经 ControllerEvent 进入投影：Running、终态清空、Blocked、
+    /// Needs input。桶头 24px，三档任务行 36px。150% 长标题槽 >80px；
+    /// 鼠标打开改名，空白 Enter 不提交，AX 归档只留下窗口内通知。
     #[gpui::test]
     fn task_rail_skips_redundant_headers_and_compacts_150(cx: &mut gpui::TestAppContext) {
         use crate::ui::theme::font::TextScale;
@@ -6693,11 +6731,19 @@ mod tests {
                     rail_session_summary("running", "Running session title", None, now),
                 ];
                 view.projection.active_session_id = Some("idle".into());
-                view.projection.active_runs.push(ActiveRun {
-                    run_id: "r-run".into(),
-                    session_id: "running".into(),
-                    started_at_ms: now,
-                });
+                view.collapsed_projects
+                    .insert(UNASSIGNED_PROJECT.to_string());
+                view.handle_controller_event(
+                    rail_live_event(
+                        "running",
+                        1,
+                        serde_json::json!({
+                            "type": "run_changed",
+                            "data": {"run_id": "r-run", "state": "created"}
+                        }),
+                    ),
+                    cx,
+                );
                 view.grouping = TaskRailGrouping::Timeline;
                 view.text_scale = TextScale::Percent100;
                 window.set_rem_size(gpui::px(TextScale::Percent100.rem_pixels()));
@@ -6722,13 +6768,100 @@ mod tests {
             let idle = tree.find(&session_identifier("idle")).unwrap();
             assert_eq!(idle.bounds.height, 36.0);
             assert!(tree.find(&session_status_dot_identifier("idle")).is_none());
+            assert_eq!(
+                idle.description.as_deref(),
+                Some("Session"),
+                "idle must not invent a terminal status"
+            );
             let running = tree.find(&session_identifier("running")).unwrap();
             assert_eq!(running.bounds.height, 36.0);
             assert!(tree
                 .find(&session_status_dot_identifier("running"))
                 .is_some());
+            assert_eq!(running.description.as_deref(), Some("Running · Unread"));
+            assert!(
+                ids.iter().any(|id| id == &session_identifier("idle"))
+                    && ids.iter().any(|id| id == &session_identifier("running")),
+                "collapsed Unassigned must not hide tasks when the header is skipped: {ids:?}"
+            );
             let title = tree.find(&session_title_identifier("idle")).unwrap();
             assert!(title.bounds.width > 80.0, "idle title {:?}", title.bounds);
+        });
+        drive_rail_live(
+            &view,
+            cx,
+            "running",
+            2,
+            serde_json::json!({
+                "type": "run_changed",
+                "data": {"run_id": "r-run", "state": "completed"}
+            }),
+        );
+        cx.update(|window, cx| {
+            let tree = view.read(cx).accessibility_tree(window, cx);
+            assert!(
+                tree.find(&session_status_dot_identifier("running"))
+                    .is_none(),
+                "completed run must not leave a status dot"
+            );
+            assert_eq!(
+                tree.find(&session_identifier("running"))
+                    .unwrap()
+                    .description
+                    .as_deref(),
+                Some("Session · Unread")
+            );
+            assert!(tree.find(&session_status_dot_identifier("idle")).is_none());
+        });
+        drive_rail_live(
+            &view,
+            cx,
+            "running",
+            3,
+            serde_json::json!({
+                "type": "run_changed",
+                "data": {"run_id": "r-fail", "state": "failed"}
+            }),
+        );
+        cx.update(|window, cx| {
+            let tree = view.read(cx).accessibility_tree(window, cx);
+            let running = tree.find(&session_identifier("running")).unwrap();
+            assert_eq!(running.description.as_deref(), Some("Blocked · Unread"));
+            assert_eq!(
+                tree.find(&session_status_dot_identifier("running"))
+                    .unwrap()
+                    .label,
+                "Blocked"
+            );
+        });
+        drive_rail_live(
+            &view,
+            cx,
+            "running",
+            4,
+            serde_json::json!({
+                "type": "tool_approval_required",
+                "data": {
+                    "run_id": "r-fail",
+                    "tool_call_id": "call-1",
+                    "reason": "write_file"
+                }
+            }),
+        );
+        cx.update(|window, cx| {
+            let tree = view.read(cx).accessibility_tree(window, cx);
+            assert_eq!(
+                tree.find(&session_identifier("running"))
+                    .unwrap()
+                    .description
+                    .as_deref(),
+                Some("Needs input · Unread"),
+                "pending approval outranks blocked"
+            );
+            assert!(tree
+                .find(&session_status_dot_identifier("running"))
+                .is_some());
+            assert!(tree.find(&session_status_dot_identifier("idle")).is_none());
         });
 
         cx.update(|_window, cx| {
@@ -6739,6 +6872,9 @@ mod tests {
                 ];
                 view.projection.active_session_id = Some("a1".into());
                 view.projection.active_runs.clear();
+                view.projection.blocked_sessions.clear();
+                view.projection.snapshot_pendings.clear();
+                view.projection.pending_approval = None;
                 view.scope_workspace_id = None;
                 cx.notify();
             })
@@ -6850,6 +6986,101 @@ mod tests {
                 "archive overlaps title {:?} {:?}",
                 title.bounds,
                 archive.bounds
+            );
+            assert_eq!(rename.bounds.width, metrics::RAIL_SESSION_ACTION_SIZE);
+            assert_eq!(rename.bounds.height, metrics::RAIL_SESSION_ACTION_SIZE);
+            assert_eq!(archive.bounds.width, metrics::RAIL_SESSION_ACTION_SIZE);
+            assert_eq!(archive.bounds.height, metrics::RAIL_SESSION_ACTION_SIZE);
+            assert!(
+                view.read(cx)
+                    .collapsed_projects
+                    .contains(UNASSIGNED_PROJECT),
+                "150% still uses the skipped-header collapse case"
+            );
+        });
+        let rename_hit = cx.update(|window, cx| {
+            view.read(cx)
+                .accessibility_tree(window, cx)
+                .find(&session_rename_identifier("idle"))
+                .unwrap()
+                .bounds
+        });
+        let rename_at = gpui::point(
+            gpui::px(rename_hit.x + rename_hit.width / 2.0),
+            gpui::px(rename_hit.y + rename_hit.height / 2.0),
+        );
+        cx.simulate_mouse_move(rename_at, None, gpui::Modifiers::none());
+        cx.run_until_parked();
+        cx.simulate_click(rename_at, gpui::Modifiers::none());
+        cx.run_until_parked();
+        let long_title =
+            "Very long session title that must remain readable beside rename and archive";
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                assert_eq!(
+                    view.session_rename
+                        .as_ref()
+                        .map(|state| state.session_id.as_str()),
+                    Some("idle"),
+                    "150% rename hit {:?} must open the inline editor",
+                    rename_hit
+                );
+                assert_eq!(view.projection.active_session_id.as_deref(), Some("idle"));
+                view.session_rename
+                    .as_ref()
+                    .unwrap()
+                    .input
+                    .update(cx, |input, cx| {
+                        input.set_text("   ", cx);
+                    });
+                // TextInput 的 Enter 绑定派发 SendMessage，根节点落到此函数。
+                view.on_send_message(&crate::ui::SendMessage, window, cx);
+                assert!(
+                    view.session_rename.is_some(),
+                    "blank rename must stay in the editor"
+                );
+                assert_eq!(
+                    view.projection
+                        .sessions
+                        .iter()
+                        .find(|session| session.session_id == "idle")
+                        .unwrap()
+                        .title,
+                    long_title
+                );
+                view.session_rename
+                    .as_ref()
+                    .unwrap()
+                    .input
+                    .update(cx, |input, cx| {
+                        input.set_text("Renamed from the rail", cx);
+                    });
+                view.on_send_message(&crate::ui::SendMessage, window, cx);
+                assert!(view.session_rename.is_none(), "changed title submits");
+                assert_eq!(
+                    view.projection
+                        .sessions
+                        .iter()
+                        .find(|session| session.session_id == "idle")
+                        .unwrap()
+                        .title,
+                    long_title,
+                    "rename does not paint a title before the snapshot"
+                );
+            });
+        });
+        press_published_ax(cx, &view, &session_archive_identifier("idle"));
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert!(
+                view.archive_notice_text().is_some(),
+                "archive handler must surface the window notice"
+            );
+            assert!(
+                view.accessibility_tree(window, cx)
+                    .find(&session_identifier("idle"))
+                    .is_some(),
+                "archive without a host snapshot must keep the task"
             );
         });
 

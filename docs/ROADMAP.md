@@ -110,12 +110,12 @@
 | ✅ 完成（模拟验收）；独立 review PASS；真实平台边界待验 | [GUI3-03 · 代码块头、链接与表格人工验收](plan/gui3-03-markdown-content.md) | 语言标签、Code 回退、HTTP(S) 行内与菜单打开 / 复制、未知协议不分发通过；长表 / CRLF 复用同版已审证据。 |
 | ✅ 完成（模拟验收）；独立 review PASS；真实平台边界待验 | [GUI3-04 · 失败卡与下一步人工验收](plan/gui3-04-run-failure-next-step.md) | 三档长原因、认证导航与 Review 条件 / 正式点击通过；文件清单为测试投影，真实 Host / Git 待验。 |
 | ✅ 完成（真窗模拟验收）；初审 P2 修正后独立复审 PASS；真实 Provider 待验 | [GUI3-05 · SVG 图标与语义颜色人工验收](plan/gui3-05-svg-icons.md) | 三档图标像素、Send / Cancel / 焦点、代表 hover / tooltip / 按住输入与归档回执通过；Spec 旧尺寸与形状同步，Ghost 色差边界保留。 |
+| ✅ 完成（模拟验收）；独立 review PASS；真实平台边界待验 | [GUI3-06 · 侧栏降噪与字号密度人工验收](plan/gui3-06-task-rail-density.md) | 正式 live 投影、分组及 150% 改名 / 归档模拟通过；普通标题三档真窗复用同版证据，长标题只核模拟布局。 |
 
 ### 待验收
 
 | 状态 | 任务 | 简介 |
 | --- | --- | --- |
-| 等待人工验收 | [GUI3-06 · 侧栏降噪与字号密度人工验收](plan/gui3-06-task-rail-density.md) | 验收任务分组、侧栏密度和真实 live 状态点。 |
 | 等待人工验收 | [GUI3-07 · Header 动作与断线层级人工验收](plan/gui3-07-header-recovery.md) | 验收 Header 导航、状态 chip 与断线恢复入口的层级。 |
 | 等待人工验收 | [GUI3-08 · 层次 token 与有限动效人工验收](plan/gui3-08-surfaces-motion.md) | 验收深色层次、交互反馈与 Switch / Inspector 的实际动态效果。 |
 | 等待人工验收 | [GUI4 · StatusBar、空态与终端人工验收](plan/gui4-status-empty-terminal.md) | 验收三栏状态、共享空态和终端直接输入的剩余用户路径。 |
