@@ -103,12 +103,12 @@
 | ✅ 完成（模拟验收）；独立 review 初审 P2 / 复审 P3 修复后最终 PASS；真实 Host、真窗口、原生 AX 与像素待验 | [GUI2-03 · 任务与操作快捷查找人工验收](plan/gui2-03-quick-search.md) | 侧栏与 Cmd+K 打开、当前 Snapshot 任务 / 页面查找、方向键 / Enter / Esc、草稿隔离、无结果与断线 gate 经 GPUI / AX 路径模拟通过；断线范围文案补齐本地浏览器。 |
 | ✅ 完成（模拟验收）；独立 review 初审 3 项 P2 修复后复审 PASS；真实 Host、真窗口、原生 AX、系统按键像素与真实历史分页待验 | [GUI2-04 · 当前对话查找与回合定位人工验收](plan/gui2-04-conversation-navigation.md) | 当前已加载正文查找、命中循环 / 无结果、长对话回合目录滚动定位、流式转持久身份、阅读模式解锚与切任务清空经 GPUI / AX 路径模拟通过。 |
 | ✅ 完成（模拟验收）；独立 review 初审 P2 修复后复审 PASS；真实 Host、真窗口、原生 AX bridge、真实像素、PTY、浏览器与文件系统事实待验 | [GUI2-05 · 工作面板与窄窗可达性人工验收](plan/gui2-05-work-panels.md) | 宽窗并排与窄窗中央呈现、Changes / Terminal / Resources 往返保持、既有面板错误 / 空态与文件 / 浏览器路径经 GPUI / AX 路径模拟通过。 |
+| ✅ 完成（模拟验收）；初审 P2 / P3 修复后独立复审 PASS；真实平台边界待验 | [GUI2-06 · 设置查找与行式信息组织人工验收](plan/gui2-06-settings-search.md) | 中英查找、定位与清空、导航几何、控件焦点 / pending / stale 及供应商错误分层经 GPUI / AX 模拟验证；测试语言线程隔离、复用产品滚动方法，修后五条回归与生产分支 check 通过。 |
 
 ### 待验收
 
 | 状态 | 任务 | 简介 |
 | --- | --- | --- |
-| 等待人工验收 | [GUI2-06 · 设置查找与行式信息组织人工验收](plan/gui2-06-settings-search.md) | 验收设置页面 / 行查找、定位、权限控件和供应商信息层级。 |
 | 等待人工验收 | [GUI2-07 · 受影响主路径与旧缺口收口验收](plan/gui2-07-main-path-acceptance.md) | 汇总 GUI2 各项验收证据，闭合跨壳层、对话和面板的剩余缺口。 |
 | 等待人工验收 | [GUI3-01 · 工具调用可扫读人工验收](plan/gui3-01-tool-summaries.md) | 验收工具 headline、目标、展开内容与真实执行状态。 |
 | 等待人工验收 | [GUI3-02 · Composer 元信息与模型入口人工验收](plan/gui3-02-composer-metadata.md) | 验收项目信息、模型 chip、Context 与无项目首页文案。 |

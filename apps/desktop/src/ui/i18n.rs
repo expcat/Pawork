@@ -4,6 +4,7 @@
 //! `t()` 取文案（同源合同）；AX node id 保持英文稳定标识，不翻译。
 //! 数据内容（会话标题、provider / model id、路径、wire 错误详情）不翻译。
 
+#[cfg(not(test))]
 use std::sync::atomic::{AtomicU8, Ordering};
 
 /// 界面语言。默认 English：既有测试与 AX 断言全部基于默认语言。
@@ -44,11 +45,39 @@ pub fn language_from_identifier(identifier: &str) -> Option<Language> {
 /// 可选语言全集（切换器按序渲染）。
 pub const LANGUAGES: [Language; 2] = [Language::English, Language::Chinese];
 
+#[cfg(not(test))]
 static CURRENT: AtomicU8 = AtomicU8::new(Language::English as u8);
 
-/// 当前界面语言（全局读；渲染与 AX 同源入口）。
+#[cfg(test)]
+std::thread_local! {
+    static CURRENT: std::cell::Cell<u8> = const { std::cell::Cell::new(Language::English as u8) };
+}
+
+fn current_code() -> u8 {
+    #[cfg(not(test))]
+    {
+        CURRENT.load(Ordering::Relaxed)
+    }
+    #[cfg(test)]
+    {
+        CURRENT.with(std::cell::Cell::get)
+    }
+}
+
+fn store_code(code: u8) {
+    #[cfg(not(test))]
+    {
+        CURRENT.store(code, Ordering::Relaxed);
+    }
+    #[cfg(test)]
+    {
+        CURRENT.with(|cell| cell.set(code));
+    }
+}
+
+/// 当前界面语言。生产构建读进程全局；cfg(test) 读本线程。渲染与 AX 同源入口。
 pub fn language() -> Language {
-    match CURRENT.load(Ordering::Relaxed) {
+    match current_code() {
         1 => Language::Chinese,
         _ => Language::English,
     }
@@ -56,7 +85,7 @@ pub fn language() -> Language {
 
 /// 切换界面语言（由 AppView 触发并重渲染）。
 pub fn set_language(language: Language) {
-    CURRENT.store(language as u8, Ordering::Relaxed);
+    store_code(language as u8);
 }
 
 /// 按 key 返回本地化文案：每个 arm 同时给出 (English, 中文)；
@@ -1722,5 +1751,34 @@ mod tests {
         }
         assert_eq!(language_from_identifier("settings-language-fr"), None);
         assert_eq!(language_from_identifier("settings-text-scale-100"), None);
+    }
+
+    /// cfg(test) 的语言态是线程局部。别的线程读到默认 English，
+    /// 也不能把本线程改掉。生产构建仍是进程全局 AtomicU8，这条测试覆盖不到。
+    #[test]
+    fn language_stays_on_the_calling_thread() {
+        struct Reset(Language);
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                set_language(self.0);
+            }
+        }
+        let _reset = Reset(language());
+        set_language(Language::Chinese);
+
+        let started = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let started_worker = std::sync::Arc::clone(&started);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            started_worker.wait();
+            let seen = language();
+            set_language(Language::English);
+            sender.send(seen).expect("send seen language");
+        });
+        started.wait();
+        assert_eq!(receiver.recv().expect("worker language"), Language::English);
+        worker.join().expect("language thread");
+        assert_eq!(language(), Language::Chinese);
+        assert_eq!(t("settings.search.empty"), "没有匹配的设置");
     }
 }

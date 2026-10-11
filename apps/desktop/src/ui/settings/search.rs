@@ -657,7 +657,7 @@ impl AppView {
         cx.defer_in(window, |_view, _window, cx| cx.notify());
     }
 
-    fn try_scroll_settings_row(&self, row_id: &str) -> bool {
+    pub(crate) fn try_scroll_settings_row(&self, row_id: &str) -> bool {
         let Some(handle) = self.settings_element_layouts.get(row_id) else {
             return false;
         };
