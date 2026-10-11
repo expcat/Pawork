@@ -10165,8 +10165,99 @@ mod tests {
         });
     }
 
-    /// GUI3-04：失败 banner Ø20 高度与认证 CTA；Press 进 Providers 后草稿保留；
-    /// 成功 Review 卡 / 取消页脚不变。
+    /// 失败卡测高。原因再长也只占一行；AX description 保留原文。
+    fn measure_failed_banner(
+        cx: &mut gpui::VisualTestContext,
+        view: &gpui::Entity<AppView>,
+        scale: crate::ui::theme::font::TextScale,
+        event_id: &str,
+        reason: &str,
+        expect_cta: bool,
+    ) -> f32 {
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.text_scale = scale;
+                window.set_rem_size(gpui::px(scale.rem_pixels()));
+                view.projection.timeline.entries = vec![TimelineEntry {
+                    sequence: 1,
+                    event_id: event_id.into(),
+                    kind: TimelineEntryKind::RunState(format!("run failed · {reason}")),
+                    fork_boundary: Some(ForkBoundary::Failed),
+                    timestamp: "1800000000000".into(),
+                    run_id: Some("run-measure".into()),
+                }];
+                view.timeline_changed();
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let rem = f32::from(window.rem_size());
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().unwrap();
+            let card = tree
+                .find(&format!("run-summary-card-{event_id}"))
+                .expect("failed summary card");
+            assert_eq!(card.description.as_deref(), Some(reason));
+            let layout = timeline::run_summary_card_layout(
+                &view.projection.timeline[0],
+                card.bounds.width,
+                rem,
+                false,
+            );
+            assert_eq!(layout.reason_height, 0.0);
+            assert_eq!(card.bounds.height, layout.height);
+            if reason.chars().count() > 80 {
+                let font_px = crate::ui::theme::font::BODY_SM.0 * rem;
+                assert!(
+                    crate::ui::timeline_entry::estimated_wrapped_lines(
+                        reason,
+                        card.bounds.width,
+                        font_px,
+                    ) > 2,
+                    "long reason must exceed one visual line"
+                );
+            }
+            let cta = tree.find(&run_open_providers_identifier(event_id));
+            if expect_cta {
+                let cta = cta.expect("open providers CTA");
+                assert!(cta.actions.contains(&AxAction::Press));
+                assert!((cta.bounds.height - SUMMARY_NEXT_STEP_BUTTON_HEIGHT).abs() < 0.5);
+                assert!(cta.bounds.y + 0.5 >= card.bounds.y);
+                assert!(
+                    cta.bounds.y + cta.bounds.height <= card.bounds.y + card.bounds.height + 0.5
+                );
+            } else {
+                assert!(cta.is_none());
+            }
+            card.bounds.height
+        })
+    }
+
+    fn assert_completed_hides_review(
+        cx: &mut gpui::VisualTestContext,
+        view: &gpui::Entity<AppView>,
+    ) {
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().unwrap();
+            assert!(tree.find(&run_review_identifier("completed")).is_none());
+            assert!(tree.find("run-summary-card-completed").is_none());
+            let footer = tree.find("run-footer-completed").expect("completed footer");
+            assert!(footer.label.contains(t("run.footer_completed")));
+            assert!(!view.changes_available_for_active());
+        });
+    }
+
+    /// GUI3-04：认证失败 AX Press 进入 Providers 并保留草稿。长原因在三档字号下
+    /// 仍是单行，AX description 保留全文。完成态只有当前会话 Ready、非 stale、
+    /// 非空文件才有 Review；点击渲染按钮进入 Changes。并排开合在测试里插到终宽。
+    /// 终态与文件清单是测试投影，不是 Host / Git 回执。
     #[gpui::test]
     fn failed_run_banner_geometry_and_provider_cta_preserves_draft(cx: &mut gpui::TestAppContext) {
         use crate::controller::DiffFileSummary;
@@ -10265,6 +10356,81 @@ mod tests {
             })
         });
 
+        let long_auth = format!("HTTP 401 {}", "rejected credential ".repeat(24));
+        let long_plain = format!("provider timeout {}", "upstream delayed ".repeat(24));
+        let mut auth_heights = [0.0; 3];
+        let mut plain_heights = [0.0; 3];
+        for (index, scale) in [
+            TextScale::Percent100,
+            TextScale::Percent125,
+            TextScale::Percent150,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            cx.simulate_resize(size(px(1440.0), px(1024.0)));
+            let long_height =
+                measure_failed_banner(cx, &view, scale, "failed-long-auth", &long_auth, true);
+            let short_height =
+                measure_failed_banner(cx, &view, scale, "failed-long-auth", "HTTP 401", true);
+            assert_eq!(
+                long_height,
+                short_height,
+                "truncated reason keeps one line at {}%",
+                scale.percent()
+            );
+            auth_heights[index] = long_height;
+            plain_heights[index] =
+                measure_failed_banner(cx, &view, scale, "failed-long-plain", &long_plain, false);
+            assert!(plain_heights[index] < auth_heights[index]);
+        }
+        assert!(auth_heights[0] < auth_heights[1] && auth_heights[1] < auth_heights[2]);
+        assert!(plain_heights[0] < plain_heights[1] && plain_heights[1] < plain_heights[2]);
+
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.text_scale = TextScale::Percent150;
+                window.set_rem_size(px(TextScale::Percent150.rem_pixels()));
+                view.projection.timeline.entries = vec![terminal(
+                    "failed-long-auth",
+                    ForkBoundary::Failed,
+                    &format!("run failed · {long_auth}"),
+                    "run-auth",
+                )];
+                view.timeline_changed();
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                let cta_id = run_open_providers_identifier("failed-long-auth");
+                let tree = view.accessibility_tree(window, cx);
+                assert_eq!(
+                    tree.find("run-summary-card-failed-long-auth")
+                        .and_then(|card| card.description.as_deref()),
+                    Some(long_auth.as_str())
+                );
+                view.handle_accessibility_request(
+                    AxRequest {
+                        identifier: cta_id,
+                        action: AxAction::Press,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+                assert_eq!(view.route, AppRoute::Settings);
+                assert_eq!(view.settings_page, SettingsPage::Providers);
+                assert_eq!(view.text_input.read(cx).text(), "keep draft");
+                view.on_close_settings(window, cx);
+                view.text_scale = TextScale::Percent100;
+                window.set_rem_size(px(TextScale::Percent100.rem_pixels()));
+                cx.notify();
+            })
+        });
+
         cx.update(|_, cx| {
             view.update(cx, |view, cx| {
                 view.projection.timeline.entries = vec![terminal(
@@ -10288,6 +10454,79 @@ mod tests {
                 .is_none());
             assert!(tree.find("run-footer-failed-timeout").is_some());
         });
+
+        let review_file = || DiffFileSummary {
+            path: "a.rs".into(),
+            status: "modified".into(),
+            additions: 1,
+            deletions: 0,
+            binary: false,
+        };
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.timeline.entries = vec![terminal(
+                    "completed",
+                    ForkBoundary::Completed,
+                    "run completed",
+                    "run-ok",
+                )];
+                view.changes.reset_for_session();
+                view.timeline_changed();
+                cx.notify();
+            })
+        });
+        assert_completed_hides_review(cx, &view);
+
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                let epoch = view.changes.begin_refresh();
+                assert!(view
+                    .changes
+                    .apply_files(epoch, Some("task".into()), Vec::new(), None));
+                cx.notify();
+            })
+        });
+        assert_completed_hides_review(cx, &view);
+
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                let epoch = view.changes.begin_refresh();
+                assert!(view.changes.apply_files(
+                    epoch,
+                    Some("other-session".into()),
+                    vec![review_file()],
+                    None,
+                ));
+                cx.notify();
+            })
+        });
+        assert_completed_hides_review(cx, &view);
+
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                let epoch = view.changes.begin_refresh();
+                assert!(view
+                    .changes
+                    .apply_files(epoch, None, vec![review_file()], None));
+                cx.notify();
+            })
+        });
+        assert_completed_hides_review(cx, &view);
+
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                let epoch = view.changes.begin_refresh();
+                assert!(view.changes.apply_files(
+                    epoch,
+                    Some("task".into()),
+                    vec![review_file()],
+                    None,
+                ));
+                view.changes.mark_stale("disconnected");
+                cx.notify();
+            })
+        });
+        assert_completed_hides_review(cx, &view);
 
         cx.update(|_, cx| {
             view.update(cx, |view, cx| {
@@ -10340,7 +10579,46 @@ mod tests {
                 .find(&run_open_providers_identifier("completed"))
                 .is_none());
             assert!(tree.find("run-footer-completed").is_some());
+            assert!(!view.inspector_open);
         });
+
+        let review_hit = cx
+            .debug_bounds("run-review-completed")
+            .expect("rendered review button");
+        cx.simulate_click(review_hit.center(), gpui::Modifiers::none());
+        // 并排开合是 180ms，测试执行器不推动 Instant。插到终宽后 Changes
+        // 才有实测布局，AX 才能发布面板。
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.inspector_motion.snap(metrics::INSPECTOR_WIDTH);
+                cx.notify();
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert!(view.inspector_open);
+            assert_eq!(view.inspector_tab, InspectorTab::Changes);
+            assert!(matches!(
+                view.changes.fetch,
+                crate::ui::changes::ChangesFetch::Failed(ref reason) if reason == "no workspace"
+            ));
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().unwrap();
+            let changes = tree.find("changes").expect("changes panel");
+            let description = changes.description.as_deref().unwrap_or("");
+            assert!(
+                description.contains("failed · no workspace"),
+                "{description}"
+            );
+            assert_eq!(
+                tree.find("inspector-panel").unwrap().value.as_deref(),
+                Some(t("inspector.tab_changes"))
+            );
+            assert_eq!(view.text_input.read(cx).text(), "keep draft");
+        });
+        assert!(cx.debug_bounds("changes-tab-files").is_some());
 
         cx.update(|_, cx| {
             view.update(cx, |view, cx| {

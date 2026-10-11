@@ -303,7 +303,10 @@ impl RenderOnce for Button {
             self.variant.disabled_text_color(cx)
         };
 
-        let mut button = div().id(self.id);
+        // debug_bounds 只索引 debug_selector，不索引 element id。
+        // release 构建里该方法是空操作。
+        let selector = self.id.to_string();
+        let mut button = div().id(self.id).debug_selector(|| selector);
         if self.center {
             button = button.flex().items_center().justify_center();
         }

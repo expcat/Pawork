@@ -404,6 +404,7 @@ impl AppView {
             |id: &'static str, label: &'static str, current: bool, target: ChangesTab| {
                 div()
                     .id(id)
+                    .debug_selector(|| id.to_string())
                     .relative()
                     .w(px(metrics::CHANGES_TAB_WIDTH))
                     .h(px(metrics::CHANGES_TAB_HEIGHT))

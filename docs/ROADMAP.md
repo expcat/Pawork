@@ -108,12 +108,12 @@
 | ✅ 完成（模拟验收）；独立 review PASS；真实平台边界待验 | [GUI3-01 · 工具调用可扫读人工验收](plan/gui3-01-tool-summaries.md) | 历史工具投影、摘要状态计数、鼠标 / Enter / Space / AX 展开与 10 行预览 / 全文回归通过；生产行为未改，真实平台边界待验。 |
 | ✅ 完成（模拟验收）；独立 review PASS；真实平台边界待验 | [GUI3-02 · Composer 元信息与模型入口人工验收](plan/gui3-02-composer-metadata.md) | 四条既有回归补断言、六条定向测试通过；Context 缺数据、项目归属与首页、模型入口及取消不伪造终态的边界模拟完成。 |
 | ✅ 完成（模拟验收）；独立 review PASS；真实平台边界待验 | [GUI3-03 · 代码块头、链接与表格人工验收](plan/gui3-03-markdown-content.md) | 语言标签、Code 回退、HTTP(S) 行内与菜单打开 / 复制、未知协议不分发通过；长表 / CRLF 复用同版已审证据。 |
+| ✅ 完成（模拟验收）；独立 review PASS；真实平台边界待验 | [GUI3-04 · 失败卡与下一步人工验收](plan/gui3-04-run-failure-next-step.md) | 三档长原因、认证导航与 Review 条件 / 正式点击通过；文件清单为测试投影，真实 Host / Git 待验。 |
 
 ### 待验收
 
 | 状态 | 任务 | 简介 |
 | --- | --- | --- |
-| 等待人工验收 | [GUI3-04 · 失败卡与下一步人工验收](plan/gui3-04-run-failure-next-step.md) | 验收 Run 终态、错误原因、认证入口和 Review changes 条件。 |
 | 等待人工验收 | [GUI3-05 · SVG 图标与语义颜色人工验收](plan/gui3-05-svg-icons.md) | 验收图标在真实窗口中的清晰度、语义颜色和操作入口。 |
 | 等待人工验收 | [GUI3-06 · 侧栏降噪与字号密度人工验收](plan/gui3-06-task-rail-density.md) | 验收任务分组、侧栏密度和真实 live 状态点。 |
 | 等待人工验收 | [GUI3-07 · Header 动作与断线层级人工验收](plan/gui3-07-header-recovery.md) | 验收 Header 导航、状态 chip 与断线恢复入口的层级。 |
