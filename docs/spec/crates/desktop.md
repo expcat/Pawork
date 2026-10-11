@@ -468,7 +468,7 @@ UX-05 模型管理弹层：共用 `model_search_input` / query，仅过滤显示
 
 UX-05 复用并更新两个现有主路径回归：`model_menu_ax_culls_rows_outside_clipped_frame` 覆盖 20 模型当前项可见、大小写 ID 搜索、Enter 选择不发送草稿、无结果恢复、键盘滚动 / AX 和 Esc 回焦；`settings_models_menu_ax_pins_gates_switches_and_empty_state` 覆盖原有写 gate / 全量动作与内部列表滚动，以及三档字号下名称 / ID 搜索、无结果恢复与实际可见 Switch。没有新增测试体系。真实窗口和候选证据见 历史记录。
 
-UX-03 定向回归 `project_task_guidance_preserves_context_and_wraps`：项目筛选不重绑 / 不改草稿，项目新建菜单排除「所有项目」，Esc 回焦与第二次 Enter 确认，宽窄窗 × 三档字号下元信息实际框不重叠 / 不越界；有项目后移除限制与新建入口但保留其他反馈。复用既有 Composer 布局、会话草稿与目录菜单滚动测试。
+UX-03 定向回归 `project_task_guidance_preserves_context_and_wraps`：项目筛选不重绑 / 不改草稿，项目新建菜单排除「所有项目」，Esc 回焦与第二次 Enter 确认，宽窄窗 × 三档字号下元信息实际框不重叠 / 不越界；有项目后移除限制与新建入口但保留其他反馈。筛选清空后 chip 为无项目，正数 Context 为 `Context · — / 128000`。第二次 Enter 选定项目后当前任务仍无归属：chip 保持无项目，出现筛选隐藏提示，入口仍是绑定项目，草稿不变。会话改绑该项目后 chip 为工作区名；目录 window 为 0 时 Context 消失且 chip 仍在。清掉 active session 后按项目筛选回落同一工作区 chip，入口变为「New task in project…」，不画 Context 或文件工具故障行。复用既有 Composer 布局、会话草稿与目录菜单滚动测试。
 
 ## 7. 测试与验证资产
 
@@ -480,7 +480,7 @@ UX-03 定向回归 `project_task_guidance_preserves_context_and_wraps`：项目�
 
 `plan_window_keyboard_reaches_fields_and_actions` 挂载实际 Plan 子窗口，验证标题→步骤→原因→刷新及反向焦点遍历；覆盖既有句柄未启用 Tab 的真实缺陷。GPUI 模拟窗口不安装需要原生句柄的 AX 桥接；该边界仍用真实窗口验收，不能由焦点测试推定。
 
-布局回归包括 `composer_layout_keeps_controls_in_card_and_ax_aligned`、shell resize 与宽窄窗实测；动效回归为 `inspector_motion_reverses_without_jump_and_snaps_when_narrow`。冻结面 `APP_VIEW_KEYBINDINGS`（审批、取消、字号与任务循环）、`MAIN_PATH_TAB_STOP_IDS` 与握手能力面由 bin 内测试钉住；Settings 路由旁路工作台快捷键在同一键表测试中验证。这些自动化资产不替代真窗口像素验收。
+布局回归包括 `composer_layout_keeps_controls_in_card_and_ax_aligned`、shell resize 与宽窄窗实测；已选模型但目录 `context_window_tokens` 为 `None` 或 `0` 时都不发布 `composer-context`。动效回归为 `inspector_motion_reverses_without_jump_and_snaps_when_narrow`。冻结面 `APP_VIEW_KEYBINDINGS`（审批、取消、字号与任务循环）、`MAIN_PATH_TAB_STOP_IDS` 与握手能力面由 bin 内测试钉住；Settings 路由旁路工作台快捷键在同一键表测试中验证。这些自动化资产不替代真窗口像素验收。
 
 Composer 面板高度仍用 helper 验证空闲/中等/封顶钳制；发送按钮 36px 由实际布局/AX 覆盖，不再另钉常量。
 
@@ -572,7 +572,7 @@ Context 投影回归覆盖目录 context window 的 0 哨兵显示为 unavailabl
 - **FollowScroll 的滚轮时序假设**：`on_scroll_wheel` 直读已应用（未钳制）的 offset——依赖 vendored gpui 0.2.2 的 Bubble 相监听逆序分发（内部偏移应用先于用户监听）；升级 gpui 时须重核，做 delta 投影会把增量计两次。
 - **UI fixture barrier 钩子（R1 Wave B，测试专用）**：启动读 env `PAWORK_UI_BARRIER_DIR`（main.rs；空值视同未设置，`--probe` / `--probe-smoke` 不发射）。未设置时全程零开销：不 spawn tick、无任何文件 IO。设置后由 ui/mod.rs 既有 1s tick 兼任发射点：已连接 && 无进行中 timeline 分页（`open_session` 置位、complete / `open session` 失败 / `Disconnected` 复位）&& 本 tick 窗口无 ControllerEvent 时重写 `<dir>/timeline_stable`（JSON 含 settle_seq 单调自增 / session_id / entry_count / at_ms / detail）；开始连接、打开会话或收到任一 ControllerEvent 时先删除旧 `timeline_stable` 与 `approval_visible`，防只等存在性的 driver 误收陈旧信号。`pending_approval` 存在且已稳定 → 重写 `approval_visible`（含 tool 名），消失 → 保持删除；目录不存在时由 `BarrierSink::new` 惰性创建。写入 tmp+rename 原子替换、任何 IO 失败静默跳过；`projection/` 保持纯状态机零 IO。controller 在未连接、无 TimelinePage 响应或翻页达到上限时发 `SessionOpenFailed{session_id}`，UI 仅在该 session 仍为 active 时复位分页状态。
 
-`welcome_and_rail_follow_actual_layout` 定向回归覆盖首页状态、实测 AX 和两种尺寸 × 三档字号；不改变协议、创建写口或持久化。`workbench_home_rail_projection_ax_and_keyboard` 在同一条渲染路径上覆盖首页 New task 的 AX Press（无 Host 回执不建会话、焦点到 Composer）、真实 Snapshot 下项目 / 无项目切换并保持标题与草稿、分组往返、项目头 AX Press 与 ←/→ 折叠、Settings 往返，以及已连接空闲不伪装断线；宽窄窗与三档字号下入口框落在窗口内。150% 窄窗的列表内容落在 AX 侧栏框内；连接状态底行对照全高左栏（状态栏只占右侧，AX 框停在状态栏上沿），要求不越栏宽、不出窗口、不盖住项目头。真窗口、系统缩放、真实像素、真实 Host 与真实 Provider 仍待人工验收。
+`welcome_and_rail_follow_actual_layout` 定向回归覆盖首页状态、实测 AX 和两种尺寸 × 三档字号；无会话首页的 Composer chip 为无项目，入口为「New task in project…」且可启用，不画 Context 与文件工具故障行。不改变协议、创建写口或持久化。`workbench_home_rail_projection_ax_and_keyboard` 在同一条渲染路径上覆盖首页 New task 的 AX Press（无 Host 回执不建会话、焦点到 Composer）、真实 Snapshot 下项目 / 无项目切换并保持标题与草稿、分组往返、项目头 AX Press 与 ←/→ 折叠、Settings 往返，以及已连接空闲不伪装断线；宽窄窗与三档字号下入口框落在窗口内。150% 窄窗的列表内容落在 AX 侧栏框内；连接状态底行对照全高左栏（状态栏只占右侧，AX 框停在状态栏上沿），要求不越栏宽、不出窗口、不盖住项目头。真窗口、系统缩放、真实像素、真实 Host 与真实 Provider 仍待人工验收。
 
 2026-09-24 文件夹读取补充：macOS / Linux x86_64、aarch64 使用持有的目录描述符与 `openat(NOFOLLOW)` 逐组件读取，拒绝选择后目录/符号链接替换导致的越界；其它平台入口禁用并显示平台要求。未新增依赖。
 

@@ -5204,7 +5204,22 @@ mod tests {
             );
             let tree = v.accessibility_tree(window, cx);
             assert!(tree.find("run-status").is_some());
-            assert!(tree.find("cancel").is_some());
+            let cancel = tree.find("cancel").unwrap();
+            assert!(cancel.enabled, "running cancel stays operable");
+            assert!(tree.permits(&AxRequest {
+                identifier: "cancel".into(),
+                action: AxAction::Press,
+                value: None,
+            }));
+            assert!(tree.find("send").is_none());
+        });
+        press_published_ax(cx, &view, "cancel");
+        cx.update(|window, cx| {
+            let v = view.read(cx);
+            assert_eq!(v.projection.active_run_id.as_deref(), Some("run-keep"));
+            assert_eq!(v.text_input.read(cx).text(), "保留草稿");
+            let tree = v.accessibility_tree(window, cx);
+            assert!(tree.find("cancel").unwrap().enabled);
             assert!(tree.find("send").is_none());
         });
     }
@@ -5597,6 +5612,21 @@ mod tests {
                 "zero-token sentinel is unknown and must not draw ContextMeter"
             );
         });
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.models[0].context_window_tokens = None;
+                cx.notify();
+            })
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let tree = view.read(cx).accessibility_tree(window, cx);
+            assert!(
+                tree.find("composer-context").is_none(),
+                "missing catalog window must not draw ContextMeter"
+            );
+        });
         // An expanded image must not push the editor/footer outside the card.
         cx.simulate_resize(size(px(1440.0), px(1024.0)));
         cx.update(|_, cx| {
@@ -5719,6 +5749,14 @@ mod tests {
                     let entry = tree.find("composer-project-task").unwrap();
                     assert_eq!(entry.label, t("composer.bind_project"));
                     assert!(entry.enabled);
+                    assert_eq!(
+                        tree.find("composer-workspace").unwrap().value.as_deref(),
+                        Some(t("composer.no_project_chip"))
+                    );
+                    assert_eq!(
+                        tree.find("composer-context").unwrap().value.as_deref(),
+                        Some("Context · — / 128000")
+                    );
                     let bounds: Vec<_> = [
                         "composer-workspace",
                         "composer-project-task",
@@ -5789,12 +5827,31 @@ mod tests {
         cx.simulate_keystrokes("enter");
         cx.update(|_, cx| assert_eq!(view.read(cx).open_menu, Some(MenuKind::ProjectTask)));
         cx.simulate_keystrokes("enter");
-        cx.update(|_, cx| {
+        cx.update(|window, cx| {
+            let current = view.read(cx);
             assert!(
-                view.read(cx).open_menu.is_none(),
+                current.open_menu.is_none(),
                 "second Enter confirms selection"
             );
-            assert_eq!(view.read(cx).text_input.read(cx).text(), "保留原任务草稿");
+            assert_eq!(current.text_input.read(cx).text(), "保留原任务草稿");
+            assert_eq!(current.scope_workspace_id.as_deref(), Some("project"));
+            assert_eq!(current.projection.sessions.len(), 1);
+            assert_eq!(current.projection.active_session_id.as_deref(), Some("old"));
+            assert_eq!(current.projection.sessions[0].workspace_id, None);
+            let tree = current.accessibility_tree(window, cx);
+            assert_eq!(
+                tree.find("composer-workspace").unwrap().value.as_deref(),
+                Some(t("composer.no_project_chip"))
+            );
+            assert_eq!(
+                tree.find("composer-filter-hint").unwrap().value.as_deref(),
+                Some(t("rail.task_hidden"))
+            );
+            assert_eq!(
+                tree.find("composer-project-task").unwrap().label,
+                t("composer.bind_project")
+            );
+            assert!(tree.find("composer-file-tools-hint").is_none());
         });
         cx.update(|window, cx| {
             view.update(cx, |view, cx| {
@@ -5812,14 +5869,34 @@ mod tests {
                     tree.find("composer-context").unwrap().value.as_deref(),
                     Some("Context · — / 128000")
                 );
+                let project_chip = t("composer.workspace_scope").replace("{}", "Example");
+                assert_eq!(
+                    tree.find("composer-workspace").unwrap().value.as_deref(),
+                    Some(project_chip.as_str())
+                );
                 view.projection.models[0].context_window_tokens = Some(0);
                 let tree = view.accessibility_tree(window, cx);
                 assert!(tree.find("composer-context").is_none());
+                assert_eq!(
+                    tree.find("composer-workspace").unwrap().value.as_deref(),
+                    Some(project_chip.as_str())
+                );
                 view.projection.active_session_id = None;
                 assert!(
                     view.composer_project_task_visible(),
                     "empty state offers project creation"
                 );
+                let tree = view.accessibility_tree(window, cx);
+                assert_eq!(
+                    tree.find("composer-workspace").unwrap().value.as_deref(),
+                    Some(project_chip.as_str())
+                );
+                let entry = tree.find("composer-project-task").unwrap();
+                assert_eq!(entry.label, t("composer.project_task"));
+                assert!(entry.enabled);
+                assert!(tree.find("composer-context").is_none());
+                assert!(tree.find("composer-file-tools-hint").is_none());
+                assert!(tree.find("composer-filter-hint").is_none());
             })
         });
     }
@@ -7660,6 +7737,15 @@ mod tests {
                                 view.welcome_hint()
                             );
                             assert!(tree.find("workspace-bind-project").is_none());
+                            assert_eq!(
+                                tree.find("composer-workspace").unwrap().value.as_deref(),
+                                Some(t("composer.no_project_chip"))
+                            );
+                            let project_task = tree.find("composer-project-task").unwrap();
+                            assert_eq!(project_task.label, t("composer.project_task"));
+                            assert!(project_task.enabled);
+                            assert!(tree.find("composer-context").is_none());
+                            assert!(tree.find("composer-file-tools-hint").is_none());
                         }
                         assert_eq!(tree.find("header-new-task").is_some(), !active);
                         assert!(
