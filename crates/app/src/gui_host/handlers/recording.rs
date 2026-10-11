@@ -269,7 +269,8 @@ mod tests {
     use super::*;
     use crate::gui_host::tests::{command_envelope, query_envelope};
     use pawork_domain::{
-        Message, MessageId, MessageMetadata, MessageRole, RunId, ToolCallContent, ToolResultContent,
+        CancellationToken, CanonicalModelRequest, Message, MessageId, MessageMetadata, MessageRole,
+        ProviderStreamEvent, RunId, StopReason, ToolCallContent, ToolResultContent,
     };
     use pawork_gui_server::GuiHost;
     #[cfg(unix)]
@@ -281,7 +282,11 @@ mod tests {
 
     #[tokio::test]
     async fn recorded_operations_save_and_load_as_real_skill() {
-        let (mut core, _store_dir) = crate::testsupport::mock_core(vec![]).await;
+        let (mut core, _store_dir, requests) = crate::testsupport::mock_core_capturing(vec![
+            ProviderStreamEvent::TextDelta("ok".into()),
+            ProviderStreamEvent::ResponseCompleted(StopReason::Completed),
+        ])
+        .await;
         let workspace = tempfile::tempdir().unwrap();
         let record = core.register_workspace(workspace.path()).await.unwrap();
         let session = core.create_session("Record").await.unwrap();
@@ -352,6 +357,8 @@ mod tests {
         };
         assert_eq!(candidates["operations"].as_array().unwrap().len(), 1);
         let event = candidates["operations"][0]["event_id"].as_str().unwrap();
+        #[cfg(unix)]
+        let session_for_run = session.clone();
         query.query = AppQuery::SkillRecordPreview {
             session_id: session,
             event_ids: vec![event.into()],
@@ -382,7 +389,7 @@ mod tests {
             let loader = ResourceLoader::new(workspaces, ResourceLoaderOptions::default());
             let bundle = loader
                 .load(&ResourceRequest {
-                    workspace_id: record.workspace_id,
+                    workspace_id: record.workspace_id.clone(),
                     root_index: 0,
                     current_path: WorkspaceRelativePath::default(),
                     current_path_kind: CurrentPathKind::Directory,
@@ -414,9 +421,84 @@ mod tests {
                 .unwrap(),
                 content
             );
+            let manifest = std::fs::read_to_string(
+                workspace
+                    .path()
+                    .join(".pawork/skills/read-project/manifest.toml"),
+            )
+            .unwrap();
+            let manifest: toml::Table = toml::from_str(&manifest).unwrap();
+            assert_eq!(manifest["id"].as_str(), Some("read-project"));
+            assert_eq!(manifest["version"].as_str(), Some("1.0.0"));
+            assert_eq!(manifest["description"].as_str(), Some("Read project files"));
+            // mock_core does not open_store. register_workspace already put this
+            // root in the shared WorkspaceService; install the same loader so the
+            // Run below discovers the skill through chat_turn.
+            let root = {
+                let mut hosted = adapter.core.write().await;
+                hosted.extensions.resource_loader = Some(
+                    crate::services::extension::ExtensionService::resource_loader_for(
+                        hosted.extensions.workspaces.clone(),
+                    ),
+                );
+                let root = hosted.workspace_by_id(&record.workspace_id).unwrap().roots[0]
+                    .to_str()
+                    .unwrap()
+                    .to_owned();
+                hosted.set_workspace_trusted(root.clone(), true);
+                root
+            };
+            let marker = format!("[active_skill] read-project\n{content}");
+            run_saved_skill(&adapter, &session_for_run, "run-reuse-trusted").await;
+            {
+                let mut hosted = adapter.core.write().await;
+                hosted.set_workspace_trusted(root, false);
+            }
+            run_saved_skill(&adapter, &session_for_run, "run-reuse-untrusted").await;
+            let captured = requests.lock().unwrap().clone();
+            assert_eq!(
+                captured.len(),
+                2,
+                "subsequent runs must each reach the provider"
+            );
+            assert!(
+                request_has_recorded_skill(&captured[0], &marker),
+                "trusted run did not send the recorded skill"
+            );
+            assert!(
+                !request_has_recorded_skill(&captured[1], &marker),
+                "untrusted run sent the recorded skill"
+            );
+            let persisted = adapter
+                .core
+                .read()
+                .await
+                .store()
+                .unwrap()
+                .replay_events(&session_for_run, 1, 4096)
+                .await
+                .unwrap();
+            assert_eq!(
+                injected_skill_lengths(&persisted, "run-reuse-trusted", "read-project"),
+                vec![content.len()]
+            );
+            assert!(
+                injected_skill_lengths(&persisted, "run-reuse-untrusted", "read-project")
+                    .is_empty()
+            );
+            for run_id in ["run-reuse-trusted", "run-reuse-untrusted"] {
+                assert!(
+                    persisted.iter().any(|event| {
+                        event.run_id.as_str() == run_id
+                            && matches!(event.payload, AgentEvent::RunCompleted { .. })
+                    }),
+                    "missing RunCompleted for {run_id}"
+                );
+            }
         }
         #[cfg(not(unix))]
         {
+            drop(requests);
             let list = |root: &std::path::Path| {
                 let mut names = std::fs::read_dir(root)
                     .expect("workspace root")
@@ -452,6 +534,70 @@ mod tests {
                 .join(".pawork/skills/read-project/manifest.toml")
                 .exists());
         }
+    }
+
+    #[cfg(unix)]
+    async fn run_saved_skill(
+        adapter: &GuiHostAdapter,
+        session: &pawork_domain::SessionId,
+        run_id: &str,
+    ) {
+        let core = adapter.core.read().await;
+        let sink = crate::testsupport::RecordingEvents::default();
+        core.chat_turn_with_run_id(
+            RunId::from(run_id),
+            session,
+            vec![crate::testsupport::user_hello()],
+            &sink,
+            CancellationToken::new(),
+            None,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("run {run_id} failed: {error}"));
+    }
+
+    #[cfg(unix)]
+    fn request_has_recorded_skill(request: &CanonicalModelRequest, marker: &str) -> bool {
+        request.messages.iter().any(|message| {
+            message.id.as_str() == "msg-resources"
+                && message.role == MessageRole::System
+                && message.content.iter().any(
+                    |part| matches!(part, ContentPart::Text(text) if text.text.contains(marker)),
+                )
+        })
+    }
+
+    #[cfg(unix)]
+    fn injected_skill_lengths(
+        events: &[pawork_domain::AgentEventEnvelope],
+        run_id: &str,
+        skill_id: &str,
+    ) -> Vec<usize> {
+        let mut lengths = Vec::new();
+        for event in events {
+            if event.run_id.as_str() != run_id {
+                continue;
+            }
+            let AgentEvent::Diagnostic { code, details } = &event.payload else {
+                continue;
+            };
+            if code != "resources.injected" {
+                continue;
+            }
+            let Some(layers) = details.get("layers").and_then(|value| value.as_array()) else {
+                continue;
+            };
+            for layer in layers {
+                let kind = layer.get("kind").and_then(|value| value.as_str());
+                let id = layer.get("resource_id").and_then(|value| value.as_str());
+                if kind == Some("active_skill") && id == Some(skill_id) {
+                    if let Some(byte_len) = layer.get("byte_len").and_then(|value| value.as_u64()) {
+                        lengths.push(byte_len as usize);
+                    }
+                }
+            }
+        }
+        lengths
     }
 
     #[test]

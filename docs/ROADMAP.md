@@ -116,12 +116,12 @@
 | ✅ 完成（模拟验收）；初审 P2 修复后独立复审 PASS；系统边界待验 | [GUI4 · StatusBar、空态与终端人工验收](plan/gui4-status-empty-terminal.md) | 真实 Host / PTY 主路径、双标签输出隔离与状态栏回归通过；空态复用已审证据，系统 IME 与真窗口像素待验。 |
 | ✅ 完成（模拟验收）；初审 P2 引用修正后独立复审 PASS；系统边界待验 | [AC-02 · IME、模型目录与跨面板交互人工验收](plan/accept-ime-model-navigation.md) | 换行后组合输入、目录搜索 / 开关回执及字号错误共存通过；布局与跨面板复用已审证据。 |
 | ✅ 完成（模拟验收）；独立 review PASS；系统边界待验 | [AC-03 · 产品 Plan 窗口键盘人工验收](plan/accept-plan-keyboard.md) | 三字段、五动作、busy / 未保存 / 旧 Host 与只读回执、两窗口及 Composer 父焦点模拟通过。 |
+| ✅ 完成（模拟验收）；独立 review PASS；真实 Provider 与非 Unix 待验 | [AC-04 · 技能录制产物后续 Run 发现验收](plan/accept-skill-reuse.md) | 正式保存后两次后续 Run 的技能正文、持久注入与终态通过，撤销信任后不注入；隔离复跑与既有拒绝回归通过。 |
 
 ### 待验收
 
 | 状态 | 任务 | 简介 |
 | --- | --- | --- |
-| 等待人工验收 | [AC-04 · 技能录制产物后续 Run 发现验收](plan/accept-skill-reuse.md) | 证明录制技能能被真实后续 Run 作为资源发现。 |
 | 等待人工验收 | [AC-05 · Pawork 任务消耗窗口人工验收](plan/accept-task-usage.md) | 闭合 Pawork 统计窗口的用户验收；两个外部消费者拆为独立任务。 |
 | 等待人工验收 | [AC-06 · 模型用途筛选人工验收](plan/accept-model-purpose.md) | 验收 Composer 用途菜单和 Settings 能力徽标。 |
 | 等待消费者接入与人工验收 | [AC-07 · MoMai 网关凭证与媒体消费者验收](plan/accept-gateway-consumers.md) | 闭合 MoMai 设置保存凭证及媒体 GUI 验收。 |

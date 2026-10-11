@@ -1461,6 +1461,7 @@ mod tests {
                     .into_iter()
                     .map(CatalogEntry::to_definition)
                     .collect(),
+                requests: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             }),
             None,
             ModelId::from("m-a"),

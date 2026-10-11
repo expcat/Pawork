@@ -358,6 +358,8 @@ WorkspaceList 与 snapshot Workspaces 段均按每个目标 workspace roots 调�
 
 ## 7. 测试与验证资产
 
+AC-04 延伸既有 `recorded_operations_save_and_load_as_real_skill`：种入持久操作历史后，正式 Host preview / save 创建真实 `SKILL.md` 与 `manifest.toml`，再以不同 run ID 调用正式 `chat_turn_with_run_id`。`ScriptedProvider` 的测试专用请求捕获联合核对技能正文、持久 `resources.injected` 的 `active_skill` / ID / 字节数及 `RunCompleted`；同一工作区撤销信任后再次 Run，不注入该技能。测试装配显式安装现有资源加载器并在内存设置信任，不代表原操作执行、GUI 点击、真实 Provider 或系统验收。实际命令与结果见 [AC-04](../../plan/accept-skill-reuse.md)。
+
 `scripts/ui-fixture.sh` 经 `scripts/cargo-build.sh` 定位本次 artifact；入口回归覆盖隔离 root、marker 与 barrier 拒绝，过长 socket 路径在编译前失败并报告中文错误。构建与入口回归的证据边界见 [验证规格](../verification.md#41-按用途选择入口)。
 
 ENV-06 沿用 `gui_host::handlers::recording::tests` 两条既有回归：Unix 保存 / ResourceLoader 加载、重复不覆盖及 AlreadyExists 文案，Secret / 路径 / source / symlink 拒绝；`cfg(not(unix))` 主路径断言 Unsupported 固定文案与零产物，不以 skip 或提前 return 代替拒绝。2026-10-09 在 macOS 执行 `cargo test -p pawork-app --offline --lib --features ui-fixture gui_host::handlers::recording::tests`，2 passed / 302 filtered；非 Unix 分支未编译、未原生执行，不证明非 Unix 支持。范围裁决与审查状态见 [ENV-06](../../plan/env-06-skill-non-unix.md)。

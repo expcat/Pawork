@@ -1812,6 +1812,7 @@ mod tests {
                     provider_metadata: Default::default(),
                 },
                 models: Vec::new(),
+                requests: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             }),
             None,
             ModelId::from("glm-5.2"),

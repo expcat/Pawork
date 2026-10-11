@@ -107,6 +107,7 @@ pub(crate) struct ScriptedProvider {
     pub(crate) events: Vec<ProviderStreamEvent>,
     pub(crate) summary: ModelResponseSummary,
     pub(crate) models: Vec<ModelDefinition>,
+    pub(crate) requests: Arc<Mutex<Vec<CanonicalModelRequest>>>,
 }
 
 #[async_trait]
@@ -124,10 +125,14 @@ impl ModelProvider for ScriptedProvider {
 
     async fn stream(
         &self,
-        _request: &CanonicalModelRequest,
+        request: &CanonicalModelRequest,
         sink: &dyn pawork_domain::ProviderEventSink,
         _cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, ProviderError> {
+        self.requests
+            .lock()
+            .expect("requests")
+            .push(request.clone());
         for event in &self.events {
             sink.emit(event.clone()).await?;
         }
@@ -177,9 +182,30 @@ pub(crate) async fn mock_core(events: Vec<ProviderStreamEvent>) -> (AppCore, tem
     mock_core_with_usage(events, TokenUsage::default()).await
 }
 
+pub(crate) async fn mock_core_capturing(
+    events: Vec<ProviderStreamEvent>,
+) -> (
+    AppCore,
+    tempfile::TempDir,
+    Arc<Mutex<Vec<CanonicalModelRequest>>>,
+) {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let (core, dir) =
+        assemble_mock_core(events, TokenUsage::default(), Arc::clone(&requests)).await;
+    (core, dir, requests)
+}
+
 pub(crate) async fn mock_core_with_usage(
     events: Vec<ProviderStreamEvent>,
     usage: TokenUsage,
+) -> (AppCore, tempfile::TempDir) {
+    assemble_mock_core(events, usage, Arc::new(Mutex::new(Vec::new()))).await
+}
+
+async fn assemble_mock_core(
+    events: Vec<ProviderStreamEvent>,
+    usage: TokenUsage,
+    requests: Arc<Mutex<Vec<CanonicalModelRequest>>>,
 ) -> (AppCore, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("session.db");
@@ -204,6 +230,7 @@ pub(crate) async fn mock_core_with_usage(
                     ..Default::default()
                 },
             }],
+            requests,
         }),
         None,
         ModelId::from("glm-5.2"),
@@ -229,6 +256,7 @@ pub(crate) fn core_with_registry(registry: ModelRegistry, model: &str) -> AppCor
                 .filter(|entry| entry.provider.as_str() == "mock")
                 .map(|entry| entry.to_definition())
                 .collect(),
+            requests: Arc::new(Mutex::new(Vec::new())),
         }),
         None,
         ModelId::from(model),

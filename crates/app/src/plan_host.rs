@@ -203,6 +203,7 @@ mod tests {
                 provider_metadata: Default::default(),
             },
             models: Vec::<ModelDefinition>::new(),
+            requests: Arc::new(std::sync::Mutex::new(Vec::new())),
         });
         // 无 store：plan_service 的 replay 链路确定性失败（StoreNotOpen）。
         let core = AppCore::from_parts(
