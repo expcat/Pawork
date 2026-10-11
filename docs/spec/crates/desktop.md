@@ -473,6 +473,10 @@ UX-03 定向回归 `project_task_guidance_preserves_context_and_wraps`：项目�
 
 ## 7. 测试与验证资产
 
+AC-02 的 `newline_ime_does_not_send_while_can_send` 在正式 `AppView` 中先确认普通草稿可发送，再经 NewLine action 换行，使用 `EntityInputHandler` 完成 preedit、update 与 commit。组合中直接进入 Enter 所用的 `on_send_message`，确认草稿、undo 与发送状态保持；commit 只新增一次 undo，不自行发送。连接投影仅为打开发送 gate，socket 不存在；这条回归不证明系统 IME、按键映射或 Host RunStart 成功。
+
+`settings_catalog_search_and_switch_receipts` 在正式 AppView / controller / client / LocalTransport 上连接临时模拟 Host，经 Settings 入口、实际展开 / 管理控件和 `EntityInputHandler` 搜索，使用鼠标关闭模型与显式聚焦后 Space 重新启用。真实 Unix socket 捕获两次 `set_model_enabled` 并回执，目录 enabled、pending 及 Composer 候选源随回执收敛；TempDir 持有 socket / token 生命周期，不改用户配置。这证明 GUI 输入到模拟 Host 回执的链路，不证明真实 Global 持久化、系统 IME、原生 AX 或窗口像素。
+
 `composer_send_failure_stays_with_originating_draft` 覆盖迟到发送失败的任务归属、草稿保留、可见 AX 原因与成功清除，并复验首页建会话失败后切任务 / 返回首页时的文本与错误归属；现有 Composer / 设置 / 产品面板回归继续验证布局与动作 gate。
 
 `empty_files_copy_and_horizontal_browse_follow_host_and_ends` 覆盖 Changes 空态、真实长行模型、左右端点与移动钳制；自动回归不替代鼠标 / Enter、文件切换回到左端与三档字号的真窗口检查。

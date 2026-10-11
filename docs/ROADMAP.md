@@ -114,12 +114,12 @@
 | ✅ 完成（真窗口与 GPUI 模拟验收）；初审修正后独立复审 PASS；系统边界待验 | [GUI3-07 · Header 动作与断线层级人工验收](plan/gui3-07-header-recovery.md) | 两级重连、草稿保持及 Activity → Changes 通过；导航复用已审模拟回归，焦点为手动回焦，系统按键 / 悬停像素待验。 |
 | ✅ 完成（模拟验收）；初审 P2 修复后独立复审 PASS；真实系统动效待验 | [GUI3-08 · 层次 token 与有限动效人工验收](plan/gui3-08-surfaces-motion.md) | 修复 Switch 同值重绘跳动；Inspector 动态、两个面板独立骨架与流式标记的正式 GPUI 绘制记录通过。 |
 | ✅ 完成（模拟验收）；初审 P2 修复后独立复审 PASS；系统边界待验 | [GUI4 · StatusBar、空态与终端人工验收](plan/gui4-status-empty-terminal.md) | 真实 Host / PTY 主路径、双标签输出隔离与状态栏回归通过；空态复用已审证据，系统 IME 与真窗口像素待验。 |
+| ✅ 完成（模拟验收）；初审 P2 引用修正后独立复审 PASS；系统边界待验 | [AC-02 · IME、模型目录与跨面板交互人工验收](plan/accept-ime-model-navigation.md) | 换行后组合输入、目录搜索 / 开关回执及字号错误共存通过；布局与跨面板复用已审证据。 |
 
 ### 待验收
 
 | 状态 | 任务 | 简介 |
 | --- | --- | --- |
-| 等待人工验收 | [AC-02 · IME、模型目录与跨面板交互人工验收](plan/accept-ime-model-navigation.md) | 闭合系统 IME、目录操作及字号、错误和焦点的交互验收。 |
 | 等待人工验收 | [AC-03 · 产品 Plan 窗口键盘人工验收](plan/accept-plan-keyboard.md) | 闭合 Plan GUI 的完整键盘矩阵；本项指产品窗口，不是 docs/plan 目录。 |
 | 等待人工验收 | [AC-04 · 技能录制产物后续 Run 发现验收](plan/accept-skill-reuse.md) | 证明录制技能能被真实后续 Run 作为资源发现。 |
 | 等待人工验收 | [AC-05 · Pawork 任务消耗窗口人工验收](plan/accept-task-usage.md) | 闭合 Pawork 统计窗口的用户验收；两个外部消费者拆为独立任务。 |

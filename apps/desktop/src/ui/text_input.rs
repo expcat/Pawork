@@ -1832,6 +1832,152 @@ mod tests {
         assert_eq!(input.read_with(cx, |i, _| i.text().to_string()), "你");
     }
 
+    /// 换行后的组合输入。NewLine / Undo / Redo 是动作派发（对应
+    /// shift-enter 与 undo 绑定），不是模拟按键。preedit / update / commit
+    /// 走 EntityInputHandler。Enter 直接调用 AppView::on_send_message，
+    /// 即 Enter 动作落到的 handler。投影标成 Connected 只为打开 can_send；
+    /// 没有 Host，不把发送命令当成成功。
+    #[gpui::test]
+    fn newline_ime_does_not_send_while_can_send(cx: &mut TestAppContext) {
+        use crate::projection::{ConnectionState, ModelEntry};
+        use crate::ui::AppView;
+
+        cx.update(|cx| crate::ui::install_keybindings(cx));
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket =
+            std::env::temp_dir().join(format!("pawork-ime-gate-{}.sock", std::process::id()));
+        let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
+        cx.simulate_resize(PROBE_WINDOW);
+
+        let mut settled = false;
+        for _ in 0..40 {
+            cx.run_until_parked();
+            let connecting = view.read_with(cx, |view, _| {
+                matches!(view.projection.connection, ConnectionState::Connecting)
+            });
+            if !connecting {
+                settled = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(
+            settled,
+            "missing socket should leave Connecting before the IME gate"
+        );
+
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.set_connection(ConnectionState::Connected {
+                    instance_id: "ac02".into(),
+                });
+                view.projection.active_session_id = Some("session-ac02".into());
+                view.projection.set_models(vec![ModelEntry {
+                    provider_id: "glm-coding".into(),
+                    id: "glm-5.2".into(),
+                    display_name: "GLM 5.2".into(),
+                    ..ModelEntry::default()
+                }]);
+                view.text_input
+                    .update(cx, |input, cx| input.reset_text("已有", cx));
+                window.focus(&view.composer_focus_handle(cx));
+                window.activate_window();
+                cx.notify();
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        view.read_with(cx, |view, cx| {
+            assert!(
+                view.can_send(cx),
+                "ordinary non-empty draft must be sendable before composition"
+            );
+            assert!(!view.composer_sending);
+        });
+
+        cx.dispatch_action(super::NewLine);
+        cx.run_until_parked();
+        let undo_before = view.read_with(cx, |view, cx| {
+            let input = view.text_input.read(cx);
+            assert_eq!(input.text(), "已有\n");
+            assert!(!input.is_composing());
+            input.undo_len()
+        });
+
+        let reject_enter = |cx: &mut VisualTestContext, marked: &str| {
+            view.read_with(cx, |view, cx| {
+                let input = view.text_input.read(cx);
+                assert_eq!(input.text(), marked);
+                assert!(input.is_composing());
+                assert_eq!(input.undo_len(), undo_before);
+                assert!(
+                    view.can_send(cx),
+                    "composition must not close can_send; Enter is a separate gate"
+                );
+            });
+            cx.update(|window, cx| {
+                view.update(cx, |view, cx| {
+                    view.on_send_message(&super::SendMessage, window, cx);
+                });
+            });
+            view.read_with(cx, |view, cx| {
+                assert_eq!(view.text_input.read(cx).text(), marked);
+                assert!(view.text_input.read(cx).is_composing());
+                assert_eq!(view.text_input.read(cx).undo_len(), undo_before);
+                assert!(!view.composer_sending);
+                assert!(view.pending_home_send.is_none());
+                assert!(view.composer_send_target.is_none());
+                assert!(view.projection.active_run_id.is_none());
+            });
+        };
+
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.text_input.update(cx, |input, cx| {
+                    input.replace_and_mark_text_in_range(None, "ni", None, window, cx);
+                });
+            });
+        });
+        reject_enter(cx, "已有\nni");
+
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.text_input.update(cx, |input, cx| {
+                    input.replace_and_mark_text_in_range(None, "nih", None, window, cx);
+                });
+            });
+        });
+        reject_enter(cx, "已有\nnih");
+
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.text_input.update(cx, |input, cx| {
+                    input.replace_text_in_range(None, "你", window, cx);
+                });
+            });
+        });
+        cx.run_until_parked();
+        view.read_with(cx, |view, cx| {
+            let input = view.text_input.read(cx);
+            assert_eq!(input.text(), "已有\n你");
+            assert!(!input.is_composing());
+            assert_eq!(input.undo_len(), undo_before + 1, "commit 必须恰好单次入栈");
+            assert!(view.can_send(cx));
+            assert!(!view.composer_sending, "commit must not send by itself");
+        });
+        cx.dispatch_action(super::Undo);
+        cx.run_until_parked();
+        view.read_with(cx, |view, cx| {
+            assert_eq!(view.text_input.read(cx).text(), "已有\n");
+        });
+        cx.dispatch_action(super::Redo);
+        cx.run_until_parked();
+        view.read_with(cx, |view, cx| {
+            assert_eq!(view.text_input.read(cx).text(), "已有\n你");
+            assert!(!view.composer_sending);
+        });
+    }
+
     #[gpui::test]
     fn overflow_scroll_engages_and_caret_scrolls_into_view(cx: &mut TestAppContext) {
         let (input, cx) = mount_input(cx);
