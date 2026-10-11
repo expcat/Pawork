@@ -126,7 +126,7 @@
 | ✅ 完成（模拟验收）；独立 review PASS；真实系统边界待验 | [AC-06 · 模型用途筛选人工验收](plan/accept-model-purpose.md) | GPUI 鼠标用途、Tab/Enter、搜索叠加与本地模型/草稿保持、Settings 四能力徽标通过；真实系统边界待验。 |
 | ✅ 完成（模拟验收）；独立 review PASS；真实系统与供应商边界待验 | [AC-07 · MoMai 网关凭证与消费者验收](plan/accept-gateway-consumers.md) | 正式设置保存、真实钥匙串别名与第二进程四用途请求匹配独立 Gateway / SQLite；9 条回归通过，补齐两句润色提示，嵌入仍走独立端点。 |
 | ✅ 完成（消费者联合模拟验收）；独立 review PASS；真实供应商与系统边界待验 | [AC-08 · MoMai 任务消耗消费者接入与验收](plan/accept-momai-task-usage.md) | 正式 View / Command、Keychain 与真实 Gateway / SQLite 三维查询一致，未知值与失败保留结果通过；4 条回归通过。 |
-| 等待消费者接入与人工验收 | [AC-09 · YingMai 任务消耗消费者接入与验收](plan/accept-yingmai-task-usage.md) | 闭合 YingMai 作品、分段和操作类型三个维度的消费者接入。 |
+| ✅ 完成（消费者联合模拟验收，E2 OS 模拟）；独立 review PASS | [AC-09 · YingMai 任务消耗消费者接入与验收](plan/accept-yingmai-task-usage.md) | 正式页面 / Client 与真实 Gateway / SQLite 三维查询、作品隔离、未知值与失败保旧通过；Native 与供应商边界待验。 |
 
 ## 缺环境与外部条件
 
