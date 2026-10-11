@@ -78,7 +78,7 @@
 | ✅ 完成 | [B18 · Client SDK MockTransport 与版本 API 裁决](plan/b18-client-sdk.md) | 保留四个 MockTransport 公开辅助方法与 `sdk_version_string`；headless rustdoc 的协议当前版本改为 1.27。定向静态、链接、格式与 diff 检查通过，独立 review / 复审 PASS；未改行为，未跑 Cargo。 |
 | ✅ 完成 | [B19 · Desktop 终端响应与实例路径裁决](plan/b19-desktop-terminal-paths.md) | create 回执只保留 terminal_session_id；删除无生产调用的 socket/token wrapper。三项定向回归通过，独立 review / 复审 PASS；未执行真窗口或历史二进制验收。 |
 | 已实现；定向回归与独立 review / 复审 PASS；真实探针验收待完成 | [B20 · Desktop Probe 功能测试模型裁决](plan/b20-desktop-probe-models.md) | --probe 只列目录；smoke 当次固定 opencode-go / glm-5.3-flash。唯一授权模型覆盖不了切换，输出 model_switch=uncovered。真实探针未跑，独立 review 不能关闭。 |
-| 已裁决保留；静态检查与独立 review / 复审 PASS；真实 GUI 未验收 | [B21 · Desktop 大小格式与词条入口裁决](plan/b21-desktop-format-i18n.md) | 保留两套 B/KiB/MiB 格式、单工具成功 headline 与 task_usage 本地 tr。0 到 16 MiB 的逐值比较显示串一致；未改运行行为、不新增词条，原真实验收条件保留。 |
+| ✅ 完成（模拟验收）；独立 review PASS；真实系统边界待验 | [B21 · Desktop 大小格式与词条入口裁决](plan/b21-desktop-format-i18n.md) | 附件与单/多工具摘要的英中文经 GPUI 产品链核对；复用 RV-01/02/03、GUI3-01 与 AC-05，保留格式与词条职责。 |
 
 条件性工程项 RV-2026-10-A / RV-2026-10-C 的触发条件仍见 [backlog](spec/backlog.md#8-条件性工程项)。RV-2026-10-B 已由 B8 裁决关闭：保留导入副本，不物理去重。B10 对 RV-2026-10-A 的交叉说明仍在其任务文档。
 

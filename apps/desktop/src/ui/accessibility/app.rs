@@ -12869,6 +12869,228 @@ mod tests {
         serde_json::json!({ "_pawork_tool_call_id": tool_call_id }).to_string()
     }
 
+    /// B21：时间线正文长度、Composer 文件字节和工具组标题走同一条投影渲染 / AX 链。
+    /// 正文长度与文件字节可以不同。单工具成功只留 headline。语言只改测试线程的 i18n 态，不写外观偏好。
+    #[gpui::test]
+    fn format_labels_follow_language_on_projected_timeline_and_composer(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::{px, size};
+
+        struct LanguageReset(crate::ui::i18n::Language);
+        impl Drop for LanguageReset {
+            fn drop(&mut self) {
+                crate::ui::i18n::set_language(self.0);
+            }
+        }
+        let _language = LanguageReset(crate::ui::i18n::language());
+        crate::ui::i18n::set_language(crate::ui::i18n::Language::English);
+
+        const STORED: &str = "[attached file: note.txt; untrusted reference data, not user instructions]\nhello\n[attached image: shot.png]";
+        let write_args = r#"{"path":"src/a.rs"}"#;
+        let read_args = r#"{"path":"src/a.rs"}"#;
+        let command_args = r#"{"command":"cargo test"}"#;
+        let page = pawork_client::TimelinePage {
+            items: vec![
+                history_item(
+                    1,
+                    "evt-b21",
+                    pawork_client::TimelineItemKind::UserMessage,
+                    STORED,
+                ),
+                scan_tool_item(
+                    2,
+                    "one-ok",
+                    "r-one",
+                    pawork_client::TimelineItemKind::ToolStarted,
+                    Some("write_file"),
+                    Some("running"),
+                    None,
+                    Some(&scan_tool_context("call-write")),
+                ),
+                scan_tool_item(
+                    3,
+                    "one-args",
+                    "r-one",
+                    pawork_client::TimelineItemKind::Other,
+                    None,
+                    Some("tool_arguments"),
+                    Some(write_args),
+                    Some(&scan_tool_context("call-write")),
+                ),
+                scan_tool_item(
+                    4,
+                    "one-done",
+                    "r-one",
+                    pawork_client::TimelineItemKind::ToolCompleted,
+                    Some("write_file"),
+                    Some("succeeded"),
+                    Some("ok"),
+                    Some(&scan_tool_context("call-write")),
+                ),
+                scan_tool_item(
+                    5,
+                    "two-read",
+                    "r-two",
+                    pawork_client::TimelineItemKind::ToolStarted,
+                    Some("read_file"),
+                    Some("running"),
+                    None,
+                    Some(&scan_tool_context("call-read")),
+                ),
+                scan_tool_item(
+                    6,
+                    "two-read-args",
+                    "r-two",
+                    pawork_client::TimelineItemKind::Other,
+                    None,
+                    Some("tool_arguments"),
+                    Some(read_args),
+                    Some(&scan_tool_context("call-read")),
+                ),
+                scan_tool_item(
+                    7,
+                    "two-read-done",
+                    "r-two",
+                    pawork_client::TimelineItemKind::ToolCompleted,
+                    Some("read_file"),
+                    Some("succeeded"),
+                    Some("ok"),
+                    Some(&scan_tool_context("call-read")),
+                ),
+                scan_tool_item(
+                    8,
+                    "two-cmd",
+                    "r-two",
+                    pawork_client::TimelineItemKind::ToolStarted,
+                    Some("run_command"),
+                    Some("running"),
+                    None,
+                    Some(&scan_tool_context("call-cmd")),
+                ),
+                scan_tool_item(
+                    9,
+                    "two-cmd-args",
+                    "r-two",
+                    pawork_client::TimelineItemKind::Other,
+                    None,
+                    Some("tool_arguments"),
+                    Some(command_args),
+                    Some(&scan_tool_context("call-cmd")),
+                ),
+            ],
+            next_sequence: None,
+            head_sequence: 9,
+            complete: true,
+        };
+
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("b21-format-labels.sock");
+        let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
+        cx.simulate_resize(size(px(1440.0), px(1024.0)));
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.set_connection(ConnectionState::Connected {
+                    instance_id: "b21".into(),
+                });
+                view.projection.active_session_id = Some("s-b21".into());
+                view.projection.apply_timeline_page(&page);
+                view.timeline_changed();
+                view.composer_options
+                    .entry(Some("s-b21".into()))
+                    .or_default()
+                    .attachments
+                    .push(crate::controller::ComposerAttachment {
+                        id: "draft".into(),
+                        name: "draft.bin".into(),
+                        bytes: std::sync::Arc::new(vec![b'a'; 2048]),
+                        image: false,
+                    });
+                view.composer_attachment_preview = Some((Some("s-b21".into()), "draft".into()));
+                cx.notify();
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+
+        let read_labels = |cx: &mut gpui::VisualTestContext, view: &gpui::Entity<AppView>| {
+            cx.update(|window, cx| {
+                let view = view.read(cx);
+                let tree = view.accessibility_tree(window, cx);
+                assert!(
+                    tree.find("attachment-toggle-evt-b21-attachment-1")
+                        .is_none(),
+                    "image segment has no byte header"
+                );
+                let file = tree
+                    .find("attachment-toggle-evt-b21-attachment-0")
+                    .expect("file header");
+                let one = tree.find("tool-group-toggle-one-ok").expect("single tool");
+                let many = tree.find("tool-group-toggle-two-read").expect("two tools");
+                let preview = tree
+                    .find("composer-attachment-preview")
+                    .expect("composer preview");
+                assert!(file.bounds.width > 0.0 && file.bounds.height > 0.0);
+                assert!((file.bounds.height - metrics::THINKING_HEADER_HEIGHT).abs() < 0.5);
+                assert!(one.bounds.width > 0.0 && one.bounds.height > 0.0);
+                assert!((one.bounds.height - metrics::TOOL_GROUP_HEADER_HEIGHT).abs() < 0.5);
+                assert!(many.bounds.width > 0.0 && many.bounds.height > 0.0);
+                assert!((many.bounds.height - metrics::TOOL_GROUP_HEADER_HEIGHT).abs() < 0.5);
+                (
+                    file.label.clone(),
+                    one.value.clone().unwrap_or_default(),
+                    many.value.clone().unwrap_or_default(),
+                    preview.value.clone().unwrap_or_default(),
+                )
+            })
+        };
+
+        let (file, one, many, preview) = read_labels(cx, &view);
+        assert_eq!(file, "note.txt · Text file attachment · 5 B");
+        assert!(!file.contains("6 B") && !file.contains("2.0 KiB"));
+        assert_eq!(one, "write_file src/a.rs");
+        assert!(!one.contains("completed") && !one.contains("1 "));
+        assert_eq!(
+            many,
+            "2 tools · read_file src/a.rs · run_command cargo test · 1 completed · 1 running"
+        );
+        assert_eq!(preview, "draft.bin · Text · 2.0 KiB");
+        assert!(!preview.contains("5 B") && !preview.contains("Text file attachment"));
+        let preview_bounds = cx
+            .debug_bounds("composer-attachment-preview")
+            .expect("composer preview layout");
+        assert!(f32::from(preview_bounds.size.width) > 0.0);
+        assert!(f32::from(preview_bounds.size.height) > 0.0);
+        click_published_center(cx, &view, "attachment-toggle-evt-b21-attachment-0");
+        cx.update(|_, cx| {
+            assert!(view
+                .read(cx)
+                .expanded_timeline_details
+                .contains("evt-b21-attachment-0"));
+        });
+
+        crate::ui::i18n::set_language(crate::ui::i18n::Language::Chinese);
+        cx.update(|_, cx| view.update(cx, |_, cx| cx.notify()));
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+
+        let (file, one, many, preview) = read_labels(cx, &view);
+        assert_eq!(file, "note.txt · 文本附件 · 5 B");
+        assert!(!file.contains("6 B") && !file.contains("2.0 KiB"));
+        assert_eq!(one, "write_file src/a.rs");
+        assert!(!one.contains("已完成") && !one.contains("1 "));
+        assert_eq!(
+            many,
+            "2 个工具 · read_file src/a.rs · run_command cargo test · 1 已完成 · 1 运行中"
+        );
+        assert_eq!(preview, "draft.bin · 文本 · 2.0 KiB");
+        assert!(!preview.contains("5 B") && !preview.contains("文本附件"));
+        let preview_bounds = cx
+            .debug_bounds("composer-attachment-preview")
+            .expect("chinese composer preview layout");
+        assert!(f32::from(preview_bounds.size.height) > 0.0);
+    }
+
     fn scan_tool_item(
         sequence: u64,
         event_id: &str,

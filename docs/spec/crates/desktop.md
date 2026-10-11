@@ -551,6 +551,8 @@ UI-2 新增 `session_actions_follow_hover_and_keyboard_without_opening`：真实
 
 AC-05 的默认关闭 feature `ac05-task-usage` 编入 `ui/task_usage.rs::usage_window_matches_seeded_ledger`；`product_access.rs` 的节点文案读取 helper 仅在该测试 feature 下存在。需要 `PAWORK_UI_FIXTURE` 指向以 `ui-fixture` 构建的既有 example，缺失直接失败。临时 SQLite 种入 101 条调用记录，经正式侧栏 → 统计窗口 → controller/client → GuiHostAdapter 查询，核对汇总、筛选、任务下钻、100 条分页、24h、未知 Token/费用与复制。损坏 payload 的刷新显示查询失败且 report 清空，不误报空结果。使用 GPUI 测试平台的鼠标/Enter/AX handler 和剪贴板；标题读取空值不证明原生标题，原生 AX、窗口像素和真实用量/扣费仍待验。定向命令与边界见 [AC-05](../../plan/accept-task-usage.md)。
 
+B21 的 `format_labels_follow_language_on_projected_timeline_and_composer` 将历史事件 fixture 经正式 Timeline 投影，在同一 GPUI 测试窗口核对英中文附件头和单/多工具摘要。时间线文本去掉尾部换行后是 5 B，独立 Composer 模拟附件 DTO 为 2048 字节、预览 2.0 KiB；没有宣称它们是同一物理文件或本用例验收文件接收。单工具成功仅 headline，图片段不发布字节头。附件头鼠标点击走正式展开，预览采用自身绘制边界（AX 矩形被上层裁为零），语言仅测试线程 i18n 状态，不写偏好或证明主窗通知/系统语言行为。任务消耗文案复用 AC-05；观测申报长度仍 f64，本轮无新增上屏断言。范围与命令见 [B21](../../plan/b21-desktop-format-i18n.md)。
+
 **验证命令**：
 
 ```bash
