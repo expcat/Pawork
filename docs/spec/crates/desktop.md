@@ -95,7 +95,7 @@
 | `src/ui/task_rail.rs` | ~1424 | Sessions 侧栏：2026-10-02 默认项目分组、36px 行、文件夹图标与标题缩进、轻量筛选、时间 / 动作覆盖层、完整标题悬停预览及溢出标题焦点走马灯；GUI2-01 顶部两行——任务 / 新建、筛选 / grouping；12px 连接状态移到底部 Local / Settings；grouping 图标/tooltip 表达目标动作，mouse / Enter / Space 共用 `toggle_grouping`，切换关闭其它浮层并保留 active session、scope、draft 与 collapsed projects；日期/项目/36px task 行、状态点、unread/blocked、Reconnect 与 Local/Settings 语义不变；列表仍用行级 bounds，在 grouping/scope 变化后滚动 active task 到可见；rail 键盘焦点链与 scope 菜单从触发器下方 8px 展开，MenuRow 单勾，AX 同源锚点；UI-2 / ADR-054：任务行右侧改名/归档在悬停、行或动作聚焦、当前会话时露出（命中区 32×32=`RAIL_SESSION_ACTION_SIZE`，使用 64px 覆盖槽，时间戳使用 48px 覆盖槽；项目头计数进入同一悬停/焦点面；键盘/AX 可达；改名行内编辑 Enter 提交、Esc 取消、空白不提交） |
 | `src/ui/text_input.rs` | ~1998 | `TextInput`（Composer / 终端 / Settings 共用，视口高度上限至少容纳当前字号单行与内边距）：内容 / 动态 placeholder / IME marked_range / UTF-16 映射 / 视口 max_h + overflow scroll（TextElement 按完整内容高布局，视口由父容器 max_h 兑现，caret 滚进视口按 ScrollHandle 容器高计算；鼠标与 IME 坐标映射基于归一化布局原点 content_bounds——prepaint 时 origin 只减输入框自身 ScrollHandle offset，保留祖先页面滚动位移——再减 scroll offset，行高取 paint 时 last_line_height）/ 选择复制剪切 / Undo Redo / reset_text 草稿恢复；UX-01 起 Composer（`TextInput::new`）按可用宽度软换行，GPUI 换行边界对齐完整 grapheme 并以最终显示字宽复核，测高 / 绘制 / 光标 / 选择 / 鼠标 / IME / 滚动共用同一显示行与原文 byte 起点，不改草稿原文；`with_placeholder` 的终端 / Settings 字段、secure 与只读 URL 不启用软换行；OAuth `read_only()` 模式保留选择 / Copy、长行横滚，阻止用户编辑与 IME，Enter 不冒泡发送；SET-010 secure 模式（SET-4）：渲染与 AX value 只发布 grapheme 掩码、Copy/Cut 不写剪贴板、粘贴 / AX set-value / IME 剔除 CR/LF（单行语义）、光标 / 选择 / 鼠标映射经 grapheme 偏移换算；文件编辑模式使用等宽字体、全高视口与横向滚动，Enter / Tab 不触发聊天；14 个测试 |
 | `src/ui/u1_probe.rs` | ~322 | R1 Wave C U1 spike：真实 TextInput/Button/overflow 探针；R5 Wave B 增 SelectAll/Copy/Cut/Undo/Redo、IME commit 单次入栈（真实 EntityInputHandler 路径）与空输入不可发送、Wave B 键位（含 Shift-Enter）经 keystroke→keymap→action 真实链路覆盖；时钟推进与几何自测已删，debug_bounds 只服务点击/滚轮命中；10 个测试 |
-| `src/ui/plan.rs` | ~402 | Plan 版本编辑 / 提交 / 批准 / 拒绝；1 个键盘回归 |
+| `src/ui/plan.rs` | ~1511 | Plan 版本编辑 / 提交 / 批准 / 拒绝；按所属窗口过滤裸 Tab / Shift-Tab，1 个既有焦点回归与 2 个协议回执模拟回归 |
 | `src/ui/goal.rs` | ~400 | 持续目标：预算、轮数、暂停 / 恢复 / 转向 / 人工达成 / 放弃 |
 | `src/ui/recording.rs` | ~444 | 技能录制：从持久操作选择、预览、人工编辑后保存 |
 | `src/ui/video.rs` | ~208 | 视频 URL 按任务草稿保存，与其它附件合计最多 4 项；`video_input` 与 API 1.24 同时 gate |
@@ -272,6 +272,8 @@ Composer 添加菜单接入 `ui/plan.rs`、`ui/goal.rs`、`ui/recording.rs`、`u
 - `subagent_panel.rs` 标题按 short_title 测宽，放得下用向上取整的整行宽，放不下钳到视口文字区并换行（上一帧宽度，prepaint 后差超过 0.5px 则 defer notify 收敛），模型与状态另行显示；已知 Run 状态本地化，未知值和原始原因保留。Host 结果匹配最后非空助手正文或其 2000 字符前缀时，结果盒改为引用上方回复的短提示，不重复全文；不同或未加载的结果保留原呈现，AX 与布局条目集合使用同一判断。
 - `product_access.rs` 提供既有产品窗口的标题 / 说明 / 错误 / 字段 / 动作排版；Plan / Goal / Video / Recording 标签常驻、36px 操作按钮、字段不压缩与纵向滚动。Recording 根据真实响应错误状态着色，不按文本语言判断；空操作列表不挂载，非空列表最高 180px，正常非空响应不重复标题说明。
 - Plan / Goal / Video / Drawing / Recording / Task usage 在打开时继承主窗口 `TextScale`。Drawing 仍为固定 640×360，最小宽度 720px 容纳 150% 边距，不改变坐标或 PNG。
+
+Plan 的裸 Tab / Shift-Tab 在 GPUI keymap 前调用现有 `focus_next` / `focus_prev`，避免步骤 CodeEditor 把 Tab 当作缩进。订阅按创建它的窗口句柄过滤，两个 Plan 窗口不重复移焦；带 Control / Alt / Command 的组合键放行。macOS 的 NSEvent monitor 原有处理在 GPUI 之前，本次未复现或验证真窗口 Tab 故障。Escape 没有关闭 Plan 的动作。五个按钮按 busy、loaded 与 version 的现行 gate 设置 enabled / tab stop；未保存标题或步骤阻止 Submit / Approve / Reject。只读不在本地灰态 gate 内，Host 拒绝回执由错误区显示。
 
 ### 任务消耗窗口（API 1.26，2026-10-04）
 
@@ -484,6 +486,8 @@ AC-02 的 `newline_ime_does_not_send_while_can_send` 在正式 `AppView` 中先�
 `terminal_run_stops_only_its_unfinished_tool_display` 验证同 Run 已完成 / 失败 / 取消时，缺少结果的 running / pending 工具只在展示层变为「已停止」；其它 Run 和已有 succeeded 状态保持原样。fixture 与 AX 回归不能推定真实模型推理成功；真窗口与外部环境的未闭合验收见 [路线图](../../ROADMAP.md)。
 
 `plan_window_keyboard_reaches_fields_and_actions` 挂载实际 Plan 子窗口，验证标题→步骤→原因→刷新及反向焦点遍历；覆盖既有句柄未启用 Tab 的真实缺陷。GPUI 模拟窗口不安装需要原生句柄的 AX 桥接；该边界仍用真实窗口验收，不能由焦点测试推定。
+
+AC-03 的 `plan_window_keyboard_runs_actions_from_keystrokes` 通过正式 `open_plan`、模拟输入和 Tab / Shift-Tab / Enter，核对 Save / Refresh / Submit / Approve / Reject 的 typed 请求参数与回执、空 Plan 的无版本 gate，以及两窗口焦点隔离。打开前聚焦父窗口正式 Composer；`Window::remove_window` 模拟关闭后仍是该句柄，Escape 不关闭。`plan_window_keyboard_rejects_old_host_unsaved_and_readonly` 覆盖 API 1.23 在请求前拒绝、未加载时跳过禁用动作、未保存时三动作无请求、按住 Refresh 回执时 busy 关闭五动作 tab stop 且再次 Tab / Enter 不重复派发，以及模拟 Host 只读错误回执。私有 Unix socket Host 替代外部边界，不证明生产 Core 的 Plan 状态机或 Policy 已重新验收；不覆盖原生 AX、系统按键、traffic-light 关闭或系统自动焦点回返。
 
 布局回归包括 `composer_layout_keeps_controls_in_card_and_ax_aligned`、shell resize 与宽窄窗实测；已选模型但目录 `context_window_tokens` 为 `None` 或 `0` 时都不发布 `composer-context`。动效纯函数回归为 `inspector_motion_reverses_without_jump_and_snaps_when_narrow`，不推动真实绘制时钟，不覆盖中间帧。中间帧、Changes/Resources 静态骨架与流式 caret 布局框由 `surfaces_motion_draws_intermediate_switch_and_inspector` 的主动 refresh 绘制记录覆盖。骨架与 caret 不发 Host 请求，也不是真窗口像素。冻结面 `APP_VIEW_KEYBINDINGS`（审批、取消、字号与任务循环）、`MAIN_PATH_TAB_STOP_IDS` 与握手能力面由 bin 内测试钉住；Settings 路由旁路工作台快捷键在同一键表测试中验证。这些自动化资产不替代真窗口像素验收。
 
