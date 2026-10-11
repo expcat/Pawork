@@ -109,6 +109,7 @@ pub(crate) fn resolve(
 
 /// UI-1 面板宽度过渡；反向操作从当前帧续接，窄窗直接归零。
 /// 只保存瞬时呈现，不写入 Inspector 偏好或协议。
+#[cfg_attr(test, derive(Clone, Copy))]
 pub(crate) struct InspectorMotion {
     from: f32,
     target: f32,
@@ -131,6 +132,12 @@ impl InspectorMotion {
             / super::theme::motion::PANEL_DURATION.as_secs_f32())
         .min(1.0);
         self.from + (self.target - self.from) * (1.0 - (1.0 - progress).powi(3))
+    }
+
+    /// 按正式曲线读当前宽度，不改 from / target / started。只给绘制记录测试用。
+    #[cfg(test)]
+    pub(crate) fn sample(&self, now: std::time::Instant) -> f32 {
+        self.value(now)
     }
 
     pub(crate) fn width(

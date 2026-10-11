@@ -6557,4 +6557,602 @@ mod tests {
         );
         assert_eq!(attention_for(Some(SessionLiveStatus::Running), false), None);
     }
+
+    /// GUI3-08：正式 AppView 绘制记录。测试窗不泵显示链路，每个采样都是
+    /// 主动 Window::refresh 之后的下一帧；时间用真实 Instant。
+    #[gpui::test]
+    fn surfaces_motion_draws_intermediate_switch_and_inspector(cx: &mut gpui::TestAppContext) {
+        use std::time::{Duration, Instant};
+
+        use gpui::{px, size};
+
+        fn draw_frame(cx: &mut gpui::VisualTestContext) {
+            cx.update(|window, _| window.refresh());
+        }
+
+        fn inspector_width(view: &gpui::Entity<AppView>, cx: &mut gpui::VisualTestContext) -> f32 {
+            cx.update(|_, cx| view.read(cx).inspector_render_width)
+        }
+
+        /// 侧栏容器在树上且宽度与正式 render 值一致时用几何；否则只用 render 值。
+        /// 窄窗中央 shell-inspector 是整列，不能当成侧栏没归零。
+        fn inspector_observation(
+            view: &gpui::Entity<AppView>,
+            cx: &mut gpui::VisualTestContext,
+        ) -> (f32, f32, Option<f32>, &'static str) {
+            let render = inspector_width(view, cx);
+            let bounds = cx
+                .debug_bounds("shell-inspector")
+                .map(|bounds| f32::from(bounds.size.width));
+            match bounds {
+                Some(width) if (width - render).abs() < 1.0 => (width, render, bounds, "bounds"),
+                _ => (render, render, bounds, "render"),
+            }
+        }
+
+        fn thumb_left(cx: &mut gpui::VisualTestContext) -> f32 {
+            let track = cx
+                .debug_bounds("settings-subagents-enabled")
+                .expect("switch track bounds");
+            let thumb = cx
+                .debug_bounds("settings-subagents-enabled-thumb-dot")
+                .expect("switch thumb bounds");
+            f32::from(thumb.origin.x) - f32::from(track.origin.x)
+        }
+
+        fn sleep_until(start: Instant, millis: u64) {
+            if let Some(rest) = Duration::from_millis(millis).checked_sub(start.elapsed()) {
+                std::thread::sleep(rest);
+            }
+        }
+
+        fn save_samples(inspector: &[serde_json::Value], switch_samples: &[serde_json::Value]) {
+            let samples = serde_json::json!({
+                "kind": "gpui-draw-record",
+                "display_link": "not pumped; each sample is an explicit Window::refresh draw",
+                "inspector": inspector,
+                "switch": switch_samples,
+            });
+            let dir = "/tmp/pawork-gui3-08-surfaces-motion/evidence";
+            std::fs::create_dir_all(dir).expect("evidence dir");
+            std::fs::write(
+                format!("{dir}/motion-samples.json"),
+                serde_json::to_string_pretty(&samples).expect("samples json"),
+            )
+            .expect("write motion samples");
+            eprintln!("{samples}");
+        }
+
+        let platform = std::sync::Arc::new(Platform::new());
+        let socket = std::env::temp_dir().join(format!(
+            "gui3-08-surfaces-motion-{}.sock",
+            std::process::id()
+        ));
+        let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
+        cx.run_until_parked();
+        cx.simulate_resize(size(px(1440.0), px(1024.0)));
+        cx.run_until_parked();
+        draw_frame(cx);
+        let viewport = cx.update(|window, _| f32::from(window.viewport_size().width));
+        assert!(
+            viewport >= 1288.0,
+            "side inspector needs a wide viewport, got {viewport}"
+        );
+
+        let mut inspector = Vec::new();
+        let mut switch_samples = Vec::new();
+        let opened = Instant::now();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| view.on_toggle_inspector(window, cx));
+        });
+        let (open_width, open_render, open_bounds, open_measure) = inspector_observation(&view, cx);
+        inspector.push(serde_json::json!({
+            "label": "open",
+            "elapsed_ms": (opened.elapsed().as_secs_f32() * 1000.0 * 10.0).round() / 10.0,
+            "value": (open_width * 10.0).round() / 10.0,
+            "render_width": (open_render * 10.0).round() / 10.0,
+            "bounds_width": open_bounds.map(|width| (width * 10.0).round() / 10.0),
+            "measure": open_measure,
+        }));
+        assert!(
+            open_width < 15.0,
+            "inspector open frame should start near 0, got {open_width}"
+        );
+
+        sleep_until(opened, 45);
+        draw_frame(cx);
+        let (mid_width, mid_render, mid_bounds, mid_measure) = inspector_observation(&view, cx);
+        let mid_elapsed = opened.elapsed().as_secs_f32() * 1000.0;
+        inspector.push(serde_json::json!({
+            "label": "opening",
+            "elapsed_ms": (mid_elapsed * 10.0).round() / 10.0,
+            "value": (mid_width * 10.0).round() / 10.0,
+            "render_width": (mid_render * 10.0).round() / 10.0,
+            "bounds_width": mid_bounds.map(|width| (width * 10.0).round() / 10.0),
+            "measure": mid_measure,
+        }));
+        assert!(
+            (80.0..400.0).contains(&mid_width),
+            "inspector intermediate width {mid_width} at {mid_elapsed:.1}ms"
+        );
+
+        let closing = Instant::now();
+        let mut pre_motion = shell_layout::InspectorMotion::default();
+        let mut t_pre = closing;
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                pre_motion = view.inspector_motion;
+                t_pre = Instant::now();
+                view.on_toggle_inspector(window, cx);
+            });
+        });
+        let t_post = Instant::now();
+        let (close_width, close_render, close_bounds, close_measure) =
+            inspector_observation(&view, cx);
+        let before = pre_motion.sample(t_pre);
+        let after = pre_motion.sample(t_post);
+        let low = before.min(after);
+        let high = before.max(after);
+        let baseline_ms = t_pre.saturating_duration_since(opened).as_secs_f32() * 1000.0;
+        let reverse_ms = closing.elapsed().as_secs_f32() * 1000.0;
+        let post_ms = t_post.saturating_duration_since(opened).as_secs_f32() * 1000.0;
+        inspector.push(serde_json::json!({
+            "label": "previous",
+            "elapsed_ms": (mid_elapsed * 10.0).round() / 10.0,
+            "value": (mid_width * 10.0).round() / 10.0,
+        }));
+        inspector.push(serde_json::json!({
+            "label": "baseline",
+            "elapsed_ms": (baseline_ms * 10.0).round() / 10.0,
+            "value": (before * 10.0).round() / 10.0,
+        }));
+        inspector.push(serde_json::json!({
+            "label": "reverse",
+            "elapsed_ms": (reverse_ms * 10.0).round() / 10.0,
+            "value": (close_width * 10.0).round() / 10.0,
+            "render_width": (close_render * 10.0).round() / 10.0,
+            "bounds_width": close_bounds.map(|width| (width * 10.0).round() / 10.0),
+            "measure": close_measure,
+            "sample_pre": (before * 10.0).round() / 10.0,
+            "sample_post": (after * 10.0).round() / 10.0,
+            "t_post_ms": (post_ms * 10.0).round() / 10.0,
+        }));
+        save_samples(&inspector, &switch_samples);
+        assert!(
+            close_width + 0.5 >= low && close_width <= high + 0.5,
+            "inspector reverse {close_width} outside [{low}, {high}], previous {mid_width}"
+        );
+
+        sleep_until(closing, 60);
+        draw_frame(cx);
+        let (down_width, down_render, down_bounds, down_measure) = inspector_observation(&view, cx);
+        inspector.push(serde_json::json!({
+            "label": "closing",
+            "elapsed_ms": (closing.elapsed().as_secs_f32() * 1000.0 * 10.0).round() / 10.0,
+            "value": (down_width * 10.0).round() / 10.0,
+            "render_width": (down_render * 10.0).round() / 10.0,
+            "bounds_width": down_bounds.map(|width| (width * 10.0).round() / 10.0),
+            "measure": down_measure,
+        }));
+        assert!(
+            down_width + 30.0 < close_width,
+            "inspector should be visibly closing: {close_width} -> {down_width}"
+        );
+
+        sleep_until(closing, 220);
+        draw_frame(cx);
+        let (closed_width, closed_render, closed_bounds, closed_measure) =
+            inspector_observation(&view, cx);
+        inspector.push(serde_json::json!({
+            "label": "closed",
+            "elapsed_ms": (closing.elapsed().as_secs_f32() * 1000.0 * 10.0).round() / 10.0,
+            "value": (closed_width * 10.0).round() / 10.0,
+            "render_width": (closed_render * 10.0).round() / 10.0,
+            "bounds_width": closed_bounds.map(|width| (width * 10.0).round() / 10.0),
+            "measure": closed_measure,
+        }));
+        assert!(
+            closed_width < 2.0,
+            "inspector should be closed, got {closed_width}"
+        );
+
+        let reopened = Instant::now();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| view.on_toggle_inspector(window, cx));
+        });
+        sleep_until(reopened, 40);
+        draw_frame(cx);
+        let (reopen_width, reopen_render, reopen_bounds, reopen_measure) =
+            inspector_observation(&view, cx);
+        inspector.push(serde_json::json!({
+            "label": "reopen",
+            "elapsed_ms": (reopened.elapsed().as_secs_f32() * 1000.0 * 10.0).round() / 10.0,
+            "value": (reopen_width * 10.0).round() / 10.0,
+            "render_width": (reopen_render * 10.0).round() / 10.0,
+            "bounds_width": reopen_bounds.map(|width| (width * 10.0).round() / 10.0),
+            "measure": reopen_measure,
+        }));
+        assert!(
+            reopen_width > 30.0 && reopen_width < 420.0,
+            "resize should interrupt an in-progress open, got {reopen_width}"
+        );
+        cx.simulate_resize(size(px(1080.0), px(720.0)));
+        cx.run_until_parked();
+        draw_frame(cx);
+        let (snapped, snapped_render, snapped_bounds, snapped_measure) =
+            inspector_observation(&view, cx);
+        inspector.push(serde_json::json!({
+            "label": "narrow",
+            "elapsed_ms": (reopened.elapsed().as_secs_f32() * 1000.0 * 10.0).round() / 10.0,
+            "value": (snapped * 10.0).round() / 10.0,
+            "render_width": (snapped_render * 10.0).round() / 10.0,
+            "bounds_width": snapped_bounds.map(|width| (width * 10.0).round() / 10.0),
+            "measure": snapped_measure,
+        }));
+        save_samples(&inspector, &switch_samples);
+        assert_eq!(
+            snapped, 0.0,
+            "narrow layout must snap the side inspector to 0"
+        );
+
+        let shown = Instant::now();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.route = AppRoute::Settings;
+                view.handle_controller_event(
+                    ControllerEvent::SubagentSettingsLoaded(
+                        crate::projection::SubagentSettingsData {
+                            enabled: true,
+                            ..Default::default()
+                        },
+                    ),
+                    cx,
+                );
+                view.on_select_settings_page(SettingsPage::Subagents, window, cx);
+            });
+        });
+        let first = thumb_left(cx);
+        switch_samples.push(serde_json::json!({
+            "label": "first",
+            "elapsed_ms": (shown.elapsed().as_secs_f32() * 1000.0 * 10.0).round() / 10.0,
+            "value": (first * 10.0).round() / 10.0,
+        }));
+        assert!(
+            (16.0..=20.0).contains(&first),
+            "checked thumb should first-paint at rest, got {first}"
+        );
+
+        sleep_until(shown, 25);
+        draw_frame(cx);
+        let held = thumb_left(cx);
+        switch_samples.push(serde_json::json!({
+            "label": "same",
+            "elapsed_ms": (shown.elapsed().as_secs_f32() * 1000.0 * 10.0).round() / 10.0,
+            "value": (held * 10.0).round() / 10.0,
+        }));
+        save_samples(&inspector, &switch_samples);
+        assert!(
+            (held - first).abs() < 1.5,
+            "same-value redraw restarted the thumb: {first} -> {held}"
+        );
+
+        let toggled = Instant::now();
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.handle_controller_event(
+                    ControllerEvent::SubagentSettingsConfirmed(
+                        crate::projection::SubagentSettingsData {
+                            enabled: false,
+                            ..Default::default()
+                        },
+                    ),
+                    cx,
+                );
+            });
+        });
+        let mut previous = held;
+        for (label, at_ms) in [
+            ("off-0", 0u64),
+            ("off-40", 40),
+            ("off-90", 90),
+            ("off-140", 140),
+        ] {
+            if at_ms > 0 {
+                sleep_until(toggled, at_ms);
+                draw_frame(cx);
+            }
+            let x = thumb_left(cx);
+            let elapsed = toggled.elapsed().as_secs_f32() * 1000.0;
+            switch_samples.push(serde_json::json!({
+                "label": label,
+                "elapsed_ms": (elapsed * 10.0).round() / 10.0,
+                "value": (x * 10.0).round() / 10.0,
+            }));
+            match label {
+                "off-0" => assert!(
+                    (x - previous).abs() < 1.5,
+                    "switch reverse jumped from {previous} to {x}"
+                ),
+                "off-40" => {
+                    assert!(
+                        x < previous - 1.0 && x > 2.5,
+                        "{label} should be between the reverse start and the rest position, previous {previous} now {x} at {elapsed:.1}ms"
+                    );
+                    previous = x;
+                }
+                "off-90" => {
+                    assert!(
+                        x < previous && x > 1.0,
+                        "{label} should keep easing toward rest, previous {previous} now {x} at {elapsed:.1}ms"
+                    );
+                    previous = x;
+                }
+                "off-140" => assert!(
+                    (x - 2.0).abs() < 1.5,
+                    "unchecked thumb should rest near 2, got {x} at {elapsed:.1}ms"
+                ),
+                _ => unreachable!(),
+            }
+        }
+        save_samples(&inspector, &switch_samples);
+
+        // 静态骨架与流式 caret 只读布局框。断线时 refresh_* 会 mark_stale，
+        // 所以这里直接 begin_refresh / 写入时间线，不向 Host 发请求。
+        // 调用方骨架 id 作前缀。debug_bounds 只收 &'static，不能用临时 format!。
+        const CHANGES_BARS: [&str; 4] = [
+            "changes.loading-skeleton/skeleton-bar-0",
+            "changes.loading-skeleton/skeleton-bar-1",
+            "changes.loading-skeleton/skeleton-bar-2",
+            "changes.loading-skeleton/skeleton-bar-3",
+        ];
+        const RESOURCES_BARS: [&str; 4] = [
+            "resources.loading-skeleton/skeleton-bar-0",
+            "resources.loading-skeleton/skeleton-bar-1",
+            "resources.loading-skeleton/skeleton-bar-2",
+            "resources.loading-skeleton/skeleton-bar-3",
+        ];
+        fn bar_bounds(
+            cx: &mut gpui::VisualTestContext,
+            selectors: [&'static str; 4],
+        ) -> Option<[(f32, f32); 4]> {
+            let mut sizes = [(0.0, 0.0); 4];
+            for (size, selector) in sizes.iter_mut().zip(selectors) {
+                let Some(bounds) = cx.debug_bounds(selector) else {
+                    return None;
+                };
+                *size = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+            }
+            Some(sizes)
+        }
+        fn selectors_absent(
+            cx: &mut gpui::VisualTestContext,
+            selectors: [&'static str; 4],
+        ) -> bool {
+            selectors
+                .into_iter()
+                .all(|selector| cx.debug_bounds(selector).is_none())
+        }
+        fn assert_skeleton(sizes: [(f32, f32); 4]) {
+            const WIDTHS: [f32; 4] = [220.0, 168.0, 196.0, 132.0];
+            for (index, (width, height)) in sizes.into_iter().enumerate() {
+                assert!(
+                    (width - WIDTHS[index]).abs() < 0.5,
+                    "bar {index} width {width}"
+                );
+                assert!(
+                    (height - theme::metrics::SKELETON_BAR_HEIGHT).abs() < 0.5,
+                    "bar {index} height {height}"
+                );
+            }
+        }
+        fn round1(value: f32) -> f32 {
+            (value * 10.0).round() / 10.0
+        }
+        fn size_json(sizes: [(f32, f32); 4]) -> serde_json::Value {
+            serde_json::Value::Array(
+                sizes
+                    .into_iter()
+                    .map(|(width, height)| serde_json::json!([round1(width), round1(height)]))
+                    .collect(),
+            )
+        }
+
+        cx.simulate_resize(size(px(1440.0), px(1024.0)));
+        cx.run_until_parked();
+        let changes_epoch = cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.route = AppRoute::Workspace;
+                if view.inspector_open {
+                    view.on_toggle_inspector(window, cx);
+                }
+                view.on_toggle_inspector(window, cx);
+                view.inspector_motion.snap(theme::metrics::INSPECTOR_WIDTH);
+                view.inspector_tab = InspectorTab::Changes;
+                view.changes.tab = changes::ChangesTab::Files;
+                assert!(view.changes.files.is_empty());
+                assert!(!matches!(
+                    view.projection.connection,
+                    ConnectionState::Connected { .. }
+                ));
+                let epoch = view.changes.begin_refresh();
+                assert!(matches!(
+                    view.changes.fetch,
+                    changes::ChangesFetch::Fetching
+                ));
+                assert!(view.changes.stale_reason.is_none());
+                cx.notify();
+                epoch
+            })
+        });
+        draw_frame(cx);
+        let side = cx
+            .debug_bounds("shell-inspector")
+            .expect("snapped side inspector");
+        assert!(
+            (f32::from(side.size.width) - theme::metrics::INSPECTOR_WIDTH).abs() < 1.0,
+            "sidebar width {}",
+            f32::from(side.size.width)
+        );
+        let changes_bars = bar_bounds(cx, CHANGES_BARS).expect("changes loading skeleton");
+        assert_skeleton(changes_bars);
+        let held_at = Instant::now();
+        sleep_until(held_at, 40);
+        draw_frame(cx);
+        let changes_held = bar_bounds(cx, CHANGES_BARS).expect("skeleton after redraw");
+        for (index, (before, after)) in changes_bars.into_iter().zip(changes_held).enumerate() {
+            assert!(
+                (before.0 - after.0).abs() < 0.5 && (before.1 - after.1).abs() < 0.5,
+                "static skeleton bar {index} moved {before:?} -> {after:?}"
+            );
+        }
+        assert!(
+            selectors_absent(cx, RESOURCES_BARS),
+            "resources skeleton selector cached before that panel draws"
+        );
+
+        let resources_epoch = cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.inspector_tab = InspectorTab::Resources;
+                assert!(view.resources.servers.is_empty());
+                let epoch = view.resources.begin_refresh();
+                assert!(matches!(
+                    view.resources.fetch,
+                    resources::ResourcesFetch::Fetching
+                ));
+                assert!(view.resources.stale_reason.is_none());
+                cx.notify();
+                epoch
+            })
+        });
+        draw_frame(cx);
+        let resources_bars = bar_bounds(cx, RESOURCES_BARS).expect("resources loading skeleton");
+        assert_skeleton(resources_bars);
+
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                assert!(view
+                    .changes
+                    .apply_files(changes_epoch, None, Vec::new(), None));
+                assert!(view.resources.apply_servers(resources_epoch, Vec::new()));
+                // 骨架只挂在 changes.loading / changes.diff_loading / resources.loading。
+                // Ready 且列表为空走空占位；diff Idle 不走 diff_loading。
+                // GPUI 0.2.2 的 debug_bounds 在 clear 后仍残留，不用于消失结论。
+                assert!(
+                    matches!(view.changes.fetch, changes::ChangesFetch::Ready)
+                        && view.changes.files.is_empty()
+                        && matches!(view.changes.diff, changes::DiffFetch::Idle),
+                    "changes empty ready is the empty branch, not Fetching"
+                );
+                assert!(
+                    matches!(view.resources.fetch, resources::ResourcesFetch::Ready)
+                        && view.resources.servers.is_empty(),
+                    "resources empty ready is the empty branch, not Fetching"
+                );
+                cx.notify();
+            });
+        });
+
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.active_run_id = Some("run-static".into());
+                view.projection.timeline.entries = vec![
+                    crate::projection::TimelineEntry {
+                        sequence: 1,
+                        event_id: "a-static".into(),
+                        kind: crate::projection::TimelineEntryKind::AssistantMessage {
+                            text: "hello".into(),
+                        },
+                        fork_boundary: None,
+                        timestamp: "1".into(),
+                        run_id: Some("run-static".into()),
+                    },
+                    crate::projection::TimelineEntry {
+                        sequence: 2,
+                        event_id: "r-static".into(),
+                        kind: crate::projection::TimelineEntryKind::RunState(
+                            "run streaming_response".into(),
+                        ),
+                        fork_boundary: None,
+                        timestamp: "2".into(),
+                        run_id: Some("run-static".into()),
+                    },
+                ];
+                view.timeline_changed();
+                cx.notify();
+            });
+        });
+        draw_frame(cx);
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        let caret = cx.debug_bounds("streaming-caret").expect("streaming caret");
+        let caret_width = f32::from(caret.size.width);
+        let caret_height = f32::from(caret.size.height);
+        assert!(
+            (caret_width - theme::metrics::STREAM_CARET_WIDTH).abs() < 0.5,
+            "caret width {caret_width}"
+        );
+        assert!(
+            (caret_height - theme::metrics::STREAM_CARET_HEIGHT).abs() < 0.5,
+            "caret height {caret_height}"
+        );
+
+        let record = serde_json::json!({
+            "kind": "gpui-layout-bounds",
+            "host_request": false,
+            "pixels": "none",
+            "display_link": "not pumped; explicit Window::refresh; not a real window",
+            "geometry": {
+                "skeleton_widths": [220.0, 168.0, 196.0, 132.0],
+                "skeleton_height": theme::metrics::SKELETON_BAR_HEIGHT,
+                "caret": [theme::metrics::STREAM_CARET_WIDTH, theme::metrics::STREAM_CARET_HEIGHT],
+            },
+            "layout_bounds": {
+                "changes": {
+                    "source": "changes.loading-skeleton",
+                    "selectors": CHANGES_BARS,
+                    "bounds": size_json(changes_bars),
+                },
+                "changes_redraw": {
+                    "source": "changes.loading-skeleton",
+                    "selectors": CHANGES_BARS,
+                    "bounds": size_json(changes_held),
+                },
+                "resources": {
+                    "source": "resources.loading-skeleton",
+                    "selectors": RESOURCES_BARS,
+                    "bounds": size_json(resources_bars),
+                },
+                "caret": [round1(caret_width), round1(caret_height)],
+            },
+            "terminal": "终态状态和源码挂载门控确认；旧 debug_bounds 不用于消失结论",
+        });
+        let dir = "/tmp/pawork-gui3-08-surfaces-motion/evidence";
+        std::fs::write(
+            format!("{dir}/static-geometry.json"),
+            serde_json::to_string_pretty(&record).expect("static geometry json"),
+        )
+        .expect("write static geometry");
+        eprintln!("{record}");
+
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.active_run_id = None;
+                view.projection.timeline.entries.pop();
+                view.timeline_changed();
+                let entries = &view.projection.timeline.entries;
+                let assistant = entries.first().expect("assistant message remains");
+                // caret 只在 assistant_is_streaming 为真的最后一行挂上。
+                assert!(view.projection.active_run_id.is_none());
+                assert!(
+                    !super::timeline_entry::assistant_is_streaming(
+                        entries,
+                        assistant,
+                        view.projection.active_run_id.as_deref(),
+                    ),
+                    "caret mounts only while assistant_is_streaming"
+                );
+                cx.notify();
+            });
+        });
+    }
 }

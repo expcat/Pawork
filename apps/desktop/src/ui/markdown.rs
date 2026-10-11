@@ -847,12 +847,16 @@ pub(super) fn message_needs_full_width(text: &str) -> bool {
 }
 
 fn streaming_caret(color: Rgba) -> impl IntoElement {
-    div()
+    let caret = div()
         .w(px(metrics::STREAM_CARET_WIDTH))
         .h(px(metrics::STREAM_CARET_HEIGHT))
         .rounded(px(1.0))
         .bg(color)
-        .flex_none()
+        .flex_none();
+    // debug_bounds 只认 selector。生产构建不加。
+    #[cfg(test)]
+    let caret = caret.debug_selector(|| "streaming-caret".into());
+    caret
 }
 
 pub(super) fn message_body_element(

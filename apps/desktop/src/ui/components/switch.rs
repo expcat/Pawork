@@ -1,28 +1,40 @@
 //! Switch 开关基础组件（OPT-3c / ADR-055）。
 //!
 //! 轨道 + 圆点两态控件：开 = accent.primary 轨道、圆点靠右；关 =
-//! border.strong 轨道、圆点靠左。状态切换时滑块 120ms ease-out，首帧瞬移。
+//! border.strong 轨道、圆点靠左。滑块状态挂在当前窗口、按 id 记住
+//! from / to / started：首帧无状态直接落在目标位，同值重绘沿当前
+//! 120ms ease-out 采样，变值从当前位续接。
 //! 交互合同与 Button 同构：id 必填，
 //! on_click / on_activate（Enter / Space）由调用方汇聚到同一入口并保证
 //! disabled 不发布动作；状态文案（On / Off）由调用方并排渲染，AX value
 //! 由 AX 层发布。
 
-use std::collections::HashSet;
-use std::sync::Mutex;
-
 use gpui::{
-    div, prelude::*, px, Animation, AnimationExt, App, ClickEvent, FocusHandle, IntoElement,
-    KeyDownEvent, RenderOnce, SharedString, Window,
+    div, prelude::*, px, App, ClickEvent, FocusHandle, IntoElement, KeyDownEvent, RenderOnce,
+    SharedString, Window,
 };
 
 use crate::ui::components::focus_ring::focus_ring;
 use crate::ui::theme::{motion, theme};
 
-fn switch_is_first_paint(id: &str) -> bool {
-    static SEEN: Mutex<Option<HashSet<String>>> = Mutex::new(None);
-    let mut guard = SEEN.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let seen = guard.get_or_insert_with(HashSet::new);
-    seen.insert(id.to_string())
+#[derive(Clone, Copy)]
+struct SwitchThumbMotion {
+    from: f32,
+    to: f32,
+    started: std::time::Instant,
+}
+
+fn sample_switch_thumb(state: SwitchThumbMotion, now: std::time::Instant) -> (f32, bool) {
+    let duration = motion::CONTROL_DURATION;
+    if state.from == state.to || now.duration_since(state.started) >= duration {
+        (state.to, false)
+    } else {
+        let progress = now.duration_since(state.started).as_secs_f32() / duration.as_secs_f32();
+        (
+            state.from + (state.to - state.from) * motion::ease_out_cubic(progress),
+            true,
+        )
+    }
 }
 
 /// 轨道宽（含 2px 内缩的圆点行程）。
@@ -101,8 +113,31 @@ impl Switch {
 
 impl RenderOnce for Switch {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = theme(cx);
         let enabled = !self.disabled;
+        let travel = SWITCH_TRACK_WIDTH - 4.0 - SWITCH_DOT_SIZE;
+        let target = if self.checked { travel } else { 0.0 };
+        let now = std::time::Instant::now();
+        let motion =
+            window.use_keyed_state(self.id.clone(), cx, move |_window, _cx| SwitchThumbMotion {
+                from: target,
+                to: target,
+                started: now,
+            });
+        let mut state = *motion.read(cx);
+        if state.to != target {
+            let (current, _) = sample_switch_thumb(state, now);
+            state = SwitchThumbMotion {
+                from: current,
+                to: target,
+                started: now,
+            };
+            motion.update(cx, |stored, _cx| *stored = state);
+        }
+        let (offset, animating) = sample_switch_thumb(state, now);
+        if animating {
+            window.request_animation_frame();
+        }
+        let theme = theme(cx);
         // 轨道色：开 = 主色；关 / 禁用 = strong 描边色（禁用不另开色档）。
         let track_bg = if self.checked {
             theme.accent.primary
@@ -114,36 +149,16 @@ impl RenderOnce for Switch {
         } else {
             theme.text.secondary
         };
-        let travel = SWITCH_TRACK_WIDTH - 4.0 - SWITCH_DOT_SIZE;
-        let target = if self.checked { travel } else { 0.0 };
-        let first_paint = switch_is_first_paint(self.id.as_ref());
+        let thumb_selector = format!("{}-thumb-dot", self.id);
         let thumb = div()
+            .debug_selector(move || thumb_selector)
             .w(px(SWITCH_DOT_SIZE))
             .h(px(SWITCH_DOT_SIZE))
             .rounded_full()
             .bg(dot_color)
             .absolute()
             .top(px(2.0))
-            .left(px(2.0 + target));
-        let checked = self.checked;
-        let thumb = if first_paint {
-            thumb.into_any_element()
-        } else {
-            thumb
-                .with_animation(
-                    SharedString::from(format!("{}-thumb-{}", self.id, u8::from(checked))),
-                    Animation::new(motion::CONTROL_DURATION).with_easing(motion::ease_out_cubic),
-                    move |thumb, delta| {
-                        let x = if checked {
-                            travel * delta
-                        } else {
-                            travel * (1.0 - delta)
-                        };
-                        thumb.left(px(2.0 + x))
-                    },
-                )
-                .into_any_element()
-        };
+            .left(px(2.0 + offset));
         let mut switch = div()
             .id(self.id)
             .w(px(SWITCH_TRACK_WIDTH))
