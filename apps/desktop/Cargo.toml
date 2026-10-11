@@ -41,3 +41,7 @@ objc = "0.2"
 # 仅 ui/barriers.rs 单测的临时目录（dev-dependencies 不计入生产 deny-list）。
 tempfile.workspace = true
 gpui = { version = "=0.2.2", features = ["test-support"] }
+
+[features]
+# 默认关闭。只把 GUI4 的真实 PTY 集成测试编进 desktop 测试二进制。
+gui4-pty = []

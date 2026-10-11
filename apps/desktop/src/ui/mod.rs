@@ -18,6 +18,8 @@ use computer::ObservationChunkOutcome;
 mod drawing;
 mod files;
 mod goal;
+#[cfg(all(test, target_os = "macos", feature = "gui4-pty"))]
+mod gui4_pty;
 pub(crate) mod i18n;
 mod input_area;
 mod inspector;
