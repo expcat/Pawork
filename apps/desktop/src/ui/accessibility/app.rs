@@ -8848,6 +8848,413 @@ mod tests {
         });
     }
 
+    /// AC-06：鼠标点用途 chip，键盘 Tab/Enter 切用途，键盘输入搜索。
+    /// 目录是 Host 边界 fixture，没有 GUI client。pending_model 只是本地选择，
+    /// selected_model 保持空，不能当成 Host 切模成功。筛选和搜索不得改这组选择。
+    /// Settings 四类能力徽标从 Manage models 弹层的实际 AX 读取。
+    #[gpui::test]
+    fn model_purpose_menu_input_keeps_model_and_renders_settings_badges(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::{point, px, size};
+
+        use crate::projection::{ProviderAuthState, ProviderAuthStatusEntry, ProviderCatalogState};
+        use crate::ui::settings::{
+            settings_manage_models_identifier, settings_model_effort_default_identifier,
+            settings_model_switch_identifier, settings_models_menu_identifier,
+            settings_provider_expand_identifier,
+        };
+
+        struct LanguageReset(crate::ui::i18n::Language);
+        impl Drop for LanguageReset {
+            fn drop(&mut self) {
+                crate::ui::i18n::set_language(self.0);
+            }
+        }
+        let _language = LanguageReset(crate::ui::i18n::language());
+        crate::ui::i18n::set_language(crate::ui::i18n::Language::Chinese);
+
+        fn model(
+            provider: &str,
+            id: &str,
+            name: &str,
+            text: bool,
+            image_input: bool,
+            image_output: bool,
+            video_input: bool,
+            web_search: bool,
+        ) -> ModelEntry {
+            ModelEntry {
+                provider_id: provider.into(),
+                id: id.into(),
+                display_name: name.into(),
+                text,
+                image_input,
+                image_output,
+                video_input,
+                web_search,
+                ..ModelEntry::default()
+            }
+        }
+
+        let plain = model("acme", "plain", "Plain", true, false, false, false, false);
+        let eyes = model("acme", "eyes", "Eyes", true, true, false, false, true);
+        let clip = model("acme", "clip", "Clip", true, false, false, true, false);
+        let paint = model("acme", "paint", "Paint", false, false, true, false, false);
+        let ghost = model(
+            "offline", "ghost", "Ghost", true, false, false, false, false,
+        );
+        let plain_id = model_identifier(&plain);
+        let eyes_id = model_identifier(&eyes);
+        let clip_id = model_identifier(&clip);
+        let paint_id = model_identifier(&paint);
+        let ghost_id = model_identifier(&ghost);
+
+        let platform = std::sync::Arc::new(crate::platform::Platform::new());
+        let socket = std::env::temp_dir().join("ac06-model-purpose.sock");
+        let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
+        cx.simulate_resize(size(px(1440.0), px(2400.0)));
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                // 无 client。连接态和目录都是投影 fixture，不是 model_list 回执。
+                view.projection.set_connection(ConnectionState::Connected {
+                    instance_id: "ac06-fixture".into(),
+                });
+                view.projection.settings_providers.providers = vec![
+                    ProviderAuthStatusEntry {
+                        provider_id: "acme".into(),
+                        display_name: "Acme".into(),
+                        endpoint_label: String::new(),
+                        auth_methods: vec!["api_key".into()],
+                        credentials: Vec::new(),
+                        selection_mode: Default::default(),
+                        auth: ProviderAuthState::Connected {
+                            method: "api_key".into(),
+                            masked_credential: None,
+                        },
+                        catalog: ProviderCatalogState::FixedFallback {
+                            snapshot_label: "ac06-fixture".into(),
+                            fetched_at: None,
+                        },
+                        use_proxy: true,
+                    },
+                    ProviderAuthStatusEntry {
+                        provider_id: "offline".into(),
+                        display_name: "Offline".into(),
+                        endpoint_label: String::new(),
+                        auth_methods: vec!["api_key".into()],
+                        credentials: Vec::new(),
+                        selection_mode: Default::default(),
+                        auth: ProviderAuthState::None,
+                        catalog: ProviderCatalogState::Unavailable {
+                            error: "fixture-offline".into(),
+                            fetched_at: None,
+                        },
+                        use_proxy: true,
+                    },
+                ];
+                view.projection
+                    .set_models(vec![plain, eyes, clip, paint, ghost]);
+                view.projection
+                    .settings_providers
+                    .apply_model_catalog(view.projection.models.clone());
+                view.projection
+                    .set_pending_model("acme".into(), "plain".into());
+                view.text_input
+                    .update(cx, |input, cx| input.reset_text("保留草稿", cx));
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+
+        let assert_held = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|_, cx| {
+                let view = view.read(cx);
+                assert!(
+                    view.projection.selected_model.is_none(),
+                    "fixture must not gain a Host-confirmed model"
+                );
+                assert_eq!(
+                    view.projection
+                        .pending_model
+                        .as_ref()
+                        .map(|(provider, id)| { (provider.as_str(), id.as_str()) }),
+                    Some(("acme", "plain"))
+                );
+                assert_eq!(
+                    view.projection
+                        .effective_model()
+                        .map(|(provider, id)| (provider.as_str(), id.as_str())),
+                    Some(("acme", "plain"))
+                );
+                assert_eq!(view.text_input.read(cx).text(), "保留草稿");
+            });
+        };
+        let row_present = |cx: &mut gpui::VisualTestContext, id: &str| {
+            cx.update(|window, cx| {
+                view.read(cx)
+                    .accessibility_tree(window, cx)
+                    .find(id)
+                    .is_some()
+            })
+        };
+
+        click_published_center(cx, &view, "model-picker");
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert!(matches!(view.open_menu, Some(MenuKind::Model)));
+            assert_eq!(view.model_purpose_filter, ModelPurposeFilter::Conversation);
+            let tree = view.accessibility_tree(window, cx);
+            let chat = ModelPurposeFilter::Conversation.identifier();
+            assert_eq!(tree.find(&chat).unwrap().label, "对话");
+            assert!(tree.find(&chat).unwrap().selected);
+            assert!(tree.find(&plain_id).is_some());
+            assert!(tree.find(&eyes_id).is_some());
+            assert!(tree.find(&clip_id).is_some());
+            assert!(tree.find(&paint_id).is_none());
+            assert!(tree.find(&ghost_id).is_none());
+        });
+        assert_held(cx);
+
+        // 未输入、未移动高亮时 Enter 保持当前本地选择，菜单不关。
+        cx.simulate_keystrokes("enter");
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            assert!(matches!(view.read(cx).open_menu, Some(MenuKind::Model)));
+        });
+        assert_held(cx);
+
+        let vision = ModelPurposeFilter::ImageInput.identifier();
+        click_published_center(cx, &view, &vision);
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert_eq!(view.model_purpose_filter, ModelPurposeFilter::ImageInput);
+            assert!(view.model_search_focus.is_focused(window));
+            assert!(view.menu_highlight.is_none());
+            assert!(view.model_search_query.is_empty());
+            let tree = view.accessibility_tree(window, cx);
+            assert!(tree.find(&vision).unwrap().selected);
+            assert_eq!(
+                tree.find(&eyes_id).unwrap().description.as_deref(),
+                Some("识图 · 搜索")
+            );
+            assert!(tree.find(&plain_id).is_none());
+            assert!(tree.find(&clip_id).is_none());
+            assert!(tree.find(&paint_id).is_none());
+        });
+        assert_held(cx);
+
+        // 当前模型已被用途筛掉，但高亮仍未移动：Enter 仍不得改选。
+        cx.simulate_keystrokes("enter");
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let view = view.read(cx);
+            assert_eq!(view.model_purpose_filter, ModelPurposeFilter::ImageInput);
+            assert!(matches!(view.open_menu, Some(MenuKind::Model)));
+        });
+        assert_held(cx);
+
+        let video = ModelPurposeFilter::VideoInput.identifier();
+        let mut tab_path = Vec::new();
+        let mut reached_video = false;
+        for _ in 0..80 {
+            cx.simulate_keystrokes("tab");
+            cx.refresh().unwrap();
+            cx.run_until_parked();
+            let focused = cx.update(|window, cx| {
+                view.read(cx)
+                    .settings_action_focus
+                    .iter()
+                    .filter(|(_, focus)| focus.is_focused(window))
+                    .map(|(id, _)| id.clone())
+                    .collect::<Vec<_>>()
+            });
+            reached_video = focused.iter().any(|id| id == &video);
+            tab_path.push(focused.join("+"));
+            if reached_video {
+                break;
+            }
+        }
+        assert!(reached_video, "tab never focused video chip: {tab_path:?}");
+        cx.simulate_keystrokes("enter");
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert_eq!(view.model_purpose_filter, ModelPurposeFilter::VideoInput);
+            assert!(view.model_search_focus.is_focused(window));
+            assert!(view.model_search_query.is_empty());
+            let tree = view.accessibility_tree(window, cx);
+            assert!(tree.find(&video).unwrap().selected);
+            assert_eq!(
+                tree.find(&clip_id).unwrap().description.as_deref(),
+                Some("视频")
+            );
+            assert!(tree.find(&eyes_id).is_none());
+            assert!(tree.find(&plain_id).is_none());
+        });
+        assert_held(cx);
+
+        cx.simulate_input("clip");
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let view = view.read(cx);
+            assert_eq!(view.model_search_query, "clip");
+            assert_eq!(view.model_purpose_filter, ModelPurposeFilter::VideoInput);
+        });
+        assert!(row_present(cx, &clip_id));
+        assert!(!row_present(cx, &eyes_id));
+        assert_held(cx);
+
+        click_published_center(cx, &view, "model-search-clear");
+        cx.simulate_input("eyes");
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            assert_eq!(view.model_search_query, "eyes");
+            assert_eq!(view.model_purpose_filter, ModelPurposeFilter::VideoInput);
+            let tree = view.accessibility_tree(window, cx);
+            assert_eq!(
+                tree.find("model-menu-empty").unwrap().label,
+                t("model_search.no_results")
+            );
+            assert!(tree.find(&clip_id).is_none());
+            assert!(tree.find(&eyes_id).is_none());
+            assert!(tree.find(&paint_id).is_none());
+            assert!(matches!(view.open_menu, Some(MenuKind::Model)));
+        });
+        assert_held(cx);
+
+        // 不走 on_open_settings：无 client 时那条路径会把 fixture 标成 stale，
+        // Manage models 随之禁用。这里只切路由，随后鼠标走正式展开和弹层。
+        cx.update(|_, cx| {
+            view.update(cx, |view, cx| {
+                view.route = AppRoute::Settings;
+                view.settings_page = SettingsPage::Providers;
+                view.open_menu = None;
+                cx.notify();
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        let expand = settings_provider_expand_identifier("acme");
+        click_published_center(cx, &view, &expand);
+        let manage = settings_manage_models_identifier("acme");
+        click_published_center(cx, &view, &manage);
+        cx.update(|_, cx| {
+            assert!(matches!(
+                &view.read(cx).open_menu,
+                Some(MenuKind::SettingsProviderModels(provider)) if provider == "acme"
+            ));
+            assert!(view.read(cx).model_search_query.is_empty());
+        });
+        assert_held(cx);
+
+        let list_id = format!("{}-list", settings_models_menu_identifier("acme"));
+        let reveal = |cx: &mut gpui::VisualTestContext, id: &str| {
+            let read = |cx: &mut gpui::VisualTestContext| {
+                cx.update(|window, cx| {
+                    view.read(cx)
+                        .accessibility_tree(window, cx)
+                        .find(id)
+                        .map(|node| {
+                            (
+                                node.description.clone().unwrap_or_default(),
+                                node.bounds.height,
+                            )
+                        })
+                })
+            };
+            let scroll = |cx: &mut gpui::VisualTestContext, bottom: bool| {
+                cx.update(|_, cx| {
+                    view.update(cx, |view, cx| {
+                        let handle = view
+                            .settings_element_layouts
+                            .get(&list_id)
+                            .unwrap_or_else(|| panic!("missing {list_id}"));
+                        if bottom {
+                            handle.scroll_to_bottom();
+                        } else {
+                            handle.set_offset(point(px(0.0), px(0.0)));
+                        }
+                        cx.notify();
+                    });
+                });
+                cx.refresh().unwrap();
+                cx.run_until_parked();
+            };
+            scroll(cx, false);
+            if let Some((description, height)) = read(cx) {
+                if height > 1.0 {
+                    return (description, height);
+                }
+            }
+            scroll(cx, true);
+            if let Some((description, height)) = read(cx) {
+                if height > 1.0 {
+                    return (description, height);
+                }
+            }
+            // 首尾都裁掉中间行时，把该行对齐到列表顶部再读。
+            cx.update(|_, cx| {
+                view.update(cx, |view, cx| {
+                    let item = view
+                        .settings_element_layouts
+                        .get(id)
+                        .unwrap_or_else(|| panic!("missing layout {id}"))
+                        .bounds();
+                    let handle = view
+                        .settings_element_layouts
+                        .get(&list_id)
+                        .unwrap_or_else(|| panic!("missing {list_id}"));
+                    let list = handle.bounds();
+                    let offset = handle.offset();
+                    handle.set_offset(point(offset.x, offset.y - (item.origin.y - list.origin.y)));
+                    cx.notify();
+                });
+            });
+            cx.refresh().unwrap();
+            cx.run_until_parked();
+            read(cx).unwrap_or_else(|| panic!("missing settings candidate {id}"))
+        };
+
+        let paint_switch = settings_model_switch_identifier("acme", "paint");
+        let eyes_switch = settings_model_switch_identifier("acme", "eyes");
+        let clip_switch = settings_model_switch_identifier("acme", "clip");
+        let plain_switch = settings_model_switch_identifier("acme", "plain");
+        let (paint_badge, paint_height) = reveal(cx, &paint_switch);
+        cx.update(|window, cx| {
+            assert!(view
+                .read(cx)
+                .accessibility_tree(window, cx)
+                .find(&settings_model_effort_default_identifier("acme", "paint"))
+                .is_none());
+        });
+        let (eyes_badge, eyes_height) = reveal(cx, &eyes_switch);
+        let (clip_badge, clip_height) = reveal(cx, &clip_switch);
+        let (plain_badge, plain_height) = reveal(cx, &plain_switch);
+        assert!(paint_height > 1.0 && eyes_height > 1.0);
+        assert!(clip_height > 1.0 && plain_height > 1.0);
+        assert_eq!(paint_badge, "acme/paint · 生图");
+        assert_eq!(eyes_badge, "acme/eyes · 识图 · 搜索");
+        assert_eq!(clip_badge, "acme/clip · 视频");
+        assert_eq!(plain_badge, "acme/plain");
+        cx.update(|window, cx| {
+            let tree = view.read(cx).accessibility_tree(window, cx);
+            assert!(tree
+                .find(&settings_model_effort_default_identifier("acme", "plain"))
+                .is_some());
+            assert!(tree
+                .find(&settings_model_switch_identifier("offline", "ghost"))
+                .is_none());
+        });
+        assert_held(cx);
+    }
+
     /// OPT-3 切片 1：全关空态的诚实呈现——加载中不得误报「无已启用
     /// 模型」；目录查询完成且为空时 picker 仍可开菜单看说明行、发送
     /// fail-closed，且不发布任何可选模型行。

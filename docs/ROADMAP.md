@@ -123,7 +123,7 @@
 | 状态 | 任务 | 简介 |
 | --- | --- | --- |
 | ✅ 完成（模拟验收）；独立 review PASS；原生系统与消费者分别待验 | [AC-05 · Pawork 任务消耗窗口人工验收](plan/accept-task-usage.md) | 临时 SQLite 101 条调用经正式 Host 查询进入 GPUI 测试窗口，汇总、筛选、分页、未知值和刷新查询失败通过。 |
-| 等待人工验收 | [AC-06 · 模型用途筛选人工验收](plan/accept-model-purpose.md) | 验收 Composer 用途菜单和 Settings 能力徽标。 |
+| ✅ 完成（模拟验收）；独立 review PASS；真实系统边界待验 | [AC-06 · 模型用途筛选人工验收](plan/accept-model-purpose.md) | GPUI 鼠标用途、Tab/Enter、搜索叠加与本地模型/草稿保持、Settings 四能力徽标通过；真实系统边界待验。 |
 | 等待消费者接入与人工验收 | [AC-07 · MoMai 网关凭证与媒体消费者验收](plan/accept-gateway-consumers.md) | 闭合 MoMai 设置保存凭证及媒体 GUI 验收。 |
 | 等待消费者接入与人工验收 | [AC-08 · MoMai 任务消耗消费者接入与验收](plan/accept-momai-task-usage.md) | 闭合 MoMai 作品、分部和章节三个维度的消费者接入。 |
 | 等待消费者接入与人工验收 | [AC-09 · YingMai 任务消耗消费者接入与验收](plan/accept-yingmai-task-usage.md) | 闭合 YingMai 作品、分段和操作类型三个维度的消费者接入。 |
