@@ -1,7 +1,7 @@
 # 完整任务日志与消耗：生产实现与 UI 设计
 
-- 最近更新：2026-10-04。
-- 状态：统一调用记录、统计 API 与 GPUI 统计窗口已实现；用户人工验收与消费者接入见 [ROADMAP](../ROADMAP.md)。
+- 最近更新：2026-10-12。
+- 状态：统一调用记录、统计 API 与 GPUI 统计窗口已实现；AC-05 自动门禁、模拟验收与独立 review PASS；真实系统与消费者接入见 [ROADMAP](../ROADMAP.md)。
 - 范围：Pawork 共用两级任务 + 可选分部 + 操作类型的记录 / 查询；第 3、5 节为完整页面的设计参考，第 7 节定义当前生产界面。
 - 关联：[GUI 设计](../gui-design.md)、[模型网关](model-gateway.md)、[providers](crates/providers.md)、[control-plane](crates/control-plane.md)、[desktop](crates/desktop.md)。
 
@@ -86,6 +86,8 @@ Task 总览的调用数、分模型统计和异常统计都从同一记录集合
 ## 6. 设计与验收边界
 
 交互原型只演示页面、筛选、异常关联与复制，不连接 Provider 或生产数据库，不进入 Pawork 的 Cargo workspace 或 Desktop 构建链。完整页面设计不等于当前接入的数据能力；生产验证须核对真实窗口与 HTTP / SQLite 等外部事实。
+
+AC-05 模拟验收经 GPUI 测试窗口与正式 Host 查询临时 SQLite 的 101 条种入记录，覆盖汇总、筛选、任务下钻、分页、24h、未知值、复制与损坏记录的查询失败。系统标题读数为空，不能作为原生标题证据；测试主动推进帧核对中英文案，不证明主窗口语言操作会通知已打开的统计窗口。原生窗口/AX/像素、系统剪贴板与真实供应商扣费仍待验。完整输入、命令、结果和证据见 [AC-05](../plan/accept-task-usage.md)，两个消费者仍各自验收。
 
 ## 7. 生产界面
 

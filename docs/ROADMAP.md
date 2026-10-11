@@ -1,6 +1,6 @@
 # Pawork 计划目录
 
-> 更新：2026-10-11。本页只维护任务状态、链接和简介；每个任务的范围、前置、实现与验收细节写在 `docs/plan/` 的独立文档。现行能力与契约仍以 [Spec](spec/README.md) 和 [架构](architecture.md) 为准，计划不代表已实现。
+> 更新：2026-10-12。本页只维护任务状态、链接和简介；每个任务的范围、前置、实现与验收细节写在 `docs/plan/` 的独立文档。现行能力与契约仍以 [Spec](spec/README.md) 和 [架构](architecture.md) 为准，计划不代表已实现。
 
 ## 状态与维护
 
@@ -122,7 +122,7 @@
 
 | 状态 | 任务 | 简介 |
 | --- | --- | --- |
-| 等待人工验收 | [AC-05 · Pawork 任务消耗窗口人工验收](plan/accept-task-usage.md) | 闭合 Pawork 统计窗口的用户验收；两个外部消费者拆为独立任务。 |
+| ✅ 完成（模拟验收）；独立 review PASS；原生系统与消费者分别待验 | [AC-05 · Pawork 任务消耗窗口人工验收](plan/accept-task-usage.md) | 临时 SQLite 101 条调用经正式 Host 查询进入 GPUI 测试窗口，汇总、筛选、分页、未知值和刷新查询失败通过。 |
 | 等待人工验收 | [AC-06 · 模型用途筛选人工验收](plan/accept-model-purpose.md) | 验收 Composer 用途菜单和 Settings 能力徽标。 |
 | 等待消费者接入与人工验收 | [AC-07 · MoMai 网关凭证与媒体消费者验收](plan/accept-gateway-consumers.md) | 闭合 MoMai 设置保存凭证及媒体 GUI 验收。 |
 | 等待消费者接入与人工验收 | [AC-08 · MoMai 任务消耗消费者接入与验收](plan/accept-momai-task-usage.md) | 闭合 MoMai 作品、分部和章节三个维度的消费者接入。 |

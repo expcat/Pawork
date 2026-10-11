@@ -754,3 +754,854 @@ impl Render for UsageView {
             .child(content)
     }
 }
+
+#[cfg(all(test, feature = "ac05-task-usage"))]
+mod tests {
+    use std::io::Write;
+    use std::os::unix::fs::FileTypeExt;
+    use std::path::{Path, PathBuf};
+    use std::process::{Child, Command, Stdio};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    use super::*;
+
+    struct Host {
+        child: Child,
+        root: PathBuf,
+        log: PathBuf,
+    }
+
+    impl Drop for Host {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+
+    fn fixture_bin() -> PathBuf {
+        let path = std::env::var("PAWORK_UI_FIXTURE")
+            .map(PathBuf::from)
+            .unwrap_or_default();
+        assert!(
+            path.is_file(),
+            "PAWORK_UI_FIXTURE must be the built ui_fixture example, got {}",
+            path.display()
+        );
+        path
+    }
+
+    fn log_tail(path: &Path) -> String {
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        let mut lines: Vec<&str> = text.lines().rev().take(40).collect();
+        lines.reverse();
+        lines.join("\n")
+    }
+
+    fn data_names(root: &Path) -> String {
+        let mut names = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(root.join("data")) {
+            for entry in entries.flatten() {
+                names.push(entry.file_name().to_string_lossy().into_owned());
+            }
+        }
+        names.sort();
+        names.join(",")
+    }
+
+    fn sqlite(db: &Path, sql: &str) -> Result<String, String> {
+        let mut last = String::new();
+        for _ in 0..20 {
+            let mut child = Command::new("/usr/bin/sqlite3")
+                .arg(db)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|error| format!("spawn sqlite3: {error}"))?;
+            let mut stdin = child.stdin.take().expect("sqlite stdin");
+            stdin
+                .write_all(format!(".timeout 2000\n{sql}\n").as_bytes())
+                .map_err(|error| format!("sqlite stdin: {error}"))?;
+            drop(stdin);
+            let output = child
+                .wait_with_output()
+                .map_err(|error| error.to_string())?;
+            let text = format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            if output.status.success() {
+                return Ok(text);
+            }
+            last = text;
+            if last.contains("locked") || last.contains("busy") {
+                std::thread::sleep(Duration::from_millis(100));
+                continue;
+            }
+            return Err(last);
+        }
+        Err(format!("sqlite stayed busy: {last}"))
+    }
+
+    fn spawn_host() -> Host {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = PathBuf::from(format!(
+            "/tmp/pawork-ac05-task-usage/root-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).expect("root");
+        let binary = fixture_bin();
+        let seed = Command::new(&binary)
+            .arg("seed")
+            .arg("--root")
+            .arg(&root)
+            .current_dir("/tmp")
+            .output()
+            .expect("spawn seed");
+        assert!(
+            seed.status.success(),
+            "ui_fixture seed failed: {}{}",
+            String::from_utf8_lossy(&seed.stdout),
+            String::from_utf8_lossy(&seed.stderr)
+        );
+        let evidence = PathBuf::from("/tmp/pawork-ac05-task-usage/evidence");
+        std::fs::create_dir_all(&evidence).expect("evidence");
+        let log = evidence.join(format!("host-{}.log", std::process::id()));
+        let stderr = std::fs::File::create(&log).expect("host log");
+        let child = Command::new(&binary)
+            .arg("serve")
+            .arg("--root")
+            .arg(&root)
+            .current_dir("/tmp")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(stderr)
+            .spawn()
+            .expect("spawn serve");
+        let mut host = Host { child, root, log };
+        wait_ready(&mut host);
+        host
+    }
+
+    fn wait_ready(host: &mut Host) {
+        let socket = host.root.join("data/pawork-gui.sock");
+        let token = host.root.join("data/gui.token");
+        let db = host.root.join("data/usage-ledger.sqlite3");
+        let start = Instant::now();
+        loop {
+            if let Some(status) = host.child.try_wait().expect("serve status") {
+                panic!("serve exited {status}\n{}", log_tail(&host.log));
+            }
+            let socket_ok = std::fs::metadata(&socket)
+                .map(|meta| meta.file_type().is_socket())
+                .unwrap_or(false);
+            let token_ok = std::fs::metadata(&token)
+                .map(|meta| meta.len() > 0)
+                .unwrap_or(false);
+            if socket_ok && token_ok && db.is_file() {
+                match sqlite(
+                    &db,
+                    "SELECT count(*) FROM sqlite_master WHERE name='task_usage_calls';",
+                ) {
+                    Ok(text) if text.trim() == "1" => return,
+                    Ok(_) | Err(_) if start.elapsed() < Duration::from_secs(30) => {}
+                    Ok(text) => panic!(
+                        "task_usage_calls missing: {text} files={} log={}",
+                        data_names(&host.root),
+                        log_tail(&host.log)
+                    ),
+                    Err(error) => panic!(
+                        "ledger schema: {error} files={} log={}",
+                        data_names(&host.root),
+                        log_tail(&host.log)
+                    ),
+                }
+            }
+            if start.elapsed() > Duration::from_secs(30) {
+                panic!(
+                    "host not ready files={} log={}",
+                    data_names(&host.root),
+                    log_tail(&host.log)
+                );
+            }
+            std::thread::sleep(Duration::from_millis(40));
+        }
+    }
+
+    fn insert_ledger(host: &Host) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_millis() as u64;
+        let recent = now - 120_000;
+        let pads_at = now - 2 * 86_400_000;
+        let older_at = now - 40 * 86_400_000;
+        let mut sql = String::from("BEGIN IMMEDIATE;\n");
+        {
+            let mut add = |id: &str,
+                           source: &str,
+                           operation: &str,
+                           started: u64,
+                           status: &str,
+                           context: bool,
+                           tokens: Option<(u64, u64)>,
+                           images: Option<u64>,
+                           seconds: Option<u64>,
+                           provider: Option<&str>,
+                           model: Option<&str>,
+                           error: Option<&str>| {
+                push_row(
+                    &mut sql,
+                    id,
+                    started,
+                    operation,
+                    ledger_row(
+                        id, source, operation, started, status, context, tokens, images, seconds,
+                        provider, model, error,
+                    ),
+                );
+            };
+            add(
+                "text-known",
+                "gateway",
+                "text",
+                recent,
+                "succeeded",
+                true,
+                Some((100, 40)),
+                None,
+                None,
+                Some("fixture"),
+                Some("fixture-model"),
+                None,
+            );
+            add(
+                "text-unknown",
+                "gateway",
+                "text",
+                recent,
+                "succeeded",
+                true,
+                None,
+                None,
+                None,
+                Some("fixture"),
+                Some("fixture-model"),
+                None,
+            );
+            add(
+                "text-failed",
+                "gateway",
+                "text",
+                recent,
+                "failed",
+                true,
+                None,
+                None,
+                None,
+                Some("fixture"),
+                Some("fixture-model"),
+                Some("upstream_timeout"),
+            );
+            add(
+                "image-known",
+                "gateway",
+                "image",
+                recent,
+                "succeeded",
+                true,
+                Some((30, 0)),
+                Some(2),
+                None,
+                Some("fixture"),
+                Some("fixture-model"),
+                None,
+            );
+            add(
+                "image-unknown",
+                "gateway",
+                "image",
+                recent,
+                "succeeded",
+                true,
+                None,
+                None,
+                None,
+                Some("fixture"),
+                Some("fixture-model"),
+                None,
+            );
+            add(
+                "video-plan",
+                "gateway",
+                "video",
+                recent,
+                "succeeded",
+                true,
+                Some((10, 4)),
+                None,
+                Some(8),
+                Some("fixture"),
+                Some("fixture-model"),
+                None,
+            );
+            add(
+                "query-status",
+                "gateway",
+                "query",
+                recent,
+                "succeeded",
+                true,
+                None,
+                None,
+                None,
+                Some("fixture"),
+                Some("fixture-model"),
+                None,
+            );
+            add(
+                "download-1",
+                "client_report",
+                "download",
+                recent,
+                "succeeded",
+                true,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            );
+            add(
+                "coding-open",
+                "native_run",
+                "coding",
+                recent,
+                "succeeded",
+                false,
+                None,
+                None,
+                None,
+                Some("pawork"),
+                Some("native"),
+                None,
+            );
+            for index in 0..=90 {
+                let id = format!("pad-{index:02}");
+                add(
+                    &id,
+                    "client_report",
+                    "download",
+                    pads_at,
+                    "succeeded",
+                    true,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                );
+            }
+            add(
+                "older-page",
+                "gateway",
+                "text",
+                older_at,
+                "succeeded",
+                true,
+                Some((4, 1)),
+                None,
+                None,
+                Some("fixture"),
+                Some("fixture-model"),
+                None,
+            );
+        }
+        sql.push_str("COMMIT;\n");
+        let db = host.root.join("data/usage-ledger.sqlite3");
+        sqlite(&db, &sql).unwrap_or_else(|error| panic!("insert ledger: {error}"));
+        let count = sqlite(&db, "SELECT COUNT(*) FROM task_usage_calls;").unwrap();
+        assert_eq!(count.trim(), "101", "seeded ledger count");
+    }
+
+    fn ledger_row(
+        id: &str,
+        source: &str,
+        operation: &str,
+        started: u64,
+        status: &str,
+        with_context: bool,
+        tokens: Option<(u64, u64)>,
+        images: Option<u64>,
+        seconds: Option<u64>,
+        provider: Option<&str>,
+        model: Option<&str>,
+        error_code: Option<&str>,
+    ) -> serde_json::Value {
+        let context = with_context.then(|| {
+            serde_json::json!({
+                "task": {"id": "novel", "title": "Novel"},
+                "group": {"id": "part-1", "title": "Part 1"},
+                "subtask": {"id": "ch-1", "title": "ch-1"},
+                "operation": operation,
+                "retry_of": null
+            })
+        });
+        let tokens = tokens.map(|(input_tokens, output_tokens)| {
+            serde_json::json!({
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens
+            })
+        });
+        serde_json::json!({
+            "id": id,
+            "client": "ac05",
+            "source": source,
+            "context": context,
+            "operation": operation,
+            "provider": provider,
+            "model": model,
+            "started_at_ms": started,
+            "finished_at_ms": started + 1_000,
+            "status": status,
+            "tokens": tokens,
+            "cost": null,
+            "output_images": images,
+            "planned_video_seconds": seconds,
+            "upstream_task_id": null,
+            "upstream_status": null,
+            "related_call_id": null,
+            "error_code": error_code
+        })
+    }
+
+    fn push_row(
+        sql: &mut String,
+        id: &str,
+        started: u64,
+        operation: &str,
+        payload: serde_json::Value,
+    ) {
+        let payload = payload.to_string().replace("'", "''");
+        sql.push_str("INSERT INTO task_usage_calls ");
+        sql.push_str("(client,id,started_at_ms,upstream_task_id,operation,payload) VALUES (");
+        sql.push_str(&format!(
+            "'ac05','{id}',{started},NULL,'{operation}','{payload}');\n"
+        ));
+    }
+
+    fn until_connected(
+        cx: &mut gpui::VisualTestContext,
+        view: &gpui::Entity<AppView>,
+        host: &mut Host,
+    ) {
+        let start = Instant::now();
+        loop {
+            cx.refresh().expect("draw");
+            cx.run_until_parked();
+            let connected = cx.update(|_, app| {
+                matches!(
+                    view.read(app).projection.connection,
+                    crate::projection::ConnectionState::Connected { .. }
+                )
+            });
+            if connected {
+                return;
+            }
+            if start.elapsed() > Duration::from_secs(20) {
+                panic!("desktop did not connect\n{}", log_tail(&host.log));
+            }
+            if let Some(status) = host.child.try_wait().expect("serve status") {
+                panic!("serve exited {status}\n{}", log_tail(&host.log));
+            }
+            std::thread::sleep(Duration::from_millis(40));
+        }
+    }
+
+    fn click(cx: &mut gpui::VisualTestContext, id: &'static str) {
+        cx.refresh().expect("draw");
+        cx.run_until_parked();
+        let bounds = cx
+            .debug_bounds(id)
+            .unwrap_or_else(|| panic!("missing {id}"));
+        cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+    }
+
+    fn focus_enter(panel: &mut gpui::VisualTestContext, usage: &gpui::Entity<UsageView>, id: &str) {
+        panel.update(|window, cx| {
+            let handle = usage
+                .read(cx)
+                .focus
+                .get(id)
+                .cloned()
+                .unwrap_or_else(|| panic!("missing focus {id}"));
+            window.focus(&handle);
+        });
+        panel.refresh().expect("draw");
+        panel.simulate_keystrokes("enter");
+    }
+
+    fn ax_press(panel: &mut gpui::VisualTestContext, usage: &gpui::Entity<UsageView>, id: &str) {
+        panel.update(|window, cx| {
+            usage.update(cx, |view, cx| {
+                view.ax_action(
+                    crate::ui::accessibility::AxRequest {
+                        identifier: id.into(),
+                        action: crate::ui::accessibility::AxAction::Press,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        });
+        panel.run_until_parked();
+    }
+
+    fn wait_usage(
+        panel: &mut gpui::VisualTestContext,
+        usage: &gpui::Entity<UsageView>,
+        host: &Host,
+        what: &str,
+        mut ready: impl FnMut(&UsageView) -> bool,
+    ) {
+        let start = Instant::now();
+        loop {
+            panel.refresh().expect("draw");
+            panel.run_until_parked();
+            let (done, error) = panel.update(|_, cx| {
+                let view = usage.read(cx);
+                (ready(view), view.error.clone())
+            });
+            if done {
+                return;
+            }
+            if start.elapsed() > Duration::from_secs(20) {
+                panic!("{what}: error={error:?}\n{}", log_tail(&host.log));
+            }
+            std::thread::sleep(Duration::from_millis(40));
+        }
+    }
+
+    fn assert_full_totals(view: &UsageView) {
+        let report = view.report.as_ref().expect("report");
+        assert_eq!(report.totals.records, 101);
+        assert_eq!(report.totals.generation_calls, 7);
+        assert_eq!(report.totals.failed, 1);
+        assert_eq!(report.totals.unknown_token_calls, 4);
+        assert_eq!(report.totals.unknown_cost_calls, 8);
+        assert_eq!(report.totals.tokens.input_tokens, 144);
+        assert_eq!(report.totals.tokens.output_tokens, 45);
+        assert_eq!(report.totals.output_images, 2);
+        assert_eq!(report.totals.planned_video_seconds, 8);
+    }
+
+    fn assert_first_page(view: &UsageView) {
+        assert_full_totals(view);
+        let report = view.report.as_ref().expect("report");
+        assert_eq!(report.records.len(), 100);
+        assert_eq!(
+            report.records.last().map(|record| record.id.as_str()),
+            Some("pad-00")
+        );
+        assert!(report.next_cursor.is_some());
+        assert!(report
+            .records
+            .iter()
+            .all(|record| record.id != "older-page"));
+        let totals = view.access.node_label("usage-totals").expect("totals");
+        assert!(totals.contains("101 records"), "{totals}");
+        assert!(totals.contains("7 generation attempts"), "{totals}");
+        assert!(totals.contains("Known input tokens 144"), "{totals}");
+        assert!(totals.contains("output 45"), "{totals}");
+        assert!(totals.contains("4 calls with unknown tokens"), "{totals}");
+        assert!(totals.contains("8 calls with unknown cost"), "{totals}");
+        assert!(totals.contains("2 known output images"), "{totals}");
+        assert!(totals.contains("8 planned video seconds"), "{totals}");
+    }
+
+    #[gpui::test]
+    fn usage_window_matches_seeded_ledger(cx: &mut gpui::TestAppContext) {
+        cx.executor().allow_parking();
+        let mut host = spawn_host();
+        insert_ledger(&host);
+        let platform = std::sync::Arc::new(Platform::new());
+        let socket = host.root.join("data/pawork-gui.sock");
+        let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
+        until_connected(cx, &view, &mut host);
+        let api = cx.update(|_, app| {
+            view.read(app)
+                .handshake_info
+                .as_ref()
+                .expect("handshake")
+                .api_version
+                .clone()
+        });
+        let minor: u32 = api
+            .split('.')
+            .nth(1)
+            .and_then(|part| part.parse().ok())
+            .unwrap_or(0);
+        assert!(minor >= 26, "host api {api}");
+        let before = cx.windows();
+        click(cx, "task-usage-open");
+        let panel_id = cx
+            .windows()
+            .into_iter()
+            .find(|id| !before.contains(id))
+            .expect("usage window");
+        let mut panel = gpui::VisualTestContext::from_window(panel_id, cx);
+        let usage = panel.update(|window, _| window.root::<UsageView>().unwrap().unwrap());
+        wait_usage(&mut panel, &usage, &host, "first page", |view| {
+            view.report
+                .as_ref()
+                .is_some_and(|report| report.records.len() == 100 && report.totals.records == 101)
+        });
+        panel.update(|_, cx| assert_first_page(usage.read(cx)));
+        let stored_title = panel.window_title();
+        let platform_title = panel.update(|window, _| window.window_title());
+        if let Some(title) = stored_title.as_ref().filter(|title| !title.is_empty()) {
+            assert_eq!(title, "Task usage");
+        }
+        if !platform_title.is_empty() {
+            assert_eq!(platform_title, "Task usage");
+        }
+        crate::ui::i18n::set_language(crate::ui::i18n::Language::Chinese);
+        wait_usage(&mut panel, &usage, &host, "chinese refresh", |view| {
+            view.access.node_label("usage-refresh").as_deref() == Some("刷新")
+        });
+        panel.update(|_, cx| {
+            let labels = usage.read(cx).access.labels();
+            for header in [
+                "Group by",
+                "Operations",
+                "Status",
+                "Call log",
+                "分组",
+                "消耗类型",
+                "状态",
+                "调用日志",
+            ] {
+                assert!(
+                    !labels.iter().any(|label| label == header),
+                    "{header} in {labels:?}"
+                );
+            }
+            let totals = usage
+                .read(cx)
+                .access
+                .node_label("usage-totals")
+                .expect("totals");
+            assert!(totals.contains("条记录"), "{totals}");
+        });
+        assert_eq!(panel.window_title(), stored_title);
+        assert_eq!(
+            panel.update(|window, _| window.window_title()),
+            platform_title
+        );
+        crate::ui::i18n::set_language(crate::ui::i18n::Language::English);
+        wait_usage(&mut panel, &usage, &host, "english refresh", |view| {
+            view.access.node_label("usage-refresh").as_deref() == Some("Refresh")
+        });
+        focus_enter(&mut panel, &usage, "usage-op-1");
+        wait_usage(&mut panel, &usage, &host, "text filter", |view| {
+            view.report
+                .as_ref()
+                .is_some_and(|report| report.records.len() == 4)
+        });
+        panel.update(|_, cx| {
+            let mut ids: Vec<_> = usage
+                .read(cx)
+                .report
+                .as_ref()
+                .expect("report")
+                .records
+                .iter()
+                .map(|record| record.id.clone())
+                .collect();
+            ids.sort();
+            assert_eq!(
+                ids,
+                ["older-page", "text-failed", "text-known", "text-unknown"]
+            );
+        });
+        ax_press(&mut panel, &usage, "usage-status-4");
+        wait_usage(&mut panel, &usage, &host, "failed text", |view| {
+            view.report
+                .as_ref()
+                .is_some_and(|report| report.records.len() == 1)
+        });
+        panel.update(|_, cx| {
+            let record = &usage.read(cx).report.as_ref().expect("report").records[0];
+            assert_eq!(record.id, "text-failed");
+            assert_eq!(record.error_code.as_deref(), Some("upstream_timeout"));
+        });
+        click(&mut panel, "usage-clear");
+        wait_usage(&mut panel, &usage, &host, "clear filters", |view| {
+            view.report
+                .as_ref()
+                .is_some_and(|report| report.records.len() == 100 && report.next_cursor.is_some())
+        });
+        panel.update(|_, cx| assert_first_page(usage.read(cx)));
+        let drill = panel.update(|_, cx| {
+            let view = usage.read(cx);
+            ["usage-drill-0", "usage-drill-1"]
+                .into_iter()
+                .find(|id| {
+                    view.access
+                        .node_label(id)
+                        .is_some_and(|label| label.contains("Novel"))
+                })
+                .expect("novel drill")
+        });
+        click(&mut panel, drill);
+        wait_usage(&mut panel, &usage, &host, "novel drill", |view| {
+            let scoped = view
+                .access
+                .node_label("usage-scope")
+                .is_some_and(|scope| scope.contains("novel"));
+            let chapter = view
+                .access
+                .node_label("usage-drill-0")
+                .is_some_and(|label| label.contains("ch-1"));
+            scoped
+                && chapter
+                && view.report.as_ref().is_some_and(|report| {
+                    report.records.len() == 100
+                        && report.next_cursor.is_none()
+                        && report
+                            .records
+                            .iter()
+                            .all(|record| record.id != "coding-open")
+                })
+        });
+        click(&mut panel, "usage-clear");
+        wait_usage(&mut panel, &usage, &host, "clear before next", |view| {
+            view.report
+                .as_ref()
+                .is_some_and(|report| report.records.len() == 100 && report.next_cursor.is_some())
+        });
+        ax_press(&mut panel, &usage, "usage-next");
+        wait_usage(&mut panel, &usage, &host, "next page", |view| {
+            view.report.as_ref().is_some_and(|report| {
+                report.records.len() == 101
+                    && report
+                        .records
+                        .iter()
+                        .any(|record| record.id == "older-page")
+            })
+        });
+        click(&mut panel, "usage-range-1");
+        wait_usage(&mut panel, &usage, &host, "24h", |view| {
+            view.report.as_ref().is_some_and(|report| {
+                report.records.len() == 9
+                    && report.totals.generation_calls == 6
+                    && report.totals.tokens.input_tokens == 140
+                    && report.totals.tokens.output_tokens == 44
+                    && report
+                        .records
+                        .iter()
+                        .all(|record| record.id != "older-page")
+                    && report
+                        .records
+                        .iter()
+                        .any(|record| record.id == "coding-open")
+            })
+        });
+        let unknown = panel.update(|_, cx| {
+            let view = usage.read(cx);
+            (0..9).find_map(|index| {
+                let id = format!("usage-record-{index}");
+                let label = view.access.node_label(&id)?;
+                (label.contains("Text") && label.contains("Tokens unknown")).then_some(id)
+            })
+        });
+        let unknown = unknown.expect("tokens-unknown text row");
+        ax_press(&mut panel, &usage, &unknown);
+        wait_usage(&mut panel, &usage, &host, "unknown detail", |view| {
+            view.selected
+                .as_ref()
+                .is_some_and(|record| record.id == "text-unknown")
+        });
+        panel.update(|_, cx| {
+            let detail = usage
+                .read(cx)
+                .access
+                .node_label("usage-detail")
+                .expect("detail");
+            assert!(detail.contains("Tokens not reported"), "{detail}");
+            assert!(detail.contains("Cost unknown"), "{detail}");
+            assert!(!detail.contains("0 / 0"), "{detail}");
+            assert!(!detail.contains("Input 0"), "{detail}");
+        });
+        click(&mut panel, "usage-copy-id");
+        let copied = panel.read_from_clipboard().and_then(|item| item.text());
+        assert_eq!(copied.as_deref(), Some("text-unknown"));
+        panel.simulate_keystrokes("escape");
+        panel.update(|_, cx| {
+            assert!(
+                usage.read(cx).selected.is_none(),
+                "escape did not clear the detail"
+            );
+        });
+        click(&mut panel, "usage-range-0");
+        wait_usage(
+            &mut panel,
+            &usage,
+            &host,
+            "all time before reject",
+            |view| {
+                view.error.is_none()
+                    && view
+                        .report
+                        .as_ref()
+                        .is_some_and(|report| report.records.len() == 100)
+            },
+        );
+        let db = host.root.join("data/usage-ledger.sqlite3");
+        let backup = PathBuf::from("/tmp/pawork-ac05-task-usage/evidence/usage-ledger.sqlite3");
+        let _ = std::fs::remove_file(&backup);
+        sqlite(&db, &format!(".backup {}", backup.display()))
+            .unwrap_or_else(|error| panic!("backup: {error}"));
+        sqlite(
+            &db,
+            "UPDATE task_usage_calls SET payload='broken' WHERE id='pad-00';",
+        )
+        .unwrap_or_else(|error| panic!("corrupt: {error}"));
+        click(&mut panel, "usage-refresh");
+        wait_usage(&mut panel, &usage, &host, "query failed", |view| {
+            view.report.is_none()
+                && view
+                    .access
+                    .node_label("usage-error")
+                    .is_some_and(|label| label.contains("Query failed"))
+        });
+        let query_error = panel.update(|_, cx| {
+            let view = usage.read(cx);
+            assert!(view.report.is_none());
+            let labels = view.access.labels();
+            assert!(
+                labels
+                    .iter()
+                    .all(|label| !label.contains("No records match")),
+                "{labels:?}"
+            );
+            view.access.node_label("usage-error").expect("query error")
+        });
+        let evidence = PathBuf::from("/tmp/pawork-ac05-task-usage/evidence/result.txt");
+        std::fs::write(
+            &evidence,
+            format!(
+                "api={api}\nrecords=101\ngeneration=7\nfailed=1\nunknown_tokens=4\nunknown_cost=8\ninput=144\noutput=45\nimages=2\nplanned_video_seconds=8\nstored_title={stored_title:?}\nplatform_title={platform_title:?}\nplatform_title_note=TestWindow get_title stays empty unless set_title stored one\nquery_error={query_error}\n"
+            ),
+        )
+        .expect("evidence");
+    }
+}

@@ -109,6 +109,19 @@ impl PanelAccess {
                 && node.actions.contains(&request.action)
         })
     }
+
+    #[cfg(all(test, feature = "ac05-task-usage"))]
+    pub(super) fn node_label(&self, id: &str) -> Option<String> {
+        self.nodes
+            .iter()
+            .find(|node| node.identifier == id)
+            .map(|node| node.label.clone())
+    }
+
+    #[cfg(all(test, feature = "ac05-task-usage"))]
+    pub(super) fn labels(&self) -> Vec<String> {
+        self.nodes.iter().map(|node| node.label.clone()).collect()
+    }
 }
 
 /// 产品子窗口共用的滚动表单壳。字段和动作由调用方标成 flex_none，避免被压扁。

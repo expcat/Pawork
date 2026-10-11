@@ -45,3 +45,5 @@ gpui = { version = "=0.2.2", features = ["test-support"] }
 [features]
 # 默认关闭。只把 GUI4 的真实 PTY 集成测试编进 desktop 测试二进制。
 gui4-pty = []
+# 默认关闭。AC-05：临时账本经真实 Host 进入统计窗口。需要 PAWORK_UI_FIXTURE 指向以 ui-fixture feature 构建的 ui_fixture example，缺失即失败。
+ac05-task-usage = []

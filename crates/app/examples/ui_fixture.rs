@@ -207,6 +207,8 @@ async fn fixture_core(root: &Path, spec: &SeedSpec, profile: &str) -> Result<App
         pawork_domain::ProviderId::from("mock"),
         Some(store),
     );
+    core.open_control_plane(root.join("data"))
+        .map_err(|error| error.to_string())?;
     devfixture::configure_fixture_host_profile(&mut core, profile)?;
     let workspaces = devfixture::resolve_workspaces(spec, root)?;
     devfixture::attach_fixture_workspaces(&mut core, &workspaces)
