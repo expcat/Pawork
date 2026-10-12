@@ -134,7 +134,7 @@
 
 | 状态 | 任务 | 简介 |
 | --- | --- | --- |
-| 缺环境 | [ENV-01 · 真实账号与额度环境验收](plan/env-01-accounts-quota.md) | 补齐 OAuth、刷新、双账号与权威额度的真实环境证据。 |
+| 当前账号与正式查询核实完成；独立 review PASS；剩余真实条件待验 | [ENV-01 · 真实账号与额度环境验收](plan/env-01-accounts-quota.md) | Go 三窗真实 forbidden、读数为空；持久认证与设置摘要未变，OAuth 自然临期、双账号、非零额度和倒计时仍待环境。 |
 | 缺环境 | [ENV-02 · 既有跨平台专项环境验收](plan/env-02-platform-matrix.md) | 补齐 Linux / Windows、WebKit、容器和真实 Provider 的既有专项矩阵。 |
 | 缺环境 | [ENV-03 · MM-2 视频真实往返验收](plan/env-03-video-roundtrip.md) | 在支持的视频端点与账号上证明真实往返。 |
 | 缺环境 | [ENV-04 · MM-3 GLM 搜索环境验收](plan/env-04-glm-search.md) | 配置真实 GLM 搜索 MCP 后验收搜索链路。 |
