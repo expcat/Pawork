@@ -138,7 +138,7 @@
 | 当前可运行专项完成；独立 review PASS；Windows 原生待环境 | [ENV-02 · 既有跨平台专项环境验收](plan/env-02-platform-matrix.md) | 16 条连接回归与独立 UDS / WebKit 真窗口通过；Linux / GLM / Wayland 按原证据边界复用，Windows 锁与 Named Pipe 仍待验。 |
 | 当前条件核实与独立 review PASS；两次 HTTP 429；成功往返待供应商 | [ENV-03 · MM-2 视频真实往返验收](plan/env-03-video-roundtrip.md) | 正式 crate 目录与 gate 已核；qwen3.8-max 两次均 exit 1，无理解结果，不以目录成功代替视频验收。 |
 | ✅ 完成（真实 MCP 往返／模拟审批） | [ENV-04 · MM-3 GLM 搜索环境验收](plan/env-04-glm-search.md) | 官方服务实际发现 web_search_prime，经正式注册／调度一次成功，独立 review PASS；结果为泛文档页面，Host / GUI 与持久接入未验。 |
-| 缺浏览器授权 | [ENV-05 · Chrome / Edge 只读上下文环境复验](plan/env-05-browser-context.md) | 用户手动授权后复验当前页正文读取。 |
+| 当前核查与独立复审 PASS；正文成功与 Desktop 待环境 | [ENV-05 · Chrome / Edge 只读上下文环境复验](plan/env-05-browser-context.md) | 正式库入口 Chrome 3 次 / Edge 1 次均 Apple Event -1712，无正文；超时原因与 TCC 主体未确定，测试窗口已收尾。 |
 | ✅ 完成（维持 Unsupported 裁决分支） | [ENV-06 · 非 Unix 技能录制写入前置与验收](plan/env-06-skill-non-unix.md) | Host 固定平台拒绝提示、两条既有 macOS 回归与独立 review PASS；不新增非 Unix 写入、不冒充平台支持或原生验收。 |
 | 缺环境 | [ENV-07 · 网关媒体供应商与账单环境验收](plan/env-07-media-billing.md) | 验收真实图像、视频、搜索供应商、套餐权限和账单来源。 |
 
