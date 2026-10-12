@@ -9,6 +9,8 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 pub mod approval;
+pub mod guest;
+pub mod isolated;
 pub mod native_host;
 mod rfb;
 pub mod target;
@@ -234,6 +236,18 @@ impl DesktopSession {
     }
 }
 
+fn shared_isolated_session() -> Arc<DesktopSession> {
+    static SESSION: OnceLock<Arc<DesktopSession>> = OnceLock::new();
+    SESSION
+        .get_or_init(|| Arc::new(DesktopSession::new()))
+        .clone()
+}
+
+fn shared_rfb() -> Arc<rfb::Rfb> {
+    static RFB: OnceLock<Arc<rfb::Rfb>> = OnceLock::new();
+    RFB.get_or_init(|| Arc::new(rfb::Rfb::new())).clone()
+}
+
 pub struct Computer {
     backend: Arc<dyn Backend>,
     session: Arc<DesktopSession>,
@@ -250,13 +264,23 @@ impl Computer {
     /// Connect lazily to the dedicated desktop shipped in `desktop/compose.yaml`.
     /// No host display, input device, clipboard, or fallback backend is accessed.
     pub fn isolated() -> Self {
-        static ISOLATED_SESSION: OnceLock<Arc<DesktopSession>> = OnceLock::new();
         Self {
-            backend: Arc::new(rfb::Rfb::new()),
-            session: ISOLATED_SESSION
-                .get_or_init(|| Arc::new(DesktopSession::new()))
-                .clone(),
+            backend: shared_rfb(),
+            session: shared_isolated_session(),
         }
+    }
+
+    /// Claim the one shared isolated desktop for `scope`. This is the same
+    /// session [`Computer::isolated`] and [`Computer::release`] use. A different
+    /// live owner is [`Error::Conflict`]. The call does not grant input and does
+    /// not open the backend.
+    pub fn claim_shared(scope: &str) -> Result<(), Error> {
+        claim(&shared_isolated_session(), scope)
+    }
+
+    /// Crop one window out of the shared RFB framebuffer. Does not open a second client.
+    pub fn capture_frame(x: i32, y: i32, width: u32, height: u32) -> Result<Capture, Error> {
+        shared_rfb().capture_window(x, y, width, height)
     }
 
     /// Host hook for run end (stop, cancel, disconnect): the owner's

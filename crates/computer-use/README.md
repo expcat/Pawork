@@ -18,6 +18,24 @@ docker compose -f crates/computer-use/desktop/compose.yaml up -d --build
 
 ## 宿主集成
 
+CU-21 另提供容器内 Firefox 的 X11 / AT-SPI 表面。它复用 Host 的目标批准与句柄；`computer_native` 的截图、读树和元素按压在此环境执行，名称为 `guest.browser.firefox`。原始 `computer` 与此表面共用桌面占用。需要在启动时显式选择 `pawork --computer-native isolated ...`；默认 `host` 仍是本机后台，GUI 目标批准不会由模型 request / bind 自动产生。其它隔离动作、最小化与网站目标当前拒绝，能力不沿用 macOS 矩阵。
+
+guest 镜像独立于上述 Alpine 镜像。先在 Debian bookworm 的 Linux 构建环境运行 `cargo build -p pawork-computer-use --bin computer_guest --locked`，将生成的 Linux glibc 二进制路径设为 `CU21_GUEST_BINARY`；macOS 二进制不能用于该镜像。把构建上下文放到临时目录：
+
+```sh
+cu21_context=$(mktemp -d /tmp/pawork-cu21.XXXXXX)
+cp crates/computer-use/desktop/Dockerfile.guest "$cu21_context/Dockerfile"
+cp crates/computer-use/desktop/start-guest.sh crates/computer-use/desktop/cu21.html "$cu21_context/"
+cp "$CU21_GUEST_BINARY" "$cu21_context/computer_guest"
+docker build -t pawork-cu21-isolated "$cu21_context"
+export PAWORK_ISOLATED_GUEST_TOKEN="$(openssl rand -hex 32)"
+docker compose -f crates/computer-use/desktop/compose.cu21.yaml up -d
+```
+
+Host 与容器须持同一个临时 `PAWORK_ISOLATED_GUEST_TOKEN`；不要把 token 写入可提交配置或日志。该通道只校验客户端共享秘密，不是双向认证。Host 固定连接 `127.0.0.1:5906`，guest 在容器内监听 `0.0.0.0:5906`，由 compose 仅发布到宿主 loopback；RFB 连接仍为 `127.0.0.1:5905`。两种部署不能同时占同一端口；启动前应确认自己的旧部署已停止，不能抢占其它实例。运行容器以 uid 1000、只读根与临时 home/run/tmp 启动，无宿主卷或设备挂载。镜像内关闭 Firefox 内容沙箱以运行 AT-SPI 切片，隔离依赖专用容器，不能用于用户主桌面或导入个人浏览器资料。停止使用本项 compose 的 `stop`；数据为临时状态。
+
+真实集成、拒绝回归与当前验证范围见 [CU-21 完成记录](../../docs/plan/cu-21-isolated-linux.md)，不将本项结果计作本机后台或其它平台通过。
+
 宿主先授权，再调用 `Computer::execute(scope, action, cancelled)`。`scope` 为运行身份；先 `screenshot` 获取 `observation_id`，随后一个输入消费该观察。坐标是返回 JPEG 的像素，左上角为原点；按虚拟显示器大小换算。每次输入后重新截图确认效果。
 
 ```rust,no_run

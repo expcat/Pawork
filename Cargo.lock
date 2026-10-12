@@ -4480,6 +4480,7 @@ dependencies = [
 name = "pawork-computer-use"
 version = "0.1.0"
 dependencies = [
+ "async-io",
  "block",
  "cocoa 0.26.0",
  "core-foundation 0.10.0",
@@ -4490,6 +4491,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "zbus",
 ]
 
 [[package]]

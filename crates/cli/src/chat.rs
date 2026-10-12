@@ -1837,6 +1837,7 @@ mod tests {
             json: false,
             approval_mode: None,
             trust_workspaces: false,
+            computer_native: "host".into(),
             command: Command::Chat {
                 prompt: Some("hi".into()),
                 resume: None,

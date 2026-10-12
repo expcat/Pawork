@@ -108,6 +108,8 @@ Workspace 为 **29 成员（27 库 + 2 应用）**：27 个库平铺 `crates/<�
 
 ### 3.1 终局包布局先行
 
+**隔离 Linux 应用控制（CU-21，2026-10-12）**：`pawork --computer-native isolated` 在本次装配选择容器 GuestSurface；默认仍为本机 Host。GUI、工具与 child 共用唯一 `Core.native` / TargetRegistry，request 不签授权、GUI 明确批准后绑定。容器内纯 Rust `computer_guest` 经 X11 / AT-SPI 提供 Firefox 窗口与元素，固定 loopback guest 通道校验客户端共享 token；图像复用原 RFB 连接。运行容器不挂宿主目录/设备/桌面，guest 不承载 Agent Engine 或独立 Core。raw `computer` 与隔离表面共用桌面占用，环境标为 `isolated_desktop`，不套 macOS 后台矩阵；GUI wire、domain 事件与存储 schema 不变。当前能力及验收边界见 [CU-21](plan/cu-21-isolated-linux.md)。
+
 - 现行布局为 §2 的 29 成员；browser 从首版即按用户要求独立。新能力按职责归属进入现有包；新增独立边界依 §2.1 的判断并取得任务授权；**禁止**「先写在 bin 里、以后再抽包」。
 - 包间依赖方向遵守 §2 表与不合并清单；canonical 纯净红线不变。
 

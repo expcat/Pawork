@@ -44,6 +44,10 @@ Policy 输出固定为 `Allow`、`Deny`、`AskUser`、`AllowWithConstraints`。�
 
 ### 3.2 工具与终端
 
+CU-21 的显式隔离 GuestSurface 与 raw `computer` 共用桌面占用，仍经原 Policy / 显式工具审批和 GUI 目标批准。guest 仅发布 `127.0.0.1:5906`；`PAWORK_ISOLATED_GUEST_TOKEN` 至少 16 个非空白字节，仅校验客户端共享秘密，不证明双向认证，也不代替部署隔离。授权前仅读窗口身份元数据，内容树与图像受目标授权约束；进程/窗口/连接代次、树版本和子路径共同约束元素。请求已发出而回执丢失保留 UnknownEffect，撤销不抹掉已派发事实，也不自动重试。只承诺专用容器的 Firefox 截图、读树、按压切片；不推广为本机应用或 Wayland / Windows 支持。运行部署、真实与模拟拒绝证据见 [CU-21](../plan/cu-21-isolated-linux.md)。
+
+窗口裁剪不跳过小窗或无 WM_CLASS 的窗口；枚举失败、几何不明、重叠且 stacking 不可确认时拒绝。自身框架排除沿真实 parent 链，遇其它 client 停止。`DoAction` 派发后的 NoReply、I/O / 断线等回执丢失同超时一样保留 UnknownEffect，确定拒绝单独报告。
+
 `computer` 仅控制专用容器内 Xvnc 虚拟桌面，本机屏幕、HID、焦点和剪贴板无访问路径，缺失隔离环境直接失败。复用 `ExternalPlugin`、untrusted / ReadOnly 拒绝和显式审批（含截图；本轮授权沿用既有语义），审批前不连接。固定 `127.0.0.1:5905`，部署不挂宿主目录/设备/桌面，不开放公网；单客户端服务器防止第二个 Host 抢占。RFB 名称校验仅防误配，None 认证不是安全隔离，必须使用所附虚拟桌面部署而非物理桌面共享服务。输入绑定 run / 连接身份 / 尺寸，60 秒且一次消费；断线不重试，重连需新截图。图片仍作为未信任工具事件持久化并发送模型，无通用视觉脱敏。容器内文件和应用与宿主分离，但仍消耗宿主 CPU / 内存。
 
 本机后台目标（CU-02 目标契约 / CU-16 审批契约，正式生产接线见 CU-10）：目标授权把应用或单源网站身份绑定 workspace/run。契约层已钉住的证据边界：台账授权拒绝（NotAuthorized、ForbiddenTarget）在绑定、观测登记、窗口校验与动作消费路径上一律先于任何 probe 调用（回归以 probe 计数为零断言）；网站目标的跨源裁决须经 `current_origin` 接缝复核窗口当前 origin（不触碰进程实例与捕获后端），同窗口跨源导航或 origin 不可得按 `SiteChanged` 拒绝。捕获前预检（`require_authorized`）同序执行——先查台账、再复核 origin（非消耗），拒绝时宿主不得连接 / 捕获 / 读取目标。ReadOnly / 未信任 workspace 的 Policy 拒绝已在原生 `NativeComputerTool` → `ToolScheduler` 产品链模拟中验证：工具执行前拒绝，后台计数为零；目标 request 不自批，通用工具审批拒绝与目标批准是独立闸门。正式 GUI 目标命令与工具共用同一 `Core.native` 台账，批准 / 撤销及终态 scope 拒绝的本轮证据见 [CU-16](../plan/cu-16-target-approvals.md)。原生网站因无可信 `current_origin` 拒绝模型请求，不把网站契约写成可用能力；`SiteChanged` 的 origin 接缝读取不计作零 probe。授权粒度只覆盖用户选定的应用或网站源：整应用授权不覆盖其内网站，单源网站授权不覆盖浏览器与其它源。一次 / 本 Run 语义复用既有显式审批；自动 resolver 不能冒充显式批准，永远产生不了目标授权；逐目标持久授权不存在（持久允许仅走已裁决的 ApprovalMode / workspace trust 设置口径，可撤销）。Pawork 自身 UI（`dev.pawork.desktop`）与 OS 权限界面（System Settings、SecurityAgent、UserNotificationCenter、CoreServicesUIAgent）内置为受保护目标——默认构造即生效、大小写不敏感、宿主只能加不能减，永不授权、永不绑定，Agent 不能经 Pawork 审批界面或系统权限界面自我批准；OS Screen Recording / Accessibility / Automation 权限与 Pawork 目标授权分离，Pawork 不代用户批准系统权限，缺失由后端如实报告。撤销阻断后续动作，已执行历史如实保留。

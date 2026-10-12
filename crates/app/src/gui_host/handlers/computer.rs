@@ -440,7 +440,7 @@ fn native_target(target: &ComputerTargetIdentity) -> Result<TargetIdentity, GuiH
     Ok(native)
 }
 
-fn target_capabilities(family: AppFamily) -> Vec<ComputerTargetCapability> {
+fn target_capabilities(family: AppFamily, bundle_id: &str) -> Vec<ComputerTargetCapability> {
     const ACTIONS: [NativeActionKind; 10] = [
         NativeActionKind::CaptureWindow,
         NativeActionKind::AxRead,
@@ -453,18 +453,36 @@ fn target_capabilities(family: AppFamily) -> Vec<ComputerTargetCapability> {
         NativeActionKind::WindowMove,
         NativeActionKind::WindowResize,
     ];
+    let isolated_firefox = bundle_id == pawork_computer_use::guest::FIREFOX_BUNDLE_ID;
     ACTIONS
         .into_iter()
         .map(|action| {
-            let support = |minimized: bool| match background_capability(family, action, minimized) {
-                pawork_computer_use::target::Capability::Supported => {
-                    ComputerCapabilitySupport::Supported
-                }
-                pawork_computer_use::target::Capability::Unsupported => {
-                    ComputerCapabilitySupport::Unsupported
-                }
-                pawork_computer_use::target::Capability::Unverified => {
-                    ComputerCapabilitySupport::Unverified
+            let support = |minimized: bool| {
+                if isolated_firefox {
+                    let proved = !minimized
+                        && matches!(
+                            action,
+                            NativeActionKind::CaptureWindow
+                                | NativeActionKind::AxRead
+                                | NativeActionKind::AxPress
+                        );
+                    if proved {
+                        ComputerCapabilitySupport::Supported
+                    } else {
+                        ComputerCapabilitySupport::Unsupported
+                    }
+                } else {
+                    match background_capability(family, action, minimized) {
+                        pawork_computer_use::target::Capability::Supported => {
+                            ComputerCapabilitySupport::Supported
+                        }
+                        pawork_computer_use::target::Capability::Unsupported => {
+                            ComputerCapabilitySupport::Unsupported
+                        }
+                        pawork_computer_use::target::Capability::Unverified => {
+                            ComputerCapabilitySupport::Unverified
+                        }
+                    }
                 }
             };
             ComputerTargetCapability {
@@ -547,7 +565,10 @@ pub(crate) async fn computer_target_list(
                 bound_window: state.window.map(|handle| handle.as_str().to_string()),
                 occupied_by: state.occupied_by.as_ref().map(wire_scope),
                 dispatch_paused: state.dispatch_paused,
-                capabilities: target_capabilities(state.target.app().family),
+                capabilities: target_capabilities(
+                    state.target.app().family,
+                    state.target.app().bundle_id.as_str(),
+                ),
             })
             .collect()
     };

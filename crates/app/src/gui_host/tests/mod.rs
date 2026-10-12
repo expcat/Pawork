@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 mod approval;
 mod chat_controls;
 mod computer;
+mod cu21_live;
 mod idempotency;
 mod run;
 mod session;

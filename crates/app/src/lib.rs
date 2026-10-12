@@ -41,7 +41,9 @@ mod tasks_host;
 #[cfg(test)]
 mod testsupport;
 
-pub use app_core::{session_title_from_text, AppCore, AppError, AppLoadOptions};
+pub use app_core::{
+    session_title_from_text, AppCore, AppError, AppLoadOptions, ComputerNativeMode,
+};
 pub(crate) use app_core::{unbound_workspace, RETAINED_MESSAGES};
 
 pub use approval::{

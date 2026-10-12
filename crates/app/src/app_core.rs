@@ -47,6 +47,15 @@ use crate::provider_assembly::{
 use crate::services;
 use pawork_policy::ApprovalMode;
 
+/// 本次 Host 进程选用的 computer_native 表面。
+/// 默认本机后台。isolated 只在启动时显式选择，不写入用户配置，也不改协议。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ComputerNativeMode {
+    #[default]
+    Host,
+    Isolated,
+}
+
 /// 从配置文件与 CLI 覆盖构造 [`AppCore`] 的选项。
 #[derive(Clone, Default)]
 pub struct AppLoadOptions {
@@ -65,6 +74,8 @@ pub struct AppLoadOptions {
     /// 实例角色（R-04/R-24）：决定实例锁获取与启动清扫资格；
     /// 默认 Catalog（只读不清扫）。
     pub instance_role: InstanceRole,
+    /// 本次进程的 computer_native 表面。默认本机后台。
+    pub computer_native: ComputerNativeMode,
 }
 
 impl std::fmt::Debug for AppLoadOptions {
@@ -81,6 +92,7 @@ impl std::fmt::Debug for AppLoadOptions {
             .field("has_auth_backend", &self.auth_backend.is_some())
             .field("instance", &self.instance)
             .field("instance_role", &self.instance_role)
+            .field("computer_native", &self.computer_native)
             .finish()
     }
 }
@@ -98,6 +110,7 @@ impl AppLoadOptions {
             auth_backend: None,
             instance: crate::DEFAULT_INSTANCE.to_string(),
             instance_role: InstanceRole::default(),
+            computer_native: ComputerNativeMode::Host,
         }
     }
 }
@@ -478,6 +491,9 @@ impl AppCore {
             allow_pending,
         )
         .await?;
+        if options.computer_native == ComputerNativeMode::Isolated {
+            core.native = pawork_computer_use::isolated::shared_host();
+        }
         core.configure_approval(
             approval_mode,
             trusted,

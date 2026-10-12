@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>cu21-ready</title>
+</head>
+<body>
+  <button id="mark" type="button">cu21-button</button>
+  <p id="status">cu21-idle</p>
+  <script>
+    document.getElementById("mark").addEventListener("click", function () {
+      document.getElementById("status").textContent = "cu21-marked";
+      document.title = "cu21-marked";
+    });
+  </script>
+</body>
+</html>

@@ -16,6 +16,19 @@ impl Rfb {
         Self(Mutex::new(None))
     }
 
+    pub(crate) fn capture_window(
+        &self,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+    ) -> Result<Capture, Error> {
+        if x < 0 || y < 0 || width == 0 || height == 0 || width > 4096 || height > 4096 {
+            return Err(failure("window is outside the isolated framebuffer"));
+        }
+        self.with(|connection| connection.capture_region(Some((x as u32, y as u32, width, height))))
+    }
+
     fn with<T>(&self, f: impl FnOnce(&mut Connection) -> Result<T, Error>) -> Result<T, Error> {
         let mut slot = self
             .0
@@ -180,6 +193,10 @@ impl Connection {
     }
 
     fn capture(&mut self) -> Result<Capture, Error> {
+        self.capture_region(None)
+    }
+
+    fn capture_region(&mut self, crop: Option<(u32, u32, u32, u32)>) -> Result<Capture, Error> {
         let (width, height) = (self.desktop.width as u16, self.desktop.height as u16);
         let mut request = vec![3, 0, 0, 0, 0, 0]; // full, non-incremental framebuffer
         request.extend(width.to_be_bytes());
@@ -224,6 +241,34 @@ impl Connection {
                         }
                     }
                     if covered.iter().all(|p| *p) {
+                        let (rgb, width, height) = match crop {
+                            Some((crop_x, crop_y, crop_w, crop_h)) => {
+                                let crop_x = crop_x as usize;
+                                let crop_y = crop_y as usize;
+                                let crop_w = crop_w as usize;
+                                let crop_h = crop_h as usize;
+                                let frame_w = width as usize;
+                                let frame_h = height as usize;
+                                let past_x = crop_x.checked_add(crop_w);
+                                let past_y = crop_y.checked_add(crop_h);
+                                if crop_w == 0
+                                    || crop_h == 0
+                                    || past_x.is_none_or(|end| end > frame_w)
+                                    || past_y.is_none_or(|end| end > frame_h)
+                                {
+                                    return Err(failure(
+                                        "window is outside the isolated framebuffer",
+                                    ));
+                                }
+                                let mut cropped = Vec::with_capacity(crop_w * crop_h * 3);
+                                for row in crop_y..crop_y + crop_h {
+                                    let start = (row * frame_w + crop_x) * 3;
+                                    cropped.extend_from_slice(&rgb[start..start + crop_w * 3]);
+                                }
+                                (cropped, crop_w as u16, crop_h as u16)
+                            }
+                            None => (rgb, width, height),
+                        };
                         let raw = RgbImage::from_raw(width as u32, height as u32, rgb).unwrap();
                         let scale = (MAX_IMAGE_EDGE as f64 / width.max(height) as f64).min(1.0);
                         let scaled = image::imageops::resize(

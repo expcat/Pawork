@@ -1,0 +1,40 @@
+FROM debian:bookworm-slim
+
+# computer_guest is a bookworm glibc binary staged next to this file. Alpine
+# cannot run it, and this image must not replace pawork-computer-isolated:local.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        tigervnc-standalone-server \
+        fluxbox \
+        mousepad \
+        firefox-esr \
+        fonts-dejavu \
+        dbus \
+        dbus-x11 \
+        at-spi2-core \
+        x11-utils \
+        xfonts-base \
+        procps \
+        libgcc-s1 \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 1000 desktop \
+    && useradd --uid 1000 --gid 1000 --create-home --shell /bin/sh desktop \
+    && mkdir -p /usr/local/share/pawork \
+    && if [ -x /usr/bin/Xvnc ]; then ln -sfn /usr/bin/Xvnc /usr/local/bin/Xvnc; else ln -sfn /usr/bin/Xtigervnc /usr/local/bin/Xvnc; fi \
+    && ln -sfn /usr/bin/firefox-esr /usr/local/bin/firefox \
+    && find /usr \( -name at-spi-bus-launcher -o -name Xtigervnc -o -name Xvnc -o -name firefox-esr \)
+
+COPY start-guest.sh /usr/local/bin/start-guest.sh
+COPY cu21.html /usr/local/share/pawork/cu21.html
+COPY computer_guest /usr/local/bin/computer_guest
+RUN chmod 755 /usr/local/bin/start-guest.sh /usr/local/bin/computer_guest
+
+USER 1000:1000
+ENV HOME=/home/desktop \
+    USER=desktop \
+    DISPLAY=:0 \
+    LANG=C.UTF-8
+WORKDIR /home/desktop
+EXPOSE 5900 5906
+CMD ["/usr/local/bin/start-guest.sh"]

@@ -80,6 +80,10 @@ pub struct Cli {
     /// 显式信任本进程打开的 workspace；只覆盖本次运行，不写配置文件。
     #[arg(long, global = true)]
     pub trust_workspaces: bool,
+    /// 本次进程的 computer_native 表面。host 是本机后台（默认）；
+    /// isolated 选用容器内 Firefox GuestSurface。只覆盖本次运行，不写配置。
+    #[arg(long, global = true, value_name = "MODE", default_value = "host")]
+    pub computer_native: String,
     #[command(subcommand)]
     pub command: Command,
 }
@@ -516,6 +520,7 @@ async fn run_inner() -> Result<(), CliError> {
         None => None,
     };
     options.trust_workspaces = cli.trust_workspaces.then_some(true);
+    options.computer_native = parse_computer_native(&cli.computer_native)?;
     options.approval_host = Some(approval_host(cli.json));
     if matches!(
         &cli.command,
@@ -811,6 +816,16 @@ fn approval_host(json: bool) -> Arc<dyn ApprovalPromptHost> {
         Arc::new(DenyAllApprovals)
     } else {
         Arc::new(InteractiveApprovals)
+    }
+}
+
+fn parse_computer_native(value: &str) -> Result<pawork_app::ComputerNativeMode, CliError> {
+    match value {
+        "host" => Ok(pawork_app::ComputerNativeMode::Host),
+        "isolated" => Ok(pawork_app::ComputerNativeMode::Isolated),
+        _ => Err(CliError::Usage(
+            "computer-native must be host or isolated".into(),
+        )),
     }
 }
 

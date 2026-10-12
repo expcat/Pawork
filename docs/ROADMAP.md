@@ -44,11 +44,11 @@
 
 ### 后续环境与能力
 
-以下是当前对话已规划的后续任务；平台/授权条件尚未满足，不代表已经启动或实现。Windows 同样遵守无干扰目标，用户主桌面的前台输入不作为完成方式。
+以下任务按各自前置推进，实际实现与验证状态见对应记录。Windows 同样遵守无干扰目标，用户主桌面的前台输入不作为完成方式。
 
 | 状态 | 任务 | 阶段 | 简介 |
 | --- | --- | --- | --- |
-| 条件性 | [CU-21 · 隔离 Linux X11 / AT-SPI 应用控制](plan/cu-21-isolated-linux.md) | 后续环境 | 为现有专用 Linux 桌面增加 Rust 应用/窗口和元素控制通道。 |
+| ✅ 完成（隔离 Firefox 正式链、模拟批准验收）；初审两项 P1 修后独立复审 PASS | [CU-21 · 隔离 Linux X11 / AT-SPI 应用控制](plan/cu-21-isolated-linux.md) | 隔离环境扩展 | 共享 Host / Registry 的 Firefox 定位、AT-SPI 按压与持久 JPEG 联合通过；遮挡识别与动作回执丢失边界已修，其它动作及平台独立待验。 |
 | 条件性 | [CU-22 · Windows 独立会话 / VM 后台能力](plan/cu-22-windows-isolation.md) | 后续平台 | 通过 Rust Windows 系统 API 实现独立环境中的应用、窗口、UIA、截图和输入。 |
 | 条件性 | [CU-23 · Wayland 隔离后台路线可行性](plan/cu-23-wayland-feasibility.md) | 后续平台 | 验证 Wayland 是否存在满足无干扰目标的独立桌面截图与输入路线。 |
 | 设计完成；契约拒绝模拟通过；独立 review / 复审 PASS；系统安装/授权与真实锁屏待环境 | [CU-24 · macOS 锁屏使用独立设计与验证](plan/cu-24-macos-locked-use.md) | 后续能力 | 研究并验证锁屏下的受限后台操作，不把普通 AX 后台操作等同锁屏支持。 |

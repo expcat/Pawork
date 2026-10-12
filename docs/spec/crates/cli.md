@@ -60,6 +60,7 @@ OPT-1 / ADR-053：`gui::run_gui` 经 `AppCore::set_approval_host` 只接线 GUI 
 | `--json` | 机器可读输出；chat/run 时 stdout 为 `HeadlessResponse` JSONL（无 hello） | 关 |
 | `--approval-mode MODE` | 审批强度五档（见 §4.7） | `read-only`（沿用 V1：不改模式就不会写入） |
 | `--trust-workspaces` | 显式信任本进程打开的 workspace；不写配置，仅供可信启动方使用 | 关 |
+| `--computer-native <MODE>` | CU-21：`host` 选本机后台、`isolated` 显式选容器 GuestSurface；只覆盖本次 Host 装配，不写配置 | `host` |
 
 ### 3.3 子命令（以源码 `Command` enum 为准）
 
@@ -181,6 +182,8 @@ CU-10：`chat` / `run` 增加可选 `--gui-host[=<SOCKET>]`，裸标志使用当
 
 ## 5. 契约与不变量
 
+- **隔离表面选择（CU-21）**：`--computer-native` 只接受 `host` / `isolated`，其它值报 Usage 错误。选 isolated 不签目标授权，也不把缺失容器回退到本机；共享 `--gui-host` 的客户端沿用已连接 Host 的选择。部署、共享 token 与真实/模拟验收边界见 [CU-21](../../plan/cu-21-isolated-linux.md)。
+
 - **显式共享 Host（CU-10）**：`--gui-host` 在 Executor Core 装配前分流，通过既有 `GuiClient` / GUI Connection Protocol 认证；本进程不创建第二个 Core。Host / token 缺失、认证或版本失败如实报错，不回退本地执行。cwd 必须唯一匹配 Host 已登记的 workspace root，resume 必须属于该 workspace。握手名 `pawork-cli` 只供 Host 在 RunStart 固定目标等批开关，不能签授权；目标批准仍经过 GUI 的既有命令与同一 registry。事件 ACK、Resume 和 SessionGet Timeline 用于观察原 run_id；连接全局游标与持久会话游标分别使用，分页末尾不冒充 Run 终态。REPL 等输入期间每 15 秒心跳，保持同一个未完成的读取 future，半行跨心跳不丢字节；心跳失败后下一轮输入先恢复连接。Ctrl-C 监听覆盖当轮观察、重连和 Timeline 查询，恢复后向原 Run 发送 RunCancel 并等待真实终态；协议拒绝只打印一次，传输未送达才在恢复后重试。监听结束或连接断开本身不取消 Run、不新建 Run、不重派发；每轮结束回收信号监听任务。实现与修后模拟验证状态见 [CU-10](../../plan/cu-10-action-observe.md)。
 
 - **stdout 协议纪律**：`--json` 与 `headless --json-stdio` 下 stdout 只承载 JSONL 协议帧；`acp serve` 的 stdout 只承载 JSON-RPC 帧。文本说明、URL、审批提示、git 概况、日志一律走 stderr。
@@ -226,6 +229,8 @@ CU-10：`chat` / `run` 增加可选 `--gui-host[=<SOCKET>]`，裸标志使用当
 **被依赖**：仅 `apps/pawork`（[pawork.md](pawork.md)）。ACP 集成测试随公共 API 迁入 pawork-acp。
 
 ## 7. 测试与验证资产
+
+`parses_explicit_workspace_trust_without_persisting_config` 仅验证 `--trust-workspaces` 与 `gui serve` 的解析，不覆盖 `--computer-native`。CU-21 正式 Host 的隔离表面装配与 Firefox 集成由 app 的专用 live 测试验证。实际命令和范围见 [CU-21](../../plan/cu-21-isolated-linux.md)。
 
 默认验证命令：`cargo test -p pawork-cli --offline --lib --tests`
 

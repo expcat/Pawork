@@ -97,6 +97,18 @@ pub trait NativeSurface: NativeProbe + Clone + Send + Sync + 'static {
         origin: &WindowMove,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<SemanticOutcome, TargetError>;
+
+    /// Where observations from this surface are recorded. The local host stays
+    /// on the native background. An explicit isolated host overrides this.
+    fn observation_environment(&self) -> Environment {
+        Environment::NativeBackground
+    }
+
+    /// Gate before a native action. The local host uses the measured background
+    /// matrix. The isolated host does not: it only admits actions it has proved.
+    fn admit_action(&self, family: AppFamily, action: NativeActionKind) -> Result<(), TargetError> {
+        require_background(family, action, false)
+    }
 }
 
 /// The surface this process can actually drive.
@@ -393,6 +405,15 @@ pub struct NativeOutput {
 
 /// Object-safe entry the tool holds. The concrete host stays shared behind `Arc`.
 pub trait NativePerform: Send + Sync {
+    fn environment_name(&self) -> &'static str {
+        "native_background"
+    }
+    fn background_matrix(&self) -> &'static str {
+        "applied"
+    }
+    fn isolated_desktop(&self) -> bool {
+        false
+    }
     fn execute(
         &self,
         scope: &Scope,
@@ -545,6 +566,13 @@ pub struct NativeHost<S: NativeSurface> {
 impl NativeHost<HostSurface> {
     pub fn host() -> Self {
         Self::new(HostSurface::local())
+    }
+}
+
+impl NativeHost<crate::isolated::GuestSurface> {
+    /// Explicit isolated desktop. This does not replace [Self::host].
+    pub fn isolated() -> Self {
+        Self::new(crate::isolated::GuestSurface::endpoint())
     }
 }
 
@@ -913,7 +941,7 @@ impl<S: NativeSurface> NativeHost<S> {
         let observation = registry.begin_observation_with(
             &handle,
             scope,
-            Environment::NativeBackground,
+            self.surface.observation_environment(),
             ObservationKind::AxTree {
                 tree_revision: tree.tree_revision,
             },
@@ -1075,7 +1103,8 @@ impl<S: NativeSurface> NativeHost<S> {
             self.require_scope_locked(&registry, scope)?;
             let target = registry.window_target(&handle, scope)?;
             registry.authorizer().check(scope, &target)?;
-            require_background(target.app().family, origin.kind(), false)?;
+            self.surface
+                .admit_action(target.app().family, origin.kind())?;
             target
         };
         self.yield_if_user(scope, &target)?;
@@ -1121,7 +1150,8 @@ impl<S: NativeSurface> NativeHost<S> {
         let registry = self.lock();
         self.require_scope_locked(&registry, scope)?;
         let target = registry.window_target(&handle, scope)?;
-        require_background(target.app().family, NativeActionKind::Pointer, false)?;
+        self.surface
+            .admit_action(target.app().family, NativeActionKind::Pointer)?;
         Err(TargetError::BackgroundUnsupported)
     }
 
@@ -1135,7 +1165,7 @@ impl<S: NativeSurface> NativeHost<S> {
         self.require_scope_locked(&registry, scope)?;
         let target = registry.element_target(element, scope)?;
         registry.authorizer().check(scope, &target)?;
-        require_background(target.app().family, kind, false)?;
+        self.surface.admit_action(target.app().family, kind)?;
         Ok(target)
     }
 
@@ -1259,7 +1289,7 @@ impl<S: NativeSurface> NativeHost<S> {
         let observation = registry.begin_observation_with(
             handle,
             scope,
-            Environment::NativeBackground,
+            self.surface.observation_environment(),
             ObservationKind::Capture,
             geometry,
             &snapshot,
@@ -1492,6 +1522,24 @@ impl<S: NativeSurface> NativeHost<S> {
 }
 
 impl<S: NativeSurface> NativePerform for NativeHost<S> {
+    fn environment_name(&self) -> &'static str {
+        match self.surface.observation_environment() {
+            Environment::IsolatedDesktop => "isolated_desktop",
+            Environment::NativeBackground => "native_background",
+        }
+    }
+
+    fn background_matrix(&self) -> &'static str {
+        match self.surface.observation_environment() {
+            Environment::IsolatedDesktop => "not_applied",
+            Environment::NativeBackground => "applied",
+        }
+    }
+
+    fn isolated_desktop(&self) -> bool {
+        self.surface.observation_environment() == Environment::IsolatedDesktop
+    }
+
     fn execute(
         &self,
         scope: &Scope,

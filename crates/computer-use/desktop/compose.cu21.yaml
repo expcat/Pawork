@@ -1,0 +1,23 @@
+name: pawork-cu21-isolated
+
+services:
+  desktop:
+    image: pawork-cu21-isolated
+    container_name: pawork-cu21-isolated
+    init: true
+    restart: "no"
+    read_only: true
+    user: "1000:1000"
+    shm_size: 1gb
+    mem_limit: 3g
+    cpus: 2.0
+    pids_limit: 1024
+    ports:
+      - "127.0.0.1:5905:5900"
+      - "127.0.0.1:5906:5906"
+    environment:
+      PAWORK_ISOLATED_GUEST_TOKEN: ${PAWORK_ISOLATED_GUEST_TOKEN:?set PAWORK_ISOLATED_GUEST_TOKEN}
+    tmpfs:
+      - /tmp:mode=1777
+      - /run:mode=0755,uid=1000,gid=1000
+      - /home/desktop:mode=0755,uid=1000,gid=1000

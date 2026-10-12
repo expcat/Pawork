@@ -105,6 +105,8 @@ MCP 的独立 API、连接与认证见 [mcp](mcp.md)，注册适配器仍使用�
 
 ## 4. 核心行为与数据流
 
+CU-21：`NativeComputerTool` 仍只接收选定的共享 `NativePerform`，不持目标授权副本。结果 `environment` 取该 Host 的实际环境，`background_matrix` 在本机为 `applied`、隔离为 `not_applied`。隔离表面的调用与原始 `computer` 使用同一个 `computer_scope(workspace_id, run_id)` 和 `Computer::claim_shared` 占用槽；其它活跃 Run 已持桌面时返回 Conflict、零 Host 派发，终态仍经既有 `release_shared` 释放。通用 Policy / 显式工具审批与 GUI 目标批准保持独立；模型 request / bind / launch 不自批授权。
+
 ### 4.1 `execute_named` 一次调度
 
 1. 查 `ToolRegistry`，未知名 → `NotFound` 错误。
@@ -160,6 +162,8 @@ MCP 的独立 API、连接与认证见 [mcp](mcp.md)，注册适配器仍使用�
 - **被依赖**：`pawork-mcp`（注册外部工具）、`pawork-app`（注册与调度装配；engine 经 LoopContext 回调消费，不依赖本包）。
 
 ## 7. 测试与验证资产
+
+CU-21 沿用 `native_host_action_returns_one_observation_and_rejects_closed_paths` 检查默认本机工具，新增 `isolated_descriptor_names_the_desktop_and_only_supported_actions` 核隔离描述 / schema；`isolated_native_claims_the_shared_desktop_before_dispatch`、`isolated_native_rejects_a_different_desktop_owner_without_dispatch` 与既有 `release_shared_frees_exactly_the_scope_execute_claims` 核 raw / native 使用同一占用槽及 scope。模拟后端计数不替代真实 guest 集成，命令与证据边界见 [CU-21](../../plan/cu-21-isolated-linux.md)。
 
 2026-09-20 精简：HTTP 配置拒绝只保留 codec 的完整输入矩阵；auto-approve 标志并入实际写工具被拒绝且零调用的回归；环境白名单副本由 exec 权威测试和 run_command 的真实子进程环境检查承接。MCP 回归已随迁至 mcp 包。
 

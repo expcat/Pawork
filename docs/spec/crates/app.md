@@ -103,7 +103,7 @@ ADR-053 启动：显式 `AppLoadOptions.approval_mode` > Global 审批 > ReadOnl
 
 ### 3.1 装配与生命周期
 
-- `AppLoadOptions { workspace_root, provider, model, data_dir, approval_mode, trust_workspaces, approval_host, auth_backend, instance }`；`AppLoadOptions::from_cli(provider, model)` 是 CLI 覆盖入口。`trust_workspaces: Option<bool>` 只供可信宿主显式覆盖本进程，`None` 沿用已解析全局配置；不写回配置。`auth_backend` 缺省为 `FileBackend`（auth 文件），测试可注入 `MemoryBackend`。
+- `AppLoadOptions { workspace_root, provider, model, data_dir, approval_mode, trust_workspaces, approval_host, auth_backend, instance, instance_role, computer_native }`；`AppLoadOptions::from_cli(provider, model)` 是 CLI 覆盖入口。`trust_workspaces: Option<bool>` 只供可信宿主显式覆盖本进程，`None` 沿用已解析全局配置；不写回配置。`auth_backend` 缺省为 `FileBackend`（auth 文件），测试可注入 `MemoryBackend`。CU-21 的 `ComputerNativeMode::{Host, Isolated}` 默认 Host；Isolated 只在本次装配、注册工具前选定容器 GuestSurface，不写持久配置。
 - `AppCore::load(options) -> Result<AppCore, AppError>`：发现配置（Builtin → Global → Workspace → CLI 覆盖）→ 装配默认 provider（缺凭证即 `AppError::Auth` 失败）→ 打开 `session.db`、checkpoint/artifact/protected 存储与控制面。
 - `AppCore::load_for_catalog(options)`：同路径但缺凭证**不失败**，退回 `CatalogOnlyProvider`——目录、凭证、导入等命令可用；chat 在请求时报 `ProviderErrorKind::Authentication`（fail-closed，错误文案引导 `pawork auth set-key/login <id>`）。`provider_pending() -> bool` 暴露该状态。
 - `from_config`：跳过发现、注入已解析配置和 `SecretBackend` 的异步装配入口，固定 `allow_pending = false`，OAuth 走请求前刷新。生产 `load` / `load_for_catalog` 经同一个 `from_config_inner`（catalog 传 `allow_pending = true`）。B14 删除同步 `from_resolved`：它自行构造 `FileBackend`，用 `block_on` 调用 `assemble_provider` 且把刷新开关设为 false，包外和正式宿主都没有调用者。
@@ -210,6 +210,8 @@ GUI `run_start` 在既有 ToolScheduler 注册 `terminal` / `browser`，保留�
 GUI `handlers/query.rs::task_usage` 经 API 1.26 读取同一 UsageLedger；Gateway 和 GUI 在相同 data_dir / instance 打开同一 `usage-ledger.sqlite3`，GUI 可汇总各 client。HTTP client/cursor 越权 403、本地操作不可伪造费用。
 
 ## 4. 核心行为与数据流
+
+CU-21 沿用唯一 `Core.native: Arc<dyn NativeControl>`。本次进程显式选择 isolated 后，GUI 目标批准、模型工具及 child 仍共用该 Host / registry，授权按各自 scope 隔离；request 不签授权，bind / launch 不自动 ForRun。GUI 1.27 的现有目标能力列表对 `guest.browser.firefox` 只声明非最小化窗口截图、AT-SPI 读树与按压，其它动作拒绝，不套用 macOS 应用族矩阵；wire 与存储 schema 不变。实际验收边界见 [CU-21](../../plan/cu-21-isolated-linux.md)。
 
 2026-09-24 修复：GUI Host 管理 Run/自动命名任务，关停先取消 Run 并等待持久终态，回收查询与事件转发器后释放 Core；握手及首个快照等待响应 Host close。`tasks_cancel`（GUI API 1.23）在原 Host 触发真实令牌；重放快照不授予任务所有权。`tasks.json` 在跨进程文件锁内合并各 Host 自有任务事件，避免旁观者旧快照覆盖其他 Host。定向资产：`host_shutdown_drains_run_and_releases_core_after_persisting_cancellation`、`host_close_before_handshake_or_initial_snapshot_finishes`、`independent_hosts_preserve_each_others_tasks_and_cannot_cancel_foreign_tokens`。最新门禁状态见 [ROADMAP](../../ROADMAP.md)。
 
@@ -359,6 +361,8 @@ WorkspaceList 与 snapshot Workspaces 段均按每个目标 workspace roots 调�
 依赖方向与全局分层见 [../../architecture.md](../../architecture.md) 与 [../../design.md](../../design.md) §2。本包处在 `pawork` 二进制依赖闭包的最大层：合并/归档波以 `cargo tree -p pawork` 断言无环且闭包不膨胀，给本包新增上游依赖须先过对应任务书。
 
 ## 7. 测试与验证资产
+
+CU-21 增 `gui_host/tests/cu21_live.rs::cu21_isolated_firefox`：默认 ignored，显式要求 `PAWORK_CU21_ISOLATED=1` 与专用容器，缺前置直接失败。测试经正式 `AppLoadOptions.computer_native = Isolated` 装配共享 Host，模拟 Provider 的工具调用与 GUI 用户批准，继续走真实 Scheduler / Engine / Storage；独立 X11 窗口标题、正式 ObservationList / ObservationImageRead 的持久 JPEG 和终态 scope 释放共同核对结果。它不证明真实 Provider、GPUI 窗口或本机后台能力；实际命令与结果见 [CU-21](../../plan/cu-21-isolated-linux.md)。
 
 AC-04 延伸既有 `recorded_operations_save_and_load_as_real_skill`：种入持久操作历史后，正式 Host preview / save 创建真实 `SKILL.md` 与 `manifest.toml`，再以不同 run ID 调用正式 `chat_turn_with_run_id`。`ScriptedProvider` 的测试专用请求捕获联合核对技能正文、持久 `resources.injected` 的 `active_skill` / ID / 字节数及 `RunCompleted`；同一工作区撤销信任后再次 Run，不注入该技能。测试装配显式安装现有资源加载器并在内存设置信任，不代表原操作执行、GUI 点击、真实 Provider 或系统验收。实际命令与结果见 [AC-04](../../plan/accept-skill-reuse.md)。
 

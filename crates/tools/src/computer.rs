@@ -23,8 +23,14 @@ fn shared_computer() -> Arc<Computer> {
 /// The ownership scope [ComputerTool::execute] claims on the shared desktop.
 /// Kept next to the release hook so run teardown releases exactly the
 /// occupancy the run created.
-fn computer_scope(workspace_id: &WorkspaceId, run_id: &RunId) -> String {
+pub(crate) fn computer_scope(workspace_id: &WorkspaceId, run_id: &RunId) -> String {
     serde_json::to_string(&(workspace_id, run_id)).unwrap()
+}
+
+#[cfg(test)]
+pub(crate) fn shared_desktop_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poison| poison.into_inner())
 }
 
 impl Default for ComputerTool {
@@ -138,7 +144,8 @@ impl AgentTool for ComputerTool {
             tool_error(kind, &error.to_string())
         })?;
         let metadata = json!({
-            "environment":"isolated_virtual_desktop",
+            "environment":"isolated_desktop",
+            "background_matrix":"not_applied",
             "input_dispatched":output.input_dispatched,
             "observation":output.observation,
             "permissions":output.permissions,
@@ -490,6 +497,7 @@ mod tests {
 
     #[tokio::test]
     async fn release_shared_frees_exactly_the_scope_execute_claims() {
+        let _guard = super::shared_desktop_test_lock();
         let workspace_id = WorkspaceId::from("ws-release");
         let run_id = RunId::from("run-1");
         let context = ToolExecutionContext {
