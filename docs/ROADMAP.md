@@ -140,6 +140,6 @@
 | ✅ 完成（真实 MCP 往返／模拟审批） | [ENV-04 · MM-3 GLM 搜索环境验收](plan/env-04-glm-search.md) | 官方服务实际发现 web_search_prime，经正式注册／调度一次成功，独立 review PASS；结果为泛文档页面，Host / GUI 与持久接入未验。 |
 | 当前核查与独立复审 PASS；正文成功与 Desktop 待环境 | [ENV-05 · Chrome / Edge 只读上下文环境复验](plan/env-05-browser-context.md) | 正式库入口 Chrome 3 次 / Edge 1 次均 Apple Event -1712，无正文；超时原因与 TCC 主体未确定，测试窗口已收尾。 |
 | ✅ 完成（维持 Unsupported 裁决分支） | [ENV-06 · 非 Unix 技能录制写入前置与验收](plan/env-06-skill-non-unix.md) | Host 固定平台拒绝提示、两条既有 macOS 回归与独立 review PASS；不新增非 Unix 写入、不冒充平台支持或原生验收。 |
-| 缺环境 | [ENV-07 · 网关媒体供应商与账单环境验收](plan/env-07-media-billing.md) | 验收真实图像、视频、搜索供应商、套餐权限和账单来源。 |
+| 当前核查完成，独立 review PASS；成功往返与实际费用待验 | [ENV-07 · 网关媒体供应商与账单环境验收](plan/env-07-media-billing.md) | 三类请求各一次均 Gateway 429，HTTP / SQLite 三条失败记录一致；账单产品接线缺口独立保留。 |
 
 库激活前置、按测量触发的技术项和阶段外产品候选仍见 [backlog](spec/backlog.md)。发布与全量门禁维持另行授权（BK-RELEASE-01），不因任务文档或上述能力收口而视为完成。
