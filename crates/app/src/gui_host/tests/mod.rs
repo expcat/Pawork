@@ -383,3 +383,68 @@ fn gui_event_bus_publishes_lagged_degrade_frame() {
     assert_eq!(event.stream, EventStream::Global);
     assert_eq!(bus.current_sequence(), 1);
 }
+
+#[test]
+fn gui_event_bus_old_flush_does_not_clear_or_overtake_new_hold() {
+    let bus = std::sync::Arc::new(GuiEventBus::new(8));
+    let instance = pawork_domain::CoreInstanceId::from("instance-1");
+    let session = SessionId::from("sess-hold");
+    bus.begin_terminal_hold(&session);
+    bus.publish_raw(
+        instance.clone(),
+        &session,
+        AppEvent::RunChanged {
+            run_id: RunId::from("run-old"),
+            state: RunState::Cancelled,
+        },
+    );
+    bus.publish_diagnostic(instance.clone(), &session, "old-tail", json!({}));
+
+    let (start_tx, start_rx) = std::sync::mpsc::channel::<()>();
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    let worker_bus = std::sync::Arc::clone(&bus);
+    let worker_session = session.clone();
+    let worker = std::thread::spawn(move || {
+        start_rx.recv().expect("start");
+        worker_bus.begin_terminal_hold(&worker_session);
+        worker_bus.publish_diagnostic(instance.clone(), &worker_session, "new-live", json!({}));
+        worker_bus.publish_raw(
+            instance,
+            &worker_session,
+            AppEvent::RunChanged {
+                run_id: RunId::from("run-new"),
+                state: RunState::Completed,
+            },
+        );
+        done_tx.send(()).expect("done");
+    });
+    bus.flush_held_session(&session, || {
+        start_tx.send(()).expect("start worker");
+        assert!(
+            matches!(
+                done_rx.recv_timeout(std::time::Duration::from_millis(400)),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            ),
+            "new hold must wait until the old flush releases the lock"
+        );
+    });
+    done_rx.recv().expect("worker");
+    worker.join().expect("worker");
+
+    let mark = |event: &pawork_protocol::AppEventEnvelope| match &event.payload {
+        AppEvent::RunChanged { run_id, .. } => run_id.as_str().to_string(),
+        AppEvent::Diagnostic { code, .. } => code.clone(),
+        other => panic!("{other:?}"),
+    };
+    let seen = bus.replay(GlobalSequence(1), None).expect("replay");
+    assert_eq!(
+        seen.iter().map(mark).collect::<Vec<_>>(),
+        ["run-old", "old-tail", "new-live"]
+    );
+    bus.flush_held_session(&session, || {});
+    let seen = bus.replay(GlobalSequence(1), None).expect("replay");
+    assert_eq!(
+        seen.iter().map(mark).collect::<Vec<_>>(),
+        ["run-old", "old-tail", "new-live", "run-new"]
+    );
+}

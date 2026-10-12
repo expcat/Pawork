@@ -32,6 +32,35 @@ pub struct GuiEventBus {
     /// engine 已广播终态的 run 集合：宿主合成终态兜底据此去重，
     /// 避免 fail/cancel 路径在真实终态之后再补发幽灵 RunChanged{Failed}。
     terminal_reported: Mutex<HashSet<String>>,
+    /// GUI run 的终态先留在这里，等执行槽释放后再进入实时流。
+    terminal_hold: Mutex<TerminalHold>,
+}
+
+#[derive(Default)]
+struct TerminalHold {
+    /// 这些 session 从第一条终态起暂存后续 session 事件。
+    deferred: HashSet<String>,
+    queued: HashMap<String, Vec<AppEventEnvelope>>,
+}
+
+fn session_stream_id(envelope: &AppEventEnvelope) -> Option<String> {
+    match &envelope.stream {
+        EventStream::Session(session_id) => Some(session_id.as_str().to_string()),
+        _ => None,
+    }
+}
+
+fn is_terminal_run_changed(event: &AppEvent) -> bool {
+    matches!(
+        event,
+        AppEvent::RunChanged {
+            state: RunState::Completed
+                | RunState::Cancelled
+                | RunState::Failed
+                | RunState::Interrupted,
+            ..
+        }
+    )
 }
 
 impl GuiEventBus {
@@ -42,6 +71,7 @@ impl GuiEventBus {
             next_event: AtomicU64::new(1),
             next_synthetic: AtomicU64::new(SYNTHETIC_SEQUENCE_BASE),
             terminal_reported: Mutex::new(HashSet::new()),
+            terminal_hold: Mutex::new(TerminalHold::default()),
         }
     }
 
@@ -74,7 +104,7 @@ impl GuiEventBus {
         EventId::from(format!("app-evt-{n}"))
     }
 
-    /// engine 终态是否已上过实时流（Completed/Cancelled/Failed/Interrupted）。
+    /// sink 是否已接受终态。登记早于实时流发布，终态可能仍在暂存队列。
     /// 仅 `publish`（GuiBroadcastSink 驱动）登记；`publish_raw` 的合成兜底不自登记。
     pub(in crate::gui_host) fn terminal_reported(&self, run_id: &str) -> bool {
         self.terminal_reported
@@ -89,6 +119,41 @@ impl GuiEventBus {
             .lock()
             .expect("terminal reported set poisoned")
             .remove(run_id);
+    }
+
+    /// GUI run 进入 engine 前登记。子代理 session 不登记，终态仍即时发布。
+    pub(in crate::gui_host) fn begin_terminal_hold(&self, session_id: &SessionId) {
+        self.terminal_hold
+            .lock()
+            .expect("terminal hold poisoned")
+            .deferred
+            .insert(session_id.as_str().to_string());
+    }
+
+    /// 把暂存事件交给原来的 hub，并在同一临界区里释放执行槽。
+    /// 执行槽释放和队列刷新在同一段 terminal_hold 临界区里完成。
+    /// 先摘掉本 session 的旧暂存，再调用 release_slot，然后仍持锁把这批事件写入 hub。
+    /// 新 run 的 begin_terminal_hold 和后续 dispatch 都要等这把锁，因此旧 flush
+    /// 不会删掉或混入新登记，后来的同 session 事件也不会插到这批终态前面。
+    /// 锁序：terminal_hold，然后 release_slot 里的会话槽锁，然后 hub ring。
+    /// 会话槽守卫不逃出 acquire / release / busy，hub 发布也不反向获取 terminal_hold。
+    /// release_slot 不得再进入本 bus，否则同一线程会自锁。
+    pub(in crate::gui_host) fn flush_held_session(
+        &self,
+        session_id: &SessionId,
+        release_slot: impl FnOnce(),
+    ) {
+        let hub = &self.hub;
+        let mut hold = self.terminal_hold.lock().expect("terminal hold poisoned");
+        let key = session_id.as_str();
+        hold.deferred.remove(key);
+        let queued = hold.queued.remove(key);
+        release_slot();
+        if let Some(events) = queued {
+            for event in events {
+                hub.publish(event);
+            }
+        }
     }
 
     fn publish(
@@ -122,7 +187,7 @@ impl GuiEventBus {
             source: EventSource::Core,
             payload: event,
         };
-        self.hub.publish(app_envelope);
+        self.dispatch(app_envelope);
     }
 
     pub(in crate::gui_host) fn publish_raw(
@@ -144,7 +209,7 @@ impl GuiEventBus {
             source: EventSource::Core,
             payload: event,
         };
-        self.hub.publish(app_envelope);
+        self.dispatch(app_envelope);
     }
 
     pub(in crate::gui_host) fn publish_terminal(
@@ -165,6 +230,25 @@ impl GuiEventBus {
             payload: event,
         };
         self.hub.publish(app_envelope);
+    }
+
+    fn dispatch(&self, envelope: AppEventEnvelope) {
+        let Some(session_id) = session_stream_id(&envelope) else {
+            self.hub.publish(envelope);
+            return;
+        };
+        let terminal = is_terminal_run_changed(&envelope.payload);
+        let hub = &self.hub;
+        let mut hold = self.terminal_hold.lock().expect("terminal hold poisoned");
+        if let Some(queue) = hold.queued.get_mut(&session_id) {
+            queue.push(envelope);
+            return;
+        }
+        if terminal && hold.deferred.contains(&session_id) {
+            hold.queued.insert(session_id, vec![envelope]);
+            return;
+        }
+        hub.publish(envelope);
     }
 
     /// 发布 provider 认证变更事件（ADR-046 D3）：Global 流、Provider 来源。

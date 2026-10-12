@@ -29,13 +29,14 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 
 ### 2.1 功能测试用模型
 
-日常需要真实 Provider 的功能验证（真窗口 Run、流式输出、工具/审批、live smoke）固定使用：
+2026-10-12 用户说明 opencode-go 套餐到期，日常需要真实 Provider 的功能验证（真窗口 Run、流式输出、工具/审批、live smoke）改用以下已授权模型；执行对话与 review 的模型配置独立于此约定：
 
 | Provider | Model | 选择方式 | 禁止 |
 | --- | --- | --- | --- |
-| `opencode-go` | `glm-5.3-flash` | 当次 Host/CLI `--provider` / `--model` 临时覆盖 | 写入 Global/Workspace 持久默认；连接失败时改用未指定模型或伪造成功终态 |
+| `glm-coding`（用户模型标识 `zai`） | `glm-5.3` | 当次 Host/CLI `--provider` / `--model` 临时覆盖 | 写入 Global/Workspace 持久默认；连接失败时改用未指定模型或伪造成功终态 |
+| `xai` | `grok-4.7` | 当次 Host/CLI `--provider` / `--model` 临时覆盖 | 修改认证或用户禁用列表；用另一请求覆盖真实失败 |
 
-产品示例默认仍是 `glm-coding` / `glm-5.2`。该约定只约束日常功能验证的默认真实模型，不替代四通道矩阵或发布级 Provider 门禁。证据须写明实际使用的 provider/model；网络/凭证失败按真实终态记录。
+产品示例默认仍是 `glm-coding` / `glm-5.2`。该约定只约束日常功能验证的默认真实模型，不替代四通道矩阵或发布级 Provider 门禁。先核正式目录精确 provider/model、启用态、会话用途与当次实际路由；候选缺失或禁用时可选另一已授权可用候选，请求发出后的失败单独保留。证据须写明实际使用的 provider/model 与供应商映射；网络/凭证失败按真实终态记录。历史 Go 模型证据保留原模型，不改写为本轮复验。
 
 ## 3. 需求追踪矩阵
 

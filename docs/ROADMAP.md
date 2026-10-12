@@ -77,7 +77,7 @@
 | ✅ 完成 | [B17 · CLI 帮助与附件检查裁决](plan/b17-cli-copy.md) | gateway 与附件帮助、合计上限文案改为中文；描述符类型复查保留。定向格式、链接与静态差异检查通过，独立 review PASS；未执行真实 help 或附件运行时。 |
 | ✅ 完成 | [B18 · Client SDK MockTransport 与版本 API 裁决](plan/b18-client-sdk.md) | 保留四个 MockTransport 公开辅助方法与 `sdk_version_string`；headless rustdoc 的协议当前版本改为 1.27。定向静态、链接、格式与 diff 检查通过，独立 review / 复审 PASS；未改行为，未跑 Cargo。 |
 | ✅ 完成 | [B19 · Desktop 终端响应与实例路径裁决](plan/b19-desktop-terminal-paths.md) | create 回执只保留 terminal_session_id；删除无生产调用的 socket/token wrapper。三项定向回归通过，独立 review / 复审 PASS；未执行真窗口或历史二进制验收。 |
-| 已实现；定向回归与独立 review / 复审 PASS；真实探针验收待完成 | [B20 · Desktop Probe 功能测试模型裁决](plan/b20-desktop-probe-models.md) | --probe 只列目录；smoke 当次固定 opencode-go / glm-5.3-flash。唯一授权模型覆盖不了切换，输出 model_switch=uncovered。真实探针未跑，独立 review 不能关闭。 |
+| ✅ 完成（真实探针）；独立 review PASS | [B20 · Desktop Probe 功能测试模型裁决](plan/b20-desktop-probe-models.md) | GLM 5.3 真实完成 / 取消 / 断线恢复与持久状态一致；修复终态先于运行槽释放的冲突。审批未触发、模型切换未覆盖。 |
 | ✅ 完成（模拟验收）；独立 review PASS；真实系统边界待验 | [B21 · Desktop 大小格式与词条入口裁决](plan/b21-desktop-format-i18n.md) | 附件与单/多工具摘要的英中文经 GPUI 产品链核对；复用 RV-01/02/03、GUI3-01 与 AC-05，保留格式与词条职责。 |
 
 条件性工程项 RV-2026-10-A / RV-2026-10-C 的触发条件仍见 [backlog](spec/backlog.md#8-条件性工程项)。RV-2026-10-B 已由 B8 裁决关闭：保留导入副本，不物理去重。B10 对 RV-2026-10-A 的交叉说明仍在其任务文档。

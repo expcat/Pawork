@@ -239,6 +239,8 @@ UI-6b G2：新增私有 `provider_quota.rs`，`account_quota` 消费指定存储
 8. 慢客户端队满被标记 lagged 并丢新事件——发布者与其它 GUI 不被阻塞；lagged 连接随后收到 ReplayUnavailable，走 snapshot 恢复（§4.3）。
 9. Run 收尾终态闸门（P2 片 2A 起 persist-first）：fail/cancel 路径 engine 在 Err 返回前已经 sink 广播真实终态（`RunChanged{Failed}` / `RunChanged{Cancelled}`），宿主据 `GuiEventBus` 的终态登记（`terminal_reported`）去重，不再补发；只在 engine 未报终态即死（宿主侧早退、能力闸门拒绝等）时由 `seal_run_without_terminal` 收口——R-19 起先查 store 投影，run 行缺失（engine 死于持久化 `RunStarted` 之前）则先补持久化 `RunStarted` 建立合法生命周期，**再 best-effort 持久化真实 `RunFailed`**（`ErrorCategory::Internal`），成功后经 `GuiBroadcastSink` 正常映射按序补广播（先 Created 后 Failed，均携带真实持久化 sequence）；持久化本身失败才退回 `publish_raw` 合成兜底——合成 `stream_sequence` 从 `SYNTHETIC_SEQUENCE_BASE`（2^60）递增自取：真实持久化 sequence 从 1 单调递增不会到达该段，既不触发 reducer seen 去重吞掉真实事件，也让合成条目有序插入落在既有时间线内容（含用户消息乐观回显）之后（seq-0 旧行为曾把合成 "Run failed" 插到时间线顶端，R4 Wave B 评审 P2 修复）；语义仍是宿主兜底而非 engine 事实。两条路径都补发 `run.failed` 诊断供 GUI 展示原因。随后 `GuiRunRegistry` 摘除该 run 并清理终态登记（防无界增长）；成功响应按 `should_cache` 写回幂等 ledger；record 失败计数并释放 inflight（同 `command_id` 可重入），不吞错挂死。
 
+B20 调整 GUI run 终态的实时可见时机：spawn 进入 engine 前登记该 session；sink 接受第一条终态后暂存它与后续同 session 事件，`terminal_reported` 仍在接受时登记，保证 durable seal 不重复补发。收尾先清 native scope、审批、活动 run 和 browser 绑定，再持有同一短同步锁释放会话槽并把暂存事件按原顺序交给既有 EventHub。新 run 的登记与同 session 事件发布等待该锁，旧收尾不能删除新登记，后续事件不能抢到暂存终态前面。持久化顺序、PTY Terminal 流与 Global 流不变，子代理 session 未登记时仍即时发布。
+
 ### 4.2 CLI chat_turn 单轮
 
 1. 调用方（cli REPL / exec）持 `Vec<Message>` 调 `AppCore::chat_turn(session, messages, sink, cancel)`。
@@ -448,6 +450,8 @@ UI-6b 扩展已有 key 端到端用例：添加第二个 key、持 Run 读锁选
 提交前复核扩展现有 `slow_upstream_queries_allow_writes_heartbeat_and_drop_on_disconnect`：对 ModelList 和账户额度查询分别模拟持读锁等待上游，同连接写命令等待写锁；释放上游后两条响应按各自 request_id 正确返回，等待期间心跳可用、断连取消未完成查询。旧 `FuturesUnordered` 实现先复现写命令超时，连接级 `JoinSet` 修复后通过。
 
 任务消耗扩展现有 Gateway 回归：带小说 / 分部 / 章节的 Chat 元数据不送上游、call ID、全量汇总分页、token client 隔离、本地操作幂等与伪 Token 拒绝、图像 / 无 usage / 失败记录、断连部分用量、视频持久重开 / 跨客户端拒绝 / 并发轮询不重复统计。运行 `bash scripts/test.sh app`。
+
+B20 定向回归：`run_start_accepts_next_turn_when_terminal_becomes_visible` 经正式 RunStart / RunCancel、MockProvider 和临时 SessionStore 验证收到取消终态即可发下一轮；`gui_event_bus_old_flush_does_not_clear_or_overtake_new_hold` 验证旧暂存先发布、新登记保留及新终态继续暂存。前者只替代外部 Provider，后者只证明总线并发边界；真实模型探针与文件事实见 [B20](../../plan/b20-desktop-probe-models.md)。
 
 ## 8. 注意事项与已知限制
 

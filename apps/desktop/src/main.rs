@@ -120,7 +120,7 @@ fn run_probe(socket: PathBuf) -> i32 {
 }
 
 /// 真实功能冒烟：流式回合、审批、取消、两次断线重连。
-/// 唯一授权模型覆盖不了切换，签名行输出 `model_switch=uncovered`。
+/// 只选用一个授权精确对，签名行输出 `model_switch=uncovered`。
 fn run_probe_smoke(socket: PathBuf) -> i32 {
     let platform = platform::Platform::new();
     let controller = controller::DesktopController::new(platform.handle());
@@ -155,12 +155,9 @@ async fn probe_smoke(
     let session_id = wait_for_session(&events, &mut projection).await?;
     projection.select_session(&session_id);
 
-    // 功能冒烟只允许当次消息携带这一对；不写持久默认，也不按 id 跨 provider 回退。
-    let first = pick_exact_model(&models, PROBE_SMOKE_PROVIDER, PROBE_SMOKE_MODEL)
-        .cloned()
-        .ok_or_else(|| {
-            format!("host ModelList is missing {PROBE_SMOKE_PROVIDER}/{PROBE_SMOKE_MODEL}")
-        })?;
+    // 当次消息只携带目录里第一个启用且 text 的授权精确对。不写持久默认，
+    // 不按 id 跨 provider 回退；请求失败后不改选下一对。
+    let first = pick_probe_smoke_model(&models)?.clone();
     projection.set_pending_model(first.provider_id.clone(), first.id.clone());
     controller.send_message(
         session_id.clone(),
@@ -364,18 +361,36 @@ fn workspace_trusted(snapshot: &pawork_client::Snapshot) -> Option<bool> {
     })
 }
 
-/// 当次功能冒烟唯一授权模型。Desktop 不接受 provider/model 参数，由消息显式携带。
-const PROBE_SMOKE_PROVIDER: &str = "opencode-go";
-const PROBE_SMOKE_MODEL: &str = "glm-5.3-flash";
+/// 当次功能冒烟的授权精确对，按优先级。Desktop 不接受 provider/model 参数。
+/// 可用性只看正式 ModelList 的同 provider、同 id、enabled 与 text，不看静态 preset。
+const PROBE_SMOKE_CANDIDATES: &[(&str, &str)] = &[("glm-coding", "glm-5.3"), ("xai", "grok-4.7")];
 
-fn pick_exact_model<'a>(
-    models: &'a [projection::ModelEntry],
-    provider: &str,
-    id: &str,
-) -> Option<&'a projection::ModelEntry> {
-    models
-        .iter()
-        .find(|model| model.provider_id == provider && model.id == id)
+fn pick_probe_smoke_model(
+    models: &[projection::ModelEntry],
+) -> Result<&projection::ModelEntry, String> {
+    let mut rejected = Vec::with_capacity(PROBE_SMOKE_CANDIDATES.len());
+    for &(provider, id) in PROBE_SMOKE_CANDIDATES {
+        let Some(model) = models
+            .iter()
+            .find(|model| model.provider_id == provider && model.id == id)
+        else {
+            rejected.push(format!("{provider}/{id}=missing"));
+            continue;
+        };
+        if !model.enabled {
+            rejected.push(format!("{provider}/{id}=disabled"));
+            continue;
+        }
+        if !model.text {
+            rejected.push(format!("{provider}/{id}=text_false"));
+            continue;
+        }
+        return Ok(model);
+    }
+    Err(format!(
+        "host ModelList has no enabled text model among authorized pairs ({})",
+        rejected.join(", ")
+    ))
 }
 
 fn probe_run_state<'a>(
@@ -1172,5 +1187,48 @@ mod probe_run_terminal_tests {
             .await
             .expect_err("early cancellation is not approval");
         assert!(error.contains("Cancelled"), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod probe_smoke_model_tests {
+    use super::pick_probe_smoke_model;
+    use crate::projection::ModelEntry;
+
+    fn entry(provider: &str, id: &str, enabled: bool, text: bool) -> ModelEntry {
+        ModelEntry {
+            provider_id: provider.into(),
+            id: id.into(),
+            display_name: id.into(),
+            enabled,
+            text,
+            ..ModelEntry::default()
+        }
+    }
+
+    #[test]
+    fn probe_smoke_model_picks_first_enabled_text_pair() {
+        let models = vec![
+            entry("opencode-go", "glm-5.3-flash", true, true),
+            entry("opencode-go", "glm-5.3", true, true),
+            entry("glm-coding", "glm-5.3", true, true),
+            entry("xai", "grok-4.7", true, true),
+        ];
+        let picked = pick_probe_smoke_model(&models).expect("enabled text glm-5.3");
+        assert_eq!(picked.provider_id, "glm-coding");
+        assert_eq!(picked.id, "glm-5.3");
+    }
+
+    #[test]
+    fn probe_smoke_model_rejects_disabled_non_text_and_other_ids() {
+        let models = vec![
+            entry("glm-coding", "glm-5.3", false, true),
+            entry("xai", "grok-4.7", true, false),
+            entry("xai", "grok-4.6", true, true),
+            entry("glm-coding", "glm-5.3-flash", true, true),
+        ];
+        let error = pick_probe_smoke_model(&models).expect_err("no authorized pair");
+        assert!(error.contains("glm-coding/glm-5.3=disabled"), "{error}");
+        assert!(error.contains("xai/grok-4.7=text_false"), "{error}");
     }
 }

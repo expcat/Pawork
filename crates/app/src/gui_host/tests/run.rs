@@ -1722,6 +1722,112 @@ async fn run_start_second_run_same_session_rejected_until_settled() {
 }
 
 #[tokio::test]
+async fn run_start_accepts_next_turn_when_terminal_becomes_visible() {
+    // 终态一进入实时流，会话槽必须已经空出。不能再等 terminal_reported
+    // 清理或插入 sleep：那正是 probe 在取消可见后立刻再发被 session_busy 拒绝的窗口。
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (store, _) = pawork_storage::session::SessionStore::open(dir.path().join("session.db"))
+        .await
+        .expect("store");
+    let provider = MockProvider::sequence(vec![
+        MockScript::new().wait_for_cancellation(),
+        MockScript::new().text("ok").complete(),
+    ]);
+    let provider_calls = provider.clone();
+    let core = AppCore::from_parts(
+        Arc::new(provider),
+        None,
+        pawork_domain::ModelId::from("model-1"),
+        pawork_domain::ProviderId::from("mock"),
+        Some(store),
+    );
+    let session = core
+        .create_session("session-visible-terminal")
+        .await
+        .expect("session");
+    let adapter = GuiHostAdapter::new(Arc::new(core));
+    let mut events = adapter.subscribe_events();
+    let first = adapter
+        .command(&command_envelope(AppCommand::RunStart {
+            session_id: session.clone(),
+            user_message: "block until cancelled".into(),
+            model: None,
+            provider: None,
+            profile: None,
+            effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
+            video_urls: Vec::new(),
+        }))
+        .await
+        .expect("first run accepted");
+    let AppResponse::Accepted {
+        run_id: Some(first_run),
+        ..
+    } = first
+    else {
+        panic!("first RunStart must be accepted: {first:?}");
+    };
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while provider_calls.calls().is_empty() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "first run must reach the provider"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    adapter
+        .command(&command_envelope(AppCommand::RunCancel {
+            run_id: first_run.clone(),
+        }))
+        .await
+        .expect("cancel accepted");
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let envelope = tokio::time::timeout_at(deadline, events.recv())
+            .await
+            .expect("run should reach a visible terminal")
+            .expect("event channel");
+        let visible = matches!(
+            &envelope.payload,
+            AppEvent::RunChanged {
+                run_id,
+                state: RunState::Cancelled,
+            } if run_id == &first_run
+        );
+        if visible {
+            assert!(
+                !adapter.runs.session_busy(&session),
+                "session slot must already be free when the terminal event is visible"
+            );
+            break;
+        }
+    }
+    let second = adapter
+        .command(&command_envelope(AppCommand::RunStart {
+            session_id: session,
+            user_message: "after visible terminal".into(),
+            model: None,
+            provider: None,
+            profile: None,
+            effort: None,
+            attachment_ids: Vec::new(),
+            web_search: None,
+            video_urls: Vec::new(),
+        }))
+        .await
+        .expect("next RunStart must be accepted as soon as the terminal is visible");
+    let AppResponse::Accepted {
+        run_id: Some(second_run),
+        ..
+    } = second
+    else {
+        panic!("second RunStart must be accepted: {second:?}");
+    };
+    wait_run_completed(&mut events, &second_run).await;
+}
+
+#[tokio::test]
 async fn run_start_async_early_death_seals_durable_failed() {
     // R-19：接受后、engine 报任何事件前早死（hosted web_search 无能力证据
     // fail-closed）时，宿主 seal 先补持久化 RunStarted 再持久化 RunFailed——

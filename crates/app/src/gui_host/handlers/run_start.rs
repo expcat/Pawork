@@ -622,6 +622,9 @@ async fn start(
         metadata: Default::default(),
     });
     adapter.runs.spawn(async move {
+        // 终态先暂存。清理和槽释放完成前不能进实时流，否则客户端会在
+        // 旧 run 仍占着执行槽时发出下一次 RunStart。
+        bus.begin_terminal_hold(&session);
         let sink = super::goal::BudgetSink {
             inner: GuiBroadcastSink::new(Arc::clone(&bus), instance.clone()),
             limit: goal_budget,
@@ -659,9 +662,11 @@ async fn start(
         approvals.clear_run(&run);
         runs.remove(&run);
         browser.unbind(&run);
-        // 会话槽释放在 terminal 登记清理之前：后者是外部 settle 观测点，
-        // 观测到清理完成时会话槽必然已可再占用（R-06）。
-        runs.release_session(&session);
+        // 先完成 scope / approval / registry / browser 清理。槽释放和暂存
+        // 发布在 bus 的同一临界区：终态进入实时流时槽已经空出，旧 flush
+        // 也不会清掉随后登记的新 hold。槽不能早于上面的清理释放。
+        let release_session = session.clone();
+        bus.flush_held_session(&session, || runs.release_session(&release_session));
         bus.clear_terminal_reported(run.as_str());
         // 终态后继续在受 Host 管理的后台任务内命名，不阻塞终态事件。
         if succeeded && goal_budget.is_none() && !runs.is_stopping() {
