@@ -135,7 +135,7 @@
 | 状态 | 任务 | 简介 |
 | --- | --- | --- |
 | 当前账号与正式查询核实完成；独立 review PASS；剩余真实条件待验 | [ENV-01 · 真实账号与额度环境验收](plan/env-01-accounts-quota.md) | Go 三窗真实 forbidden、读数为空；持久认证与设置摘要未变，OAuth 自然临期、双账号、非零额度和倒计时仍待环境。 |
-| 缺环境 | [ENV-02 · 既有跨平台专项环境验收](plan/env-02-platform-matrix.md) | 补齐 Linux / Windows、WebKit、容器和真实 Provider 的既有专项矩阵。 |
+| 当前可运行专项完成；独立 review PASS；Windows 原生待环境 | [ENV-02 · 既有跨平台专项环境验收](plan/env-02-platform-matrix.md) | 16 条连接回归与独立 UDS / WebKit 真窗口通过；Linux / GLM / Wayland 按原证据边界复用，Windows 锁与 Named Pipe 仍待验。 |
 | 缺环境 | [ENV-03 · MM-2 视频真实往返验收](plan/env-03-video-roundtrip.md) | 在支持的视频端点与账号上证明真实往返。 |
 | 缺环境 | [ENV-04 · MM-3 GLM 搜索环境验收](plan/env-04-glm-search.md) | 配置真实 GLM 搜索 MCP 后验收搜索链路。 |
 | 缺浏览器授权 | [ENV-05 · Chrome / Edge 只读上下文环境复验](plan/env-05-browser-context.md) | 用户手动授权后复验当前页正文读取。 |
