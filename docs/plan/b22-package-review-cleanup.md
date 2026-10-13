@@ -1,6 +1,6 @@
 # B22 · 逐包架构审查与清理波
 
-> 状态：实施完成（模拟验证）；独立终审 FAIL → T12 修正 → 复审代码项全部 ok，唯一文档项已按复审修法改正；改动全部暂存未提交，未做真窗口复验。更新：2026-10-13。
+> 状态：完成（自动验证）；独立终审 FAIL → T12 修正 → 复审代码项全部 ok，唯一文档项已按复审修法改正。已按用户裁决分批提交到 `main`（未推送），三项待裁决均已处理；未做真窗口复验。更新：2026-10-13。
 
 [返回 ROADMAP](../ROADMAP.md#待裁决api-与产品取舍)
 
@@ -132,11 +132,12 @@
 | [CU-12](cu-12-screenshot-context.md) | `trim_tool_result` 未接线 | 已删除 |
 | [CU-17](cu-17-gui-observation-protocol.md)、[CU-22](cu-22-windows-isolation.md) | `platform_probe()`、Box 转发 | 已删除；平台选择在 `HostSurface::local()` |
 
-## 待用户裁决
+## 用户裁决（2026-10-13）
 
-- **`AppEvent::TeamEvent`**：GUI 协议里的 `TeamEvent`（18 个变体）仓内没有构造点，唯一引用是映射成字符串。它在冻结 schema 中，删除属于 wire 变更，需要授权、单独立项并先改 golden。本波未动。
-- **CU-25 音频模拟状态机**：只在测试里使用，约 140 行；它是当时复审通过的交付物，删除与否由用户决定。本波未动。
-- **全仓 rustfmt**：HEAD 约 50 个文件不符合 rustfmt。本波只格式化改动过的文件，没有做全仓格式化。
+- **提交方式**：按批次分提交，提交到当前分支 `main`，不推送。暂存区的最终树不变，按批次重建为 T1–T12 加一个文档提交；每个代码提交都在独立 worktree 里单独编译检查过（见「验证」）。
+- **`AppEvent::TeamEvent`**：删除。GUI 协议里的 `TeamEvent`（18 个变体）仓内没有构造点，唯一引用是映射成字符串；它在冻结 schema 中，所以单独立项为 [B23](b23-team-event-removal.md)，schema 与代码同提交。
+- **CU-25 音频模拟状态机**：删除。`target/tests.rs` 末尾 182 行的测试内模拟（`AudioScope` / `AudioAttempt` / `reject_audio` 与 `audio_capture_is_rejected_by_the_contract`）不对应任何生产代码；单独提交，拒绝规则仍以 [CU-25 设计](cu-25-audio.md) 为准。
+- **全仓 rustfmt**：执行，作为只改格式的单独提交，放在最后，避免和逻辑改动混在一起。
 
 ## 未做
 
@@ -169,6 +170,13 @@
 - `cargo metadata` 工作区依赖边：361 → 351，只删不增；删掉的是 app→transport、cli→serde、control-plane→url、git→serde_json、policy→tempfile（dev）、providers→serde、tools→tracing、workflow→tokio（生产与 dev）、workflow→async-trait（dev）。`pawork-*` 生产依赖图无环。
 - `git diff --cached --check` 无空白错误。
 - 未跑全 workspace、真实 Provider、真窗口；Desktop 改动只有小项与机械拆分，未做真窗口复验。
+
+分批提交（用户裁决后）：
+
+- 暂存区按 `git add` 时间重建为 T1–T12（T10 拆 a / b）加文档共 14 个提交，最后一个提交的树与原暂存区逐字节相同。少量文档注释按暂存时间落在相邻批次（如 protocol `lib.rs` 去掉 `limits` 的说明在 T3），不影响编译。
+- 每个代码提交在独立 worktree 中单独检查：改动包经 `scripts/test.sh` 选 feature 后 `cargo check --tests`，加 `-p pawork`；涉及 Desktop 依赖链时加 Desktop `--bins --tests`。13 个全部通过。
+- 这一轮只做编译检查，漏掉了 T3 的一个问题：T3 改了 `RunStart.profile` 的文档注释却没有重新生成 schema，typegen 校验因此失败。B23 重新生成 schema 时发现；提交尚未推送，已把三份 `AppCommand.d.ts` 并入 T3 并重接后续提交（各提交其余改动不变），新 HEAD 上 typegen 测试 1 passed。
+- 后续提交：[B23](b23-team-event-removal.md) 删除 `TeamEvent`；CU-25 模拟删除后 `bash scripts/test.sh computer-use` 103 + 1 passed（少了被删的那一项）；全仓 rustfmt 涉及 13 个包 39 个文件，逐文件比对确认非空白差异只有尾逗号、match 分支花括号与 `use` / `mod` 重排，相关包 `cargo check --tests --examples`、`-p pawork` 与 Desktop 检查通过，警告集合与格式化前相同，`cargo fmt --all -- --check` 干净。
 
 独立审查（只读、不编译，一个审查者）：
 
