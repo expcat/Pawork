@@ -38,11 +38,11 @@
 
 ## 6. 红线与不变量
 
-ACP `PROTOCOL_VERSION = 1`；v2、未知方法和除 `_meta` 外未知参数明确拒绝。命令只经 protocol registry 的 ACP 准入列进入 Core。Resume 必须由权威 SessionRegistry 校验所有权；取消不能被 prompt 阻塞；审批默认 fail-closed。持久 `connection_id` 为 `acp-connection-{pid}-{nanos:x}-{seq}`（序号进程级），避免 pid 复用后与旧 registry 记录相撞。JSON-RPC 请求 id 仍沿用客户端 `acp-<request_id>`，不在此改写。迁包保留全部 JSON golden 字节，不增加新 wire。
+ACP `PROTOCOL_VERSION = 1`；v2、未知方法和除 `_meta` 外未知参数明确拒绝。命令只经 protocol registry 的 ACP 准入列进入 Core。Resume 必须由权威 SessionRegistry 校验所有权；取消不能被 prompt 阻塞；审批默认 fail-closed。持久 `connection_id` 为 `acp-connection-{pid}-{nanos:x}-{seq}`（序号进程级），避免 pid 复用后与旧 registry 记录相撞。JSON-RPC 请求 id 仍沿用客户端 `acp-<request_id>`，不在此改写。迁包保留当时接入测试的 JSON golden 字节，不增加新 wire。
 
 ## 7. 测试与 golden 资产
 
-`bash scripts/test.sh acp`；原 CLI 的 ACP 测试及 14 个 fixture 整体迁入。
+`bash scripts/test.sh acp`。现行 golden 为 `fixtures/v1` 十二份与 `fixtures/v2` 一份；未接入测试、且已与现行握手参数分叉的 `initialize-request.json` 已删除。
 
 | 资产 | 覆盖点 |
 | --- | --- |
@@ -50,7 +50,7 @@ ACP `PROTOCOL_VERSION = 1`；v2、未知方法和除 `_meta` 外未知参数明�
 | `tests/fixtures.rs`（target `acp_fixtures`） | versioned golden：v1 initialize 握手响应逐字节比对、session/new / prompt / cancel fixture 解析、session/update text 与 tool_call 回译 golden、permission selected / cancelled、未知方法与 `session/set_model` 错误 golden、v2 握手拒绝、未知 params 字段拒绝、`mcpServers` 必填 vs 空数组放行、resume 缺省字段、JSON-RPC 非对象 / 坏版本拒绝 |
 | `tests/floor.rs`（target `acp_floor`） | 全链路（mock host）：握手协商与降级记录、未初始化拒绝、cwd 越界拒绝与规范化别名匹配、prompt 流式回译与终态、权限请求往返、`session/cancel` / `$/cancel_request`、close → resume 重挂、跨连接 resume 走 authoritative registry claim、同 session 二 prompt 拒绝、注册窗口 early cancel 重放、fail-closed 释放 inflight、事件滞后 fail-closed、部分写出后屏障必须释放、Diagnostic 不发射 update、双客户端交错保持会话内串行且 cancel 不被阻塞 |
 | `tests/common/mod.rs` | `TestHarness` / `MockScript`（脚本化 `AcpCommandHost`）与 outbox 收集工具 |
-| `fixtures/v1/`（13 个 JSON） | `initialize-request/response`、`session-new-request`、`session-prompt-request`、`session-resume-minimal`、`session-cancel-notification`、`session-set-model-request`、`session-update-text`、`session-update-tool-call`、`permission-response-selected/cancelled`、`error-unknown-method`、`error-unknown-set-model` |
+| `fixtures/v1/`（12 个 JSON） | `initialize-response`、`session-new-request`、`session-prompt-request`、`session-resume-minimal`、`session-cancel-notification`、`session-set-model-request`、`session-update-text`、`session-update-tool-call`、`permission-response-selected/cancelled`、`error-unknown-method`、`error-unknown-set-model` |
 | `fixtures/v2/`（1 个 JSON） | `initialize-request-v2`——仅用于断言实验 v2 显式拒绝 |
 
 ## 8. 相关文档

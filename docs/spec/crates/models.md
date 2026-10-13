@@ -29,7 +29,7 @@
 - `CapabilityNegotiator::negotiate`、`negotiate::capability_gate`、`clamp_reasoning_to_thinking`、`negotiate::content_part_has_image`、`negotiate::content_part_has_video`：模型证据与请求相交；图片和视频递归覆盖工具结果。
 - `ModelPricing` / `estimate_cost` / `BUILTIN_RATE_CARD` / `BUILTIN_RATE_VERSION`：micro-unit 整数计价；不把未知价格编造成零费用。
 
-[B5 裁决](../../plan/b5-models.md)（2026-10-08）：删除仅由本包测试消费的 `validate_context`、`merge_provider_source`、`capability_snapshot`、`filter_by_purpose`，并删除仅服务于目录包装口的 `ProviderCapabilitySource` 及 Vec 实现 / 导出。这是未发布 workspace 的 Rust API 收敛；目录与证据 serde 类型、domain Provider 契约、用途 wire 名、CLI / Gateway 行为保持不变。CU-11 继续复用单模型 `capability_evidence` + `merged()`。
+B5 裁决（2026-10-08）：删除仅由本包测试消费的 `validate_context`、`merge_provider_source`、`capability_snapshot`、`filter_by_purpose`，并删除仅服务于目录包装口的 `ProviderCapabilitySource` 及 Vec 实现 / 导出。这是未发布 workspace 的 Rust API 收敛；目录与证据 serde 类型、domain Provider 契约、用途 wire 名、CLI / Gateway 行为保持不变。CU-11 继续复用单模型 `capability_evidence` + `merged()`。
 
 ## 4. 关键行为与语义
 
@@ -53,7 +53,7 @@
 
 原 registry / negotiate / pricing 内联回归完整迁移，覆盖别名冲突、并发探测/取消、能力收窄、图片/视频与 hosted tools 拒绝、推理强度和整数计价。执行 `bash scripts/test.sh models`；跨适配器联动执行 `bash scripts/test.sh models providers`。本次不新增镜像测试。
 
-B5 保留既有 `merge_provider_catalog_feeds_v2_caps_into_evidence_without_name_match`、`purpose_filter_covers_four_capabilities_and_intersects`，改为直接调用保留入口；三源 / probe-only / override-only 断言改用 `capability_evidence_covers_all_three_sources`。仅移除已删除入口的上下文布尔包装测试、全量快照排序与枚举断言；能力收窄、嵌套图片及用途交集回归保留。嵌套视频检测与 App / providers 视频回归未修改，本轮未执行后两包的视频行为测试。实际验证与独立 review 状态见 [B5](../../plan/b5-models.md)。
+B5 保留既有 `merge_provider_catalog_feeds_v2_caps_into_evidence_without_name_match`、`purpose_filter_covers_four_capabilities_and_intersects`，改为直接调用保留入口；三源 / probe-only / override-only 断言改用 `capability_evidence_covers_all_three_sources`。仅移除已删除入口的上下文布尔包装测试、全量快照排序与枚举断言；能力收窄、嵌套图片及用途交集回归保留。嵌套视频检测与 App / providers 视频回归未修改，本轮未执行后两包的视频行为测试。
 
 ## 8. 相关文档
 

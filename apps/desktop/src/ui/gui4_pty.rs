@@ -51,9 +51,7 @@ fn spawn_host(data_dir: &Path, zdotdir: &Path) -> HostProcess {
         binary.display()
     );
     let instance = format!("g4{}", std::process::id());
-    let log_dir = PathBuf::from("/tmp/pawork-gui4-status-empty-terminal/evidence");
-    std::fs::create_dir_all(&log_dir).expect("evidence dir");
-    let log = log_dir.join(format!("host-gui4-pty-{}.log", std::process::id()));
+    let log = data_dir.join("host-gui4-pty.log");
     let stderr = std::fs::File::create(&log).expect("host log");
     let child = Command::new(&binary)
         .arg("--instance")

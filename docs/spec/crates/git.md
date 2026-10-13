@@ -21,7 +21,7 @@
 | `src/worktree.rs` | ~360 | `WorktreeService`：`list`（`worktree list --porcelain` 解析）/ `add` / `remove` / `prune`；`remove` 先经 `list()` 校验目标为 git 受管 worktree，绝不调用 `std::fs` 递归删除用户数据 |
 | `src/diff/mod.rs` | ~20 | diff 子模块声明与 re-export（`model` / `parser` / `service`）；`FileStatus` 来自 `status` |
 | `src/diff/model.rs` | ~70 | 结构化 diff 数据模型：`DiffFile`（path / previous_path / status:`FileStatus` / staged / binary / additions / deletions / hunks，`changed_lines()`）、`DiffHunk`、`DiffLine`、`HunkId`（全局自增 u64）、`LineKind`（Context / Addition / Deletion） |
-| `src/diff/parser.rs` | ~270 | unified diff 文本状态机解析：`parse_unified` / `parse_unified_with_start`（延续 HunkId 起点）；`@@` 头解析、`\ No newline at end of file` 标记按上一行类型作用到旧侧/新侧（Context 两侧一致）；容忍任意输入不 panic |
+| `src/diff/parser.rs` | ~168 | unified diff 文本状态机解析：`parse_unified` / `parse_unified_with_start`（延续 HunkId 起点）；`@@` 头解析、`\ No newline at end of file` 标记按上一行类型作用到旧侧/新侧（Context 两侧一致）；容忍任意输入不 panic |
 | `src/diff/service.rs` | ~650 | `DiffService`：`diff_summary`（`--raw -z` + `--numstat -z` 按 NUL 记录合并，含多文件与 rename/copy old/new 双路径，工作区视角补 `ls-files --others --exclude-standard -z` 未跟踪文件）、`diff`（逐文件 `-U<n> --no-color -- <path>` 解析 hunks）；`DiffOptions` / `paginate` / `DiffPage`；`--raw` 头解析（状态字母 M/A/D/T/U、R/C 带相似度、mode 160000 gitlink） |
 | `tests/parser_contract.rs` | ~65 | parser golden 契约 + proptest（任意输入不 panic）；夹具在 `tests/golden/*.diff` |
 

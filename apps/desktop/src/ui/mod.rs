@@ -4715,13 +4715,6 @@ mod tests {
                 "inspector": inspector,
                 "switch": switch_samples,
             });
-            let dir = "/tmp/pawork-gui3-08-surfaces-motion/evidence";
-            std::fs::create_dir_all(dir).expect("evidence dir");
-            std::fs::write(
-                format!("{dir}/motion-samples.json"),
-                serde_json::to_string_pretty(&samples).expect("samples json"),
-            )
-            .expect("write motion samples");
             eprintln!("{samples}");
         }
 
@@ -5228,12 +5221,6 @@ mod tests {
             },
             "terminal": "终态状态和源码挂载门控确认；旧 debug_bounds 不用于消失结论",
         });
-        let dir = "/tmp/pawork-gui3-08-surfaces-motion/evidence";
-        std::fs::write(
-            format!("{dir}/static-geometry.json"),
-            serde_json::to_string_pretty(&record).expect("static geometry json"),
-        )
-        .expect("write static geometry");
         eprintln!("{record}");
 
         cx.update(|_, cx| {

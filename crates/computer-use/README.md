@@ -34,7 +34,7 @@ docker compose -f crates/computer-use/desktop/compose.cu21.yaml up -d
 
 Host 与容器须持同一个临时 `PAWORK_ISOLATED_GUEST_TOKEN`；不要把 token 写入可提交配置或日志。该通道只校验客户端共享秘密，不是双向认证。Host 固定连接 `127.0.0.1:5906`，guest 在容器内监听 `0.0.0.0:5906`，由 compose 仅发布到宿主 loopback；RFB 连接仍为 `127.0.0.1:5905`。两种部署不能同时占同一端口；启动前应确认自己的旧部署已停止，不能抢占其它实例。运行容器以 uid 1000、只读根与临时 home/run/tmp 启动，无宿主卷或设备挂载。镜像内关闭 Firefox 内容沙箱以运行 AT-SPI 切片，隔离依赖专用容器，不能用于用户主桌面或导入个人浏览器资料。停止使用本项 compose 的 `stop`；数据为临时状态。
 
-真实集成、拒绝回归与当前验证范围见 [CU-21 完成记录](../../docs/plan/cu-21-isolated-linux.md)，不将本项结果计作本机后台或其它平台通过。
+真实集成、拒绝回归与当前验证范围见 [computer-use Spec](../../docs/spec/crates/computer-use.md)，不将本项结果计作本机后台或其它平台通过。
 
 宿主先授权，再调用 `Computer::execute(scope, action, cancelled)`。`scope` 为运行身份；先 `screenshot` 获取 `observation_id`，随后一个输入消费该观察。坐标是返回 JPEG 的像素，左上角为原点；按虚拟显示器大小换算。每次输入后重新截图确认效果。
 

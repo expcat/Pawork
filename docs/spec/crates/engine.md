@@ -16,9 +16,9 @@
 | `src/tool_loop/mod.rs` | ~360 | `run_session` 编排；`LoopContext` trait；`ApprovalGate` / `PendingToolInvocation` / `WriteCheckpoint` / `CompactionOutcome`；`DEFAULT_MAX_TOOL_ROUNDS` |
 | `src/tool_loop/round.rs` | ~110 | 单轮 `run_turn` 收集（`collect_stream_round`，请求按引用透传：工具循环每轮直接 `&current`，不 clone 全历史）、助手消息装配、usage 饱和加法 |
 | `src/tool_loop/approval.rs` | ~110 | `wait_and_apply`：`request_approval` await 后补发 `ToolApprovalResponded`；gate 数不匹配 fail-closed Denied；ApprovedForRun 跨轮记忆 |
-| `src/tool_loop/exec.rs` | ~210 | 待执行调用解析、写快照、`execute_tools`、结果对齐与 `MessageCommitted` |
+| `src/tool_loop/exec.rs` | ~295 | 待执行调用解析、写快照、`execute_tools`、结果对齐与 `MessageCommitted` |
 | `src/tool_loop/compaction.rs` | ~500 | 注入层、输入估算、软限压缩 / 硬限截断、`run_manual_compaction` |
-| `src/tool_loop/tests.rs` | ~2180 | 原 `tool_loop.rs` 内联测试整文件迁入（`#[cfg(test)]`） |
+| `src/tool_loop/tests.rs` | ~2664 | 原 `tool_loop.rs` 内联测试整文件迁入（`#[cfg(test)]`） |
 | `src/session_turn.rs` | ~60 | `SessionTurn`（会话轮次标识 + start_sequence）；墙钟经 `Timestamp::now()`；工具循环共享的 usage 归并 helper（`optional_usage` / `last_stream_usage`，`pub(crate)`） |
 | `src/appender.rs` | ~330 | `AssembledTurn`：把 `ProviderStreamEvent` 流折叠成一条助手 `Message`（text / thinking / reasoning / tool_calls / summary）；`PendingToolCall`；`ToolCallResult`；`tool_results_message` |
 | `src/cancel.rs` | ~120 | `CancelHandle`（原子幂等 cancel：只取消根 token）；`CancelReason` / `CancelReceipt`（`already_cancelled`） |
@@ -194,7 +194,7 @@ ADR-057 的会话身份语义现由工具循环与压缩路径承载：相关测
 - `run_turn` 为 `pub(crate)`（R0 D12 公开面收口）；外部走 `run_session` / `run_manual_compaction`。
 - `TurnContext::default()` 全禁用：不配置 limits + estimator 时无估算（`estimated_input_tokens = 0`）、无压缩、无截断——上下文管理是 opt-in。
 - 精确 tokenizer（tiktoken）刻意不迁入本包；需要时由宿主实现 `TokenEstimator` 注入，默认只有 `HeuristicEstimator`。
-- CU-12 请求侧观测图像裁剪 `trim_observation_images` 由 `run_session` 在 `limits` 配置时每轮执行，只改请求副本（语义见 §3.7 / §4.1，计划见 [CU-12](../../plan/cu-12-screenshot-context.md)）。
+- CU-12 请求侧观测图像裁剪 `trim_observation_images` 由 `run_session` 在 `limits` 配置时每轮执行，只改请求副本（语义见 §3.7 / §4.1）。
 - `AssembledTurn` 对 `ToolCallArgumentsDelta` 早于 `ToolCallStarted` 到达的乱序容错（补建空名调用）；参数 JSON 解析失败时降级 `Value::Null`，不报错。
 - 结构性摘要（降级路径）只截取文本 part，非文本内容不进入摘要。
 - `ToolStreamEvent::Progress` 与 `ArtifactAvailable` 目前在 `LoopEventEmitter::emit_tool_event` 中被静默忽略，不映射为 AgentEvent。

@@ -91,7 +91,7 @@ Spec 中的能力状态不替代验证结论。某项“已实现”只说明生
 
 ## 4. 活动任务与历史编号
 
-当前任务与待验收项见 [ROADMAP](../ROADMAP.md)，候选与激活条件见 [backlog](backlog.md)。本目录按领域组织 Spec，不按已完成阶段继续扩展编号。旧任务书与过程记录从 Git 历史检索；ADR / P 系列裸编号按 [ADR 索引](../adr/README.md) 查找。
+当前任务与待验收项见 [ROADMAP](../ROADMAP.md)，候选与激活条件见 [backlog](backlog.md)。本目录按领域组织 Spec，不按已完成阶段继续扩展编号。旧任务书与过程记录从 Git 历史检索：2026-10-13 复审删除的 CU / B / RV / GUI2～GUI4 / AC / ENV 已完成任务文档见提交 `03da6327` 的 `docs/plan/`，Spec 中残留的这些编号只作历史标签。ADR / P 系列裸编号按 [ADR 索引](../adr/README.md) 查找。
 
 ## 5. 维护规则
 

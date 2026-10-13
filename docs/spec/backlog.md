@@ -71,7 +71,7 @@
 | ID | 候选 | 当前状态 | 激活条件 |
 | --- | --- | --- | --- |
 | BK-REMOTE-01 | 远程 GUI transport | 归档/候选 | 主干不保留远程 trait / `Remote` 端点；按当时 API 版本重评 TLS、认证、授权与远程威胁模型后重新设计接口。 |
-| BK-WORK-01 | 旧 teams / goal / automation / monitor 框架 | V2 reducer 已归档；无构造点的 `AppEvent::TeamEvent` wire 镜像已于 2026-10-13 删除（[B23](../plan/b23-team-event-removal.md)）；现行有预算 Goal 单独实现于 app | 旧框架仍需独立激活，不把新 Goal 当作整套框架复活；teams 复活时重新定型 wire 事件并先改 golden。 |
+| BK-WORK-01 | 旧 teams / goal / automation / monitor 框架 | V2 reducer 已归档；无构造点的 `AppEvent::TeamEvent` wire 镜像已于 2026-10-13 删除（B23）；现行有预算 Goal 单独实现于 app | 旧框架仍需独立激活，不把新 Goal 当作整套框架复活；teams 复活时重新定型 wire 事件并先改 golden。 |
 | BK-GIT-01 | GUI Branch/Stash/Conflict/History/Commit | 归档/候选 | 产品定义 + host protocol + Policy；不得让 Desktop 直连 Git。 |
 | BK-GIT-02 | Desktop stage/unstage/hunk | 候选 | 新增双向 wire、审批/回滚语义和 Accepted ADR；当前 Changes 保持只读。B12（2026-10-08）已归档无消费者的 StageService / HunkStageService；冻结 git_stage 仍三通道不可用，不是实现。当前布局从提交 44a8848ed21caeb02fa6318332f4f882df951e3e 的 `crates/git/src/` 取回。tag `v2-final` 只有旧路径 `vcs/git/src/`，不作为当前布局恢复点，不把归档源码拷回主干。 |
 | BK-MCP-01 | MCP HTTP OAuth 登录 | 归档（B13，2026-10-08） | 生产接入前必须另立任务：宿主登录流程、callback 与 state 关联、token 只进独立 `mcp-auth.json` 的 `pawork.mcp.*`（不得写入 Provider 的 `pawork.<provider>.oauth`）、刷新轮换、transport 重建、失效与失败关闭。不新增冻结 wire 之前不能宣称已接线。当前布局从 `3c235c91a07ad348dd68c4dc18c01f4290bb9b2f` 的 `crates/mcp/src/oauth.rs` 取回。tag `v2-final` 的 `extensions/mcp/src/oauth.rs` blob 不同，不作为当前布局恢复点，不把归档源码拷回主干。 |
@@ -123,11 +123,11 @@ G1/G2 的 Settings 产品面见 [Settings Spec](settings.md)。下列候选仍�
 
 ## 8. 条件性工程项
 
-API 与产品取舍见 [ROADMAP 待裁决清单](../ROADMAP.md#待裁决api-与产品取舍)，下表只登记按触发条件处理的工程项。
+下表只登记按触发条件处理的工程项；B 级 API 与产品取舍已于 2026-10-13 全部裁决收口。
 
 | ID | 项 | 说明 | 触发条件 |
 | --- | --- | --- | --- |
 | RV-2026-10-A | engine 测试骨架 LoopContext 转发收敛 | `crates/engine/src/tool_loop/tests.rs` 多个包装 Context 手工转发 `execute_tools` / `next_message_id` / `next_request_id`，与 ScriptedProvider 近重复；收益中等，不动行为 | 下次改 engine 测试骨架时顺势收敛，不单独立项 |
-| RV-2026-10-C | Control-plane 持久租约恢复装配 | B3 保留 `LeaseProjection` / `restore` / TTL / durable-first 库能力及回归；App 当前只有内存池 + 空投影，persistent 装配持久化 usage / audit，未保证跨进程准入 | 出现真实持久 / 跨进程租约消费者后，先明确 Host / Run 所有权、存活判定与失效回收规则，提供持久投影，再接启动恢复与周期回收并验证投影失败和重启；未过 TTL 的 Acquired 不能一律当孤儿回收，见 [B3 裁决](../plan/b3-control-plane.md) |
+| RV-2026-10-C | Control-plane 持久租约恢复装配 | B3 保留 `LeaseProjection` / `restore` / TTL / durable-first 库能力及回归；App 当前只有内存池 + 空投影，persistent 装配持久化 usage / audit，未保证跨进程准入 | 出现真实持久 / 跨进程租约消费者后，先明确 Host / Run 所有权、存活判定与失效回收规则，提供持久投影，再接启动恢复与周期回收并验证投影失败和重启；未过 TTL 的 Acquired 不能一律当孤儿回收，恢复语义见 [control-plane Spec](crates/control-plane.md) |
 
-RV-2026-10-B 的原触发条件是「用户对 B 级清单裁决后处理」。该条件已由 [B8](../plan/b8-mcp-secret-prefix.md)（2026-10-08）触发并关闭，不再留在上表等待下一次授权。裁决是保留 `crates/workspace/src/import/mcp.rs` 的 `MCP_SECRET_SERVICE_PREFIX` 副本：不让 workspace 依赖 auth，不新建常量包，不把前缀下沉到 domain。auth locator 仍是运行时命名权威；副本只构造导入计划的 service 字符串，须与 `pawork.mcp.`（含末尾点）同批保持字节相同。这次没有物理去重。
+RV-2026-10-B 的原触发条件是「用户对 B 级清单裁决后处理」。该条件已由 B8（2026-10-08）触发并关闭，不再留在上表等待下一次授权。裁决是保留 `crates/workspace/src/import/mcp.rs` 的 `MCP_SECRET_SERVICE_PREFIX` 副本：不让 workspace 依赖 auth，不新建常量包，不把前缀下沉到 domain。auth locator 仍是运行时命名权威；副本只构造导入计划的 service 字符串，须与 `pawork.mcp.`（含末尾点）同批保持字节相同。这次没有物理去重。

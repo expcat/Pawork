@@ -174,7 +174,7 @@
 | `pty/mod.rs` | 输出捕获、owner 强制、`reconnect_snapshot_retains_output_and_exit_state` 保留退出后缓冲与状态、broadcast 覆写丢弃计数、kill 整树（后代收割）、多会话 cleanup_owner / shutdown、resize、退出状态与 signal 传播。 |
 | `pty/buffer.rs` | 环形丢最老、输出区间与内容一致；被删除的 `read_since` 回归不再有接受外部游标的入口，容量与快照回归仍保留。 |
 
-B1（2026-10-08）逐项处置：spawn 禁止硬门新增 `native_restricted_rejects_both_spawn_paths_before_execution`（普通与交互入口均先拒绝）；NativeRestricted 交互启动与 stdin 写入复用 [mcp](mcp.md) 的 `sandboxed_spawner_round_trips_stdio_through_sandbox` 真实消费回归，本轮已通过，不再重复新增冒烟；stdin close 与非组长拒绝补上述最小回归，macOS 包级门禁通过。Windows Job 映射回归已新增，`cargo check -p pawork-exec --offline --tests --target x86_64-pc-windows-msvc` 通过；原生运行待验，不把交叉类型检查记为 Windows 内核行为验证。原五项登记出处与完整验证记录见 [B1 裁决记录](../../plan/b1-policy-exec.md)。
+B1（2026-10-08）逐项处置：spawn 禁止硬门新增 `native_restricted_rejects_both_spawn_paths_before_execution`（普通与交互入口均先拒绝）；NativeRestricted 交互启动与 stdin 写入复用 [mcp](mcp.md) 的 `sandboxed_spawner_round_trips_stdio_through_sandbox` 真实消费回归，本轮已通过，不再重复新增冒烟；stdin close 与非组长拒绝补上述最小回归，macOS 包级门禁通过。Windows Job 映射回归已新增，`cargo check -p pawork-exec --offline --tests --target x86_64-pc-windows-msvc` 通过；原生运行待验，不把交叉类型检查记为 Windows 内核行为验证。Windows 原生执行见 [ENV-02](../../plan/env-02-platform-matrix.md)。
 
 ## 8. 注意事项与已知限制
 

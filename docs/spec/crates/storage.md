@@ -44,7 +44,7 @@
 | `src/session/import/formats/pi.rs` | ~270 | Pi JSONL 纯函数解析 `parse_pi_line`（`pub(crate)`；Header/Message/ToolCall/ModelSwitch/Compaction/Branch/Custom/Unknown）与公开 `PiImportReport` |
 | `src/session/import/formats/compat.rs` | ~2180 | 外部会话解析：`ExternalSource`（Claude/Codex/Grok/Cursor）各自解析器与 Claude/Codex 双形态嗅探、公开 `find_secret` Secret 扫描、crate 内 `derive_compat_session_id`/`content_fingerprint`/`effective_identity`、事件映射与 `validate_structure`；JSONL 家族行级解析器与流式 Secret 聚合供文件导入复用 |
 | `src/session/import/formats/export.rs` | ~290 | `SessionExport` v3 JSON 形状（v1/v2 兼容读、身份回填）与 `validate` |
-| `src/session/import/persist_pi.rs` | ~450 | `import_pi_jsonl(_lines)`：Secret 预扫 → header 必需 → 单 `Immediate` 事务落 main 分支（Branch marker 折叠为 Diagnostic） |
+| `src/session/import/persist_pi.rs` | ~534 | `import_pi_jsonl(_lines)`：Secret 预扫 → header 必需 → 单 `Immediate` 事务落 main 分支（Branch marker 折叠为 Diagnostic） |
 | `src/session/import/persist_compat.rs` | ~1160 | `import_compat(_from_file/_dry_run)` 与 `compat_import_history`：指纹幂等、`compat_import_identity` 冲突检测、键集分页；文件导入 JSONL 家族 BufReader 逐行流式 |
 | `src/session/import/persist_export.rs` | ~900 | `export_session`/`import_session`/`get_session_identity`：v3 全量往返（含 `session_tags` 读写），导入侧身份匹配 + 顺序/parent 预检 |
 | `src/blob/mod.rs` | ~30 | blob 门面：`atomic` 私有；artifact 常开 re-export；`protected`/`checkpoint` 随 feature |
@@ -296,7 +296,7 @@ cargo test -p pawork-storage --offline --lib --tests --features compaction,check
 - compat 与 Pi 导入固定落 `local/default` / `local/user` 身份与 `main` 分支；Pi 的 Branch marker 折叠为 `pi.branch_collapsed` Diagnostic，不重建分支树。
 - artifact 与 protected 各自持有独立 SQLite（`artifacts.sqlite3` / `protected.sqlite3`），schema 用 `CREATE TABLE IF NOT EXISTS` 直建（`SCHEMA_VERSION = 1`），未接入 migration 框架；每个 root 假定单宿主进程独占（protected 的 open-time reconcile 会清走并发宿主的 pending 文件）。
 - protected 的 `logical_ref` 对外稳定、物理文件按**密文** digest 寻址：密钥轮换后重加密会换物理文件但 ref 不变；没有增加引用或清除延迟回收标记的公开入口。
-- **B2 预留面裁决（2026-10-08）**：删除无生产/恢复/迁移消费者的 `ProtectedBlobStore::retain`、`CheckpointService::snapshot_run` / `conflict_check` 与 `ConflictReport`；三个 Options 类型及 `open_with_options` 收为私有，SQLite 容量/超时参数删除，blob 预算拒绝与 protected 延迟 GC 实现保留。Host 始终使用默认打开入口；私有预算/保留期测试消费不代表产品可配置或真实 Host 验收。依据与验证见 [B2 记录](../../plan/b2-storage.md)。
+- **B2 预留面裁决（2026-10-08）**：删除无生产/恢复/迁移消费者的 `ProtectedBlobStore::retain`、`CheckpointService::snapshot_run` / `conflict_check` 与 `ConflictReport`；三个 Options 类型及 `open_with_options` 收为私有，SQLite 容量/超时参数删除，blob 预算拒绝与 protected 延迟 GC 实现保留。Host 始终使用默认打开入口；私有预算/保留期测试消费不代表产品可配置或真实 Host 验收。
 - checkpoint 只靠 Blob 还原、绝不 `git reset --hard`；`checkpoint-state-v1.json` 版本不符直接 fail-closed，不做静默降级。
 - `DatabaseActor` 单连接串行：长事务（大导入、rebuild、迁移）会队头阻塞同一 store 上的所有调用（含读）；诊断类只读负载可另开 `open_read_only` 副本绕开写队列。
 - `switch_branch` 改的是 `sessions.active_branch` 行字段，属**全局写指针**：同一 store 的多个消费方共享 active 分支，切换是全局副作用。

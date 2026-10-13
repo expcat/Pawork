@@ -145,7 +145,7 @@ ADR-053（OPT-1）：schema 新增 `approval_mode: Option<pawork_policy::Approva
 - 条目 id 命名：`instructions:<path>` / `skill:<id>` / `agent:<name>` / `mcp:<server>` / `hook:<event>:<group>:<index>` / `permission:<list>:<tool>` / `permission:global`。
 - 无 feature 门控；全部 API 常驻。
 
-**技能录制写入**：`resources/recording.rs` 导出 `write_skill_recording(roots, name, description, content)`，创建 `.pawork/skills/<name>/SKILL.md` 和现行 `manifest.toml`，返回相对路径。名称校验、既有路径裁决后，Unix 使用持有目录 fd 的 mkdirat/openat + NOFOLLOW/EXCL，新文件 0600、逐文件 sync、manifest 最后写入；已有目录拒绝覆盖。非 Unix 尚无等价安全写入原语，明确返回 `io::ErrorKind::Unsupported`，不回退存在竞态的路径拼接写入。[ENV-06](../../plan/env-06-skill-non-unix.md) 已明确选择维持该边界，未修改 workspace 写入实现，也不表示 Windows 或其它非 Unix 已支持或已原生验收。生产只由鉴权本机 GUI 的 Host 保存命令调用；凭据内容检查在 app。Unix 正常产物由既有 ResourceLoader 读取，app 定向回归覆盖可加载与 symlink/Secret 拒绝；非 Unix 的固定 Host 提示与零产物断言另在其平台分支，本轮 macOS 未编译或执行该分支。
+**技能录制写入**：`resources/recording.rs` 导出 `write_skill_recording(roots, name, description, content)`，创建 `.pawork/skills/<name>/SKILL.md` 和现行 `manifest.toml`，返回相对路径。名称校验、既有路径裁决后，Unix 使用持有目录 fd 的 mkdirat/openat + NOFOLLOW/EXCL，新文件 0600、逐文件 sync、manifest 最后写入；已有目录拒绝覆盖。非 Unix 尚无等价安全写入原语，明确返回 `io::ErrorKind::Unsupported`，不回退存在竞态的路径拼接写入。ENV-06 已明确选择维持该边界，未修改 workspace 写入实现，也不表示 Windows 或其它非 Unix 已支持或已原生验收。生产只由鉴权本机 GUI 的 Host 保存命令调用；凭据内容检查在 app。Unix 正常产物由既有 ResourceLoader 读取，app 定向回归覆盖可加载与 symlink/Secret 拒绝；非 Unix 的固定 Host 提示与零产物断言另在其平台分支，本轮 macOS 未编译或执行该分支。
 
 ## 4. 核心行为与数据流
 
@@ -206,11 +206,11 @@ ADR-053（OPT-1）：schema 新增 `approval_mode: Option<pawork_policy::Approva
 - **非 Builtin/Global 层不得自我提权 / 劫持出站**（冻结红线）：`approval_mode` / `workspace_trust` / `trust_workspaces`、顶层 `proxy_url`、顶层 vision/search 角色四键、`providers[].base_url` / `providers[].use_proxy` / `providers[].disabled_models`、`mcp.servers.*.trusted` / `auto_start` 在 Profile / Workspace / Session / Run 层一律剥离并告警；只剥字段、不删整段配置；Global 层设置照常生效。
 - **路径输入契约**：一切工作区文件访问基于 `workspace_id + root_index + relative_path`；绝对路径、盘符、UNC、保留设备名、`.git` 内部、symlink 逃逸、非普通文件一律拒绝。`WorkspaceRelativePath` 在 serde 反序列化边界即拒绝 `..` 与绝对路径（协议入口防线）。
 - **resources 确定性与隔离**：同输入必同输出（条目与诊断确定性排序）；单资源损坏降级为诊断不崩批；`global_resource_dir` 只能由宿主注入。
-- **resources 序列化消费面**：`ResourceRequest` / `ResourceSelection` 是宿主内部加载输入，不进入 `PaworkConfig`、数据库、事件或生成的 GUI / core-api / headless schema。`ResourceKind` 与诊断的 serde 不构成独立磁盘 / wire 格式；`ResourceInstructionKind` 另被 `CompatPayload::Instructions` 用于 `compat-import.json`，现行扫描只产出 `user_global_instructions` / `workspace_instructions`。B4 收窄未激活模板 / LSP / hook 预留，不改这些已有字符串、其它注入优先级或 compatibility 计划版本；裁决见 [B4](../../plan/b4-prompt-template.md)。
+- **resources 序列化消费面**：`ResourceRequest` / `ResourceSelection` 是宿主内部加载输入，不进入 `PaworkConfig`、数据库、事件或生成的 GUI / core-api / headless schema。`ResourceKind` 与诊断的 serde 不构成独立磁盘 / wire 格式；`ResourceInstructionKind` 另被 `CompatPayload::Instructions` 用于 `compat-import.json`，现行扫描只产出 `user_global_instructions` / `workspace_instructions`。B4 收窄未激活模板 / LSP / hook 预留，不改这些已有字符串、其它注入优先级或 compatibility 计划版本；此为 B4 裁决。
 - **memory 不虚假可用**：profile 声明 `memory.enabled = true` 且文件未自标 `unavailable` 时，一律显式标 `Unavailable` 并 warning，绝不静默假装可用。
 - **skill 运行时只注入正文**：`SKILL.md` 进入 `ResourceInstruction`；`parameters` / `scripts` / `permissions` 不进入工具策略。`scripts` / `assets` 的路径校验是 fail-closed 安全拒绝。compat 导入写入的 `permissions`（含 Claude `allowed-tools`）只留在 manifest 文件里，加载后不执行。
 - **import 安全边界**（冻结）：只读扫描；绝不执行任何外部内容；明文 Secret 一律丢弃（计划序列化全文不得出现 Secret 字面量，定向回归断言）；导入 hook 恒 `enabled=false` + `requires_review=true`；MCP 条目恒 `trusted=false` + `auto_start=false` + `requires_review`；`bypassPermissions` / approval `never` 拒绝导入（Unsupported）；`on-failure` / `acceptEdits` 降级映射为 Ask 并告警，绝不映射为 Allow。
-- **MCP 导入前缀副本（B8，2026-10-08）**：`MCP_SECRET_SERVICE_PREFIX` 只构造并筛选导入计划里的 service，形状是 `pawork.mcp.<server>`。它不解析 Secret，也不代替 `is_mcp_secret_service`。值必须与 auth locator 的 `pawork.mcp.` 逐字节相同，含末尾点；没有末尾点的 `pawork.mcp` 不属于该命名空间。不改依赖，不改导入 JSON 字节。详见 [B8](../../plan/b8-mcp-secret-prefix.md)。
+- **MCP 导入前缀副本（B8，2026-10-08）**：`MCP_SECRET_SERVICE_PREFIX` 只构造并筛选导入计划里的 service，形状是 `pawork.mcp.<server>`。它不解析 Secret，也不代替 `is_mcp_secret_service`。值必须与 auth locator 的 `pawork.mcp.` 逐字节相同，含末尾点；没有末尾点的 `pawork.mcp` 不属于该命名空间。不改依赖，不改导入 JSON 字节。
 - **export_plan 幂等**：相同输入（含 `select` 子集）指纹相同→`Noop`；指纹命中但磁盘内容不符仍重写；输出目录 / 目标文件为 symlink 一律 `UnsafeTarget` 拒绝；只用 tmp + rename 原子写。
 - **冲突裁决确定性**：tier priority → `ExternalSource.rank()` → 相对路径字典序，三级全定序；胜者保留原 `requires_review` 不因胜出放宽。
 - **detect 只读文档化位置**：每种外部来源只探测其文档化的 workspace 内已知路径（或调用方显式启用的全局根）；全局来源默认不读；未知版本 / 形态只返回诊断，绝不猜测执行。
@@ -221,7 +221,7 @@ ADR-053（OPT-1）：schema 新增 `approval_mode: Option<pawork_policy::Approva
 ## 6. 依赖关系
 
 - **依赖**：`pawork-domain`（`WorkspaceId`；profile 域类型 `AgentProfileV2` / `ProfileToolRules` / `ReasoningEffort` 等）、`pawork-policy`（`resolve_workspace_path` 路径内核、`canonicalize_platform` / `path_within_root` / `relative_to_root`、`PathSafetyError`、`ApprovalMode`）、`directories`（平台配置目录）、`dunce`、`ignore` + `notify`（文件索引）、`semver`（serde 特性，skill 版本）、`serde` / `serde_json` / `toml`、`thiserror`、`tokio`（macros / rt / sync / time）；Unix 下 `libc`。
-- **不依赖 `pawork-auth`（B8，2026-10-08）**：§5 的前缀副本是这条依赖方向的结果，不是待删除的临时重复。不为 `pawork.mcp.` 增加对 auth 的依赖，也不把前缀下沉到 domain 或新建常量包。运行时判定留在 auth locator。详见 [B8](../../plan/b8-mcp-secret-prefix.md)。
+- **不依赖 `pawork-auth`（B8，2026-10-08）**：§5 的前缀副本是这条依赖方向的结果，不是待删除的临时重复。不为 `pawork.mcp.` 增加对 auth 的依赖，也不把前缀下沉到 domain 或新建常量包。运行时判定留在 auth locator。
 - **被依赖**：
   - `pawork-tools`：八个文件系统工具（read_file / write_file / edit_file / apply_patch / list_directory / search_text / find_files / run_command）经 `WorkspaceService` 解析路径；`mcp/config.rs` 消费 `ResolvedConfig`。
   - `pawork-app`：宿主装配 config（`Loader::discover`）、resources（`ResourceLoader`）、import（`CompatLoader` / `scan_local_sessions`，见 `import_host.rs` / `services/import.rs`）并与 tools 共享同一 `WorkspaceService` 实例（约 12 个文件引用）。

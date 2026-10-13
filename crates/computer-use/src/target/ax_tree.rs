@@ -347,7 +347,7 @@ pub enum Capability {
     Unverified,
 }
 
-/// The CU-01 measured matrix (docs/plan/cu-01-background-feasibility.md).
+/// The CU-01 measured matrix (docs/spec/crates/computer-use.md).
 /// minimized changes support in two measured ways: AppKit targeted keys are
 /// silently dropped while minimized, and window move/resize was only measured
 /// in background/occluded states.

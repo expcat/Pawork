@@ -102,13 +102,13 @@ Workspace 为 **29 成员（27 库 + 2 应用）**：27 个库平铺 `crates/<�
 2026-10-03 用户授权对未发布功能直接修正 API：网关原生视频目录 / 任务使用 domain 的共享纯数据类型，`GatewayBackend` 显式实现目录、提交与按客户端查询三个端口，移除默认兼容实现。视频任务 ID 绑定提交账号，Secret 与身份同事务快照，查询不依赖当前选中账号；Chat / 视频共用渠道配置、JSON 有界读取及租约取消收尾。该媒体任务 API 不进入 Agent loop，不新增数据库或依赖边；生图仍归一为既有 `ImageOutput`，GUI / 事件冻结契约不变。
 
 
-**右侧浏览器（2026-09-16，用户授权）**：`desktop → browser → 系统 WebKit` 承载网页视图及受限 DOM 操作；网页脚本运行于系统内容进程，不把 JS Runtime 嵌入 Agent / Core 或构建链。每任务一个内存页面，非持久网站数据互相隔离；不导入系统浏览器资料，不提供网页到 Rust 的工具桥。地址栏、链接与重定向限定 HTTP(S)，支持本地预览。聊天经 Host 的 `browser` 工具、Policy 与显式审批，通过 GUI 1.18 `browser_next` / `browser_respond` 操作当前任务页面，结果作为工具事件持久化；历史重放不派发操作。关闭释放，隐藏和切任务保留；尚无截图、多标签、下载与跨启动恢复。数据库 schema 不变。
+**右侧浏览器（2026-09-16，用户授权）**：`desktop → browser → 系统 WebKit` 承载网页视图及受限 DOM 操作；网页脚本运行于系统内容进程，不把 JS Runtime 嵌入 Agent / Core 或构建链。每任务一个内存页面，非持久网站数据互相隔离；不导入系统浏览器资料，不提供网页到 Rust 的工具桥。地址栏、链接与重定向限定 HTTP(S)，支持本地预览。聊天经 Host 的 `browser` 工具、Policy 与显式审批，通过 GUI 1.18 `browser_next` / `browser_respond` 操作当前任务页面，结果作为工具事件持久化；历史重放不派发操作。关闭释放，隐藏和切任务保留。CU-13（2026-10-07）补截图与带页面代际 / DOM revision 的一次性元素观测；CU-14 由 Desktop 组合多个 `BrowserView` 提供有任务归属的多标签。尚无下载与跨启动恢复。数据库 schema 不变。
 
 **外部浏览器控制（2026-10-07，CU-15 任务授权）**：用户真实 Chrome / Edge 的后台控制经「Host `external_browser` 工具 → GUI 1.18 BrowserBroker（不透明 JSON，wire 零改动）→ Desktop 按 `ext_` 前缀分流 → `pawork-browser` ext client → unix socket → native messaging 桥进程（浏览器按 manifest 拉起，纯 Rust）→ 固定功能 MV3 扩展 → 真实标签页」。扩展 JS 属浏览器自身运行时，不违反纯 Rust 构建链红线；不用前台激活或全局键鼠。站点授权与 CU-16 同构（attach 钉 origin + 每动作扩展侧复核）；句柄绑定桥进程代际；Host 工具为动作盖章 task（run_id），站点绑定（(task, tab) 键）与标签归属均按任务隔离，Agent 只能关本任务建的标签。扩展由用户确认安装（Chrome ≥137 品牌版忽略 `--load-extension`，安装即用户动作）；桥发现文件带同用户 token，多浏览器同时启用即拒绝。旧 Desktop 对未知 `ext_*` 动作 fail-closed。
 
 ### 3.1 终局包布局先行
 
-**隔离 Linux 应用控制（CU-21，2026-10-12）**：`pawork --computer-native isolated` 在本次装配选择容器 GuestSurface；默认仍为本机 Host。GUI、工具与 child 共用唯一 `Core.native` / TargetRegistry，request 不签授权、GUI 明确批准后绑定。容器内纯 Rust `computer_guest` 经 X11 / AT-SPI 提供 Firefox 窗口与元素，固定 loopback guest 通道校验客户端共享 token；图像复用原 RFB 连接。运行容器不挂宿主目录/设备/桌面，guest 不承载 Agent Engine 或独立 Core。raw `computer` 与隔离表面共用桌面占用，环境标为 `isolated_desktop`，不套 macOS 后台矩阵；GUI wire、domain 事件与存储 schema 不变。当前能力及验收边界见 [CU-21](plan/cu-21-isolated-linux.md)。
+**隔离 Linux 应用控制（CU-21，2026-10-12）**：`pawork --computer-native isolated` 在本次装配选择容器 GuestSurface；默认仍为本机 Host。GUI、工具与 child 共用唯一 `Core.native` / TargetRegistry，request 不签授权、GUI 明确批准后绑定。容器内纯 Rust `computer_guest` 经 X11 / AT-SPI 提供 Firefox 窗口与元素，固定 loopback guest 通道校验客户端共享 token；图像复用原 RFB 连接。运行容器不挂宿主目录/设备/桌面，guest 不承载 Agent Engine 或独立 Core。raw `computer` 与隔离表面共用桌面占用，环境标为 `isolated_desktop`，不套 macOS 后台矩阵；GUI wire、domain 事件与存储 schema 不变。当前能力及验收边界见 [computer-use Spec](spec/crates/computer-use.md)。
 
 - 现行布局为 §2 的 29 成员；browser 从首版即按用户要求独立。新能力按职责归属进入现有包；新增独立边界依 §2.1 的判断并取得任务授权；**禁止**「先写在 bin 里、以后再抽包」。
 - 包间依赖方向遵守 §2 表与不合并清单；canonical 纯净红线不变。
@@ -133,7 +133,7 @@ Workspace 为 **29 成员（27 库 + 2 应用）**：27 个库平铺 `crates/<�
 | 缓存注解（附加式） | `CanonicalModelRequest` 缓存策略枚举（`Off/Auto/Explicit{retention}`）+ 前缀分段标注；`ModelResponseSummary`/usage 增 `cache_read`/`cache_write`；serde 向后兼容 | golden 先行；方案见 [references.md](references.md) 附录 B（F5-B） |
 | 协议兼容表 | `PROTOCOL_CRATE_COMPATIBILITY` | `crates/protocol` |
 
-**删除 `AppEvent::TeamEvent`（2026-10-13，用户授权，[B23](plan/b23-team-event-removal.md)）**：`teams` 随 R0 归档后，该变体与 Team 镜像类型在仓内没有构造点，唯一引用是 ACP 的种类字符串。删除后 `AppEvent` 为 22 变体，三组 `schemas/` 同批去掉 Team 声明。历史上没有 Host 发出过 `team_event` 帧，所以不提升 minor；帧 golden、domain `AgentEvent` 与存储 schema 不变。
+**删除 `AppEvent::TeamEvent`（2026-10-13，用户授权，B23）**：`teams` 随 R0 归档后，该变体与 Team 镜像类型在仓内没有构造点，唯一引用是 ACP 的种类字符串。删除后 `AppEvent` 为 22 变体，三组 `schemas/` 同批去掉 Team 声明。历史上没有 Host 发出过 `team_event` 帧，所以不提升 minor；帧 golden、domain `AgentEvent` 与存储 schema 不变。
 
 ### 3.3 消费面纪律与路径校验
 

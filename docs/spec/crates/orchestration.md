@@ -144,7 +144,7 @@
 
 ## 8. 注意事项与已知限制
 
-- Cargo description 已移除归档的 Agent Teams；Teams 仍归档于 `v2-final`；无构造点的 `AppEvent::TeamEvent` 镜像已于 2026-10-13 删除（[B23](../../plan/b23-team-event-removal.md)）。
+- Cargo description 已移除归档的 Agent Teams；Teams 仍归档于 `v2-final`；无构造点的 `AppEvent::TeamEvent` 镜像已于 2026-10-13 删除（B23）。
 - `OrchestrationEvent` 是本包私有事件模型（内存 `event_log`），不并入 `pawork-domain::AgentEvent`；持久化与对外投影由宿主负责。
 - 预算度量当前只贯通 input / output / cost 三维；`UsageRecord` 的 cache_read / cache_write 恒写 0（cache 通路未贯通，完整贯通单独排期，不写误导值）。
 - `recover_report` 不能作为热恢复：正式库没有这个入口。崩溃后要继续操作必须重新 spawn。App 不持久化 `OrchestrationEvent`，不能把测试诊断说成宿主已能恢复 lease、取消令牌或 worker 树。

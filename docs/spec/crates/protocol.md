@@ -354,5 +354,5 @@ ADR-057：思考与正文按 run/message 分别累积有序增量，committed �
 - `PROTOCOL_CRATE_COMPATIBILITY` 是文档性映射，不参与 wire 协商。
 - `TimelineEntry` / `TimelineEntryKind` / `ForkBoundary` 是纯数据渲染态：不进帧、不参与 typegen（`schemas/` 三组均无对应 `.d.ts`），跨进程传输的时间线形状只有 `TimelinePage` / `TimelineItem`。
 - `AppQueryEnvelope` 没有 `expected_revision` / `idempotency_key`（查询天然幂等）；命令去重语义全部挂在 `AppCommandEnvelope` 上。
-- `AppEvent::TeamEvent` 与 Team 镜像类型已按 2026-10-13 用户裁决删除（[B23](../../plan/b23-team-event-removal.md)）：原 `teams` crate 随 R0 归档后仓内无构造点，三组 schema 同批去掉 Team 声明；不提升 minor，因为历史上没有 Host 发出过该帧。teams 复活时按 [backlog](../backlog.md) BK-WORK-01 重新定型 wire 并先改 golden。
+- `AppEvent::TeamEvent` 与 Team 镜像类型已按 2026-10-13 用户裁决删除（B23）：原 `teams` crate 随 R0 归档后仓内无构造点，三组 schema 同批去掉 Team 声明；不提升 minor，因为历史上没有 Host 发出过该帧。teams 复活时按 [backlog](../backlog.md) BK-WORK-01 重新定型 wire 并先改 golden。
 - 相关文档：[domain.md](domain.md) · [testkit.md](testkit.md) · [../README.md](../README.md) · [AGENTS.md](../../../AGENTS.md)。
