@@ -279,9 +279,8 @@ impl HttpClient {
                         .get(reqwest::header::RETRY_AFTER)
                         .and_then(|v| v.to_str().ok())
                         .map(str::to_owned);
-                    let body = response.text().await.unwrap_or_default();
-                    let snippet = truncate(&body, 512);
-                    return Err(classify_status(status, retry_after.as_deref(), &snippet));
+                    drop(response);
+                    return Err(classify_status(status, retry_after.as_deref()));
                 }
                 let value = response
                     .json::<serde_json::Value>()
@@ -303,9 +302,8 @@ impl HttpClient {
                 .get(reqwest::header::RETRY_AFTER)
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_owned);
-            let body = response.text().await.unwrap_or_default();
-            let snippet = truncate(&body, 512);
-            return Err(classify_status(status, retry_after.as_deref(), &snippet));
+            drop(response);
+            return Err(classify_status(status, retry_after.as_deref()));
         }
 
         // 将响应体转为字节流；读取期间的 IO 错误归一为 StreamInterrupted。
@@ -345,17 +343,8 @@ pub fn loopback_aware_proxy(proxy: &str) -> Result<reqwest::Proxy, String> {
 /// Debug / 错误消息只保留 scheme/host/port，剥掉 userinfo（以及 path/query/fragment）。
 fn redact_proxy_url(proxy: &str) -> String {
     match proxy.parse::<reqwest::Url>() {
-        Ok(url) => redact_url_origin(&url),
+        Ok(url) => super::redact_url_origin(&url),
         Err(_) => strip_userinfo(proxy),
-    }
-}
-
-fn redact_url_origin(url: &reqwest::Url) -> String {
-    let scheme = url.scheme();
-    let host = url.host_str().unwrap_or("invalid-host");
-    match url.port() {
-        Some(port) => format!("{scheme}://{host}:{port}"),
-        None => format!("{scheme}://{host}"),
     }
 }
 
@@ -371,29 +360,9 @@ fn strip_userinfo(raw: &str) -> String {
     format!("{}{}", &raw[..scheme_end + 3], &rest[at + 1..])
 }
 
-/// 截断字符串到指定字节长度（在 UTF-8 边界安全处）。
-fn truncate(value: &str, max_bytes: usize) -> String {
-    if value.len() <= max_bytes {
-        return value.to_string();
-    }
-    let mut end = max_bytes;
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &value[..end])
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn truncate_respects_utf8_boundary() {
-        // 中文每字 3 字节，截到 4 字节应回退到 3
-        let out = truncate("你好世界", 4);
-        assert!(out.ends_with('…'));
-        assert!(out.chars().count() >= 1);
-    }
 
     #[test]
     fn local_targets_are_detected() {

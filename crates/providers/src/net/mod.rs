@@ -7,3 +7,12 @@
 pub mod http;
 pub mod retry;
 pub mod sse;
+
+pub(crate) fn redact_url_origin(url: &reqwest::Url) -> String {
+    let scheme = url.scheme();
+    let host = url.host_str().unwrap_or("invalid-host");
+    match url.port() {
+        Some(port) => format!("{scheme}://{host}:{port}"),
+        None => format!("{scheme}://{host}"),
+    }
+}

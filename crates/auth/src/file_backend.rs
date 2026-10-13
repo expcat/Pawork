@@ -559,10 +559,20 @@ mod tests {
             "second instance must observe lock contention"
         );
         drop(first);
+        // 同进程其它测试会 spawn 子进程；子进程在 exec 关闭 CLOEXEC 描述符前短暂
+        // 共享同一 flock，释放后需有界重试。
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let reacquired = loop {
+            if let Some(guard) = try_acquire_file_lock(&path).expect("lock after release") {
+                break Some(guard);
+            }
+            if std::time::Instant::now() >= deadline {
+                break None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
         assert!(
-            try_acquire_file_lock(&path)
-                .expect("lock after release")
-                .is_some(),
+            reacquired.is_some(),
             "closing the owner file must release the lock"
         );
     }

@@ -19,7 +19,6 @@ use pawork_domain::{
 
 use crate::normalize_vendor_error;
 use crate::provider::{OpenAiCompatibleConfig, OpenAiCompatibleProvider};
-use serde_json::Value;
 
 pub const DEFAULT_BASE_URL: &str = "https://api.kimi.com/coding/v1";
 pub const PROVIDER_ID: &str = "kimi-code";
@@ -124,21 +123,8 @@ impl ModelProvider for KimiCodeProvider {
                 .cloned()
                 .unwrap_or_else(|| unknown_model(id));
             // 官方 kimi-cli auth/platforms.py ModelInfo（2026-09-08）。
-            if let Some(name) = entry.get("display_name").and_then(Value::as_str) {
-                definition.display_name = name.to_owned();
-            }
-            if let Some(context) = entry.get("context_length").and_then(Value::as_u64) {
-                definition.context_window_tokens = context;
-            }
-            if let Some(thinking) = entry.get("supports_reasoning").and_then(Value::as_bool) {
-                definition.capabilities.thinking = thinking;
-            }
-            if let Some(image_input) = entry.get("supports_image_in").and_then(Value::as_bool) {
-                definition.capabilities.image_input = image_input;
-            } else {
-                // VISION-2：远端未声明时按官方视觉指南默认表回填。
-                pawork_models::registry::apply_default_image_input(&mut definition);
-            }
+            // 不认 input_modalities：缺 supports_image_in 时只走默认表。
+            crate::provider::apply_catalog_common_fields(&mut definition, entry);
             // supports_video_in 不证明当前 endpoint 支持远程 HTTP(S) 视频；不能冒充 image_input。
             // ADR-063：远端未声明推理强度时按默认表回填（k3 系实测忽略
             // effort 字段，表内为未知不约束；K2.7 系为显式无档位）。

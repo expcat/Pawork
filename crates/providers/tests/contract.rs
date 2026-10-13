@@ -402,7 +402,7 @@ async fn contract_rate_limit_is_normalized() {
         .respond_with(
             ResponseTemplate::new(429)
                 .insert_header("retry-after", "5")
-                .set_body_string("slow down"),
+                .set_body_string("slow down sk-leak-token-429-body"),
         )
         .mount(&server)
         .await;
@@ -420,6 +420,9 @@ async fn contract_rate_limit_is_normalized() {
     contract::assert_error_kind(&sink.events(), Some(&err), ProviderErrorKind::RateLimited);
     assert!(err.retryable);
     assert_eq!(err.retry_after_ms, Some(5_000));
+    assert_eq!(err.message, "HTTP 429");
+    assert!(!err.message.contains("sk-leak-token-429-body"));
+    assert!(!err.message.contains("slow down"));
 }
 
 #[tokio::test]

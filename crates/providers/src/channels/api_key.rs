@@ -103,7 +103,7 @@ pub struct ApiKeyChannelProvider {
     chat: OpenAiCompatibleProvider,
     responses: ResponsesTransport,
     model_transports: BTreeMap<ModelId, ModelTransport>,
-    qwen_search_endpoint: bool,
+    policy: ApiKeyChannelPolicy,
 }
 
 impl ApiKeyChannelProvider {
@@ -113,8 +113,7 @@ impl ApiKeyChannelProvider {
         credential: Option<ResolvedCredential>,
     ) -> Result<Self, ProviderError> {
         let credential = require_api_key(credential)?;
-        let qwen_search_endpoint = config.preset.id == "qwen-token-plan"
-            && config.base_url.trim_end_matches('/') == config.preset.default_base_url;
+        let policy = channel_policy(config.preset, &config.base_url);
         let provider_id = ProviderId::new(config.preset.id);
         let mut chat = OpenAiCompatibleProvider::new(
             OpenAiCompatibleConfig {
@@ -130,13 +129,13 @@ impl ApiKeyChannelProvider {
         responses.request_timeout = config.request_timeout;
         responses.wire = ResponsesWireOptions {
             store: None,
-            include_encrypted_reasoning: !qwen_search_endpoint,
+            include_encrypted_reasoning: !policy.search_enabled,
             // SEARCH-1：API-key 通道 Responses 模型默认不写 web_search；opencode-go
             // 的 grok 家族 2026-09-23 实测透传（见 registry 默认表），按通道放开。
-            hosted_web_search: config.preset.id == "opencode-go" || qwen_search_endpoint,
+            hosted_web_search: policy.responses_hosted_search,
         };
         let mut responses = ResponsesTransport::new(responses, credential)?;
-        if config.preset.id == "opencode-go" {
+        if policy.session_headers {
             chat = chat.with_opencode_session();
             responses = responses.with_opencode_session();
         }
@@ -145,7 +144,7 @@ impl ApiKeyChannelProvider {
             chat,
             responses,
             model_transports: config.model_transports,
-            qwen_search_endpoint,
+            policy,
         })
     }
 
@@ -333,6 +332,29 @@ fn documented_model_transports(channel: &str) -> BTreeMap<ModelId, ModelTranspor
         .collect()
 }
 
+struct ApiKeyChannelPolicy {
+    session_headers: bool,
+    responses_hosted_search: bool,
+    search_requires_default_base: bool,
+    search_enabled: bool,
+    reject_external_image_urls: bool,
+    verify_via_usage: bool,
+}
+
+fn channel_policy(preset: &'static ChannelPreset, base_url: &str) -> ApiKeyChannelPolicy {
+    let go = preset.id == "opencode-go";
+    let qwen = preset.id == "qwen-token-plan";
+    let search_enabled = qwen && base_url.trim_end_matches('/') == preset.default_base_url;
+    ApiKeyChannelPolicy {
+        session_headers: go,
+        responses_hosted_search: go || search_enabled,
+        search_requires_default_base: qwen,
+        search_enabled,
+        reject_external_image_urls: preset.id == "kimi-platform",
+        verify_via_usage: go,
+    }
+}
+
 fn require_api_key(
     credential: Option<ResolvedCredential>,
 ) -> Result<ResolvedCredential, ProviderError> {
@@ -378,13 +400,13 @@ impl ModelProvider for ApiKeyChannelProvider {
                 pawork_models::registry::apply_default_image_output(model);
                 pawork_models::registry::apply_default_text(model);
                 pawork_models::registry::apply_default_hosted_web_search(model);
-                if self.qwen_search_endpoint && qwen_search_model(model.id.as_str()) {
+                if self.policy.search_enabled && qwen_search_model(model.id.as_str()) {
                     model
                         .capabilities
                         .hosted_tool_tags
                         .insert(pawork_domain::ToolCapabilityTag::WebSearch);
                     model.capabilities.citations = true;
-                } else if self.preset.id == "qwen-token-plan" {
+                } else if self.policy.search_requires_default_base {
                     model
                         .capabilities
                         .hosted_tool_tags
@@ -403,8 +425,8 @@ impl ModelProvider for ApiKeyChannelProvider {
         sink: &dyn ProviderEventSink,
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, ProviderError> {
-        if self.preset.id == "qwen-token-plan" && !request.hosted_tools.is_empty() {
-            if !self.qwen_search_endpoint || !qwen_search_model(request.model.as_str()) {
+        if self.policy.search_requires_default_base && !request.hosted_tools.is_empty() {
+            if !self.policy.search_enabled || !qwen_search_model(request.model.as_str()) {
                 return Err(ProviderError::new(
                     ProviderErrorKind::InvalidRequest,
                     "Qwen hosted search requires a documented Token Plan endpoint and model",
@@ -430,7 +452,7 @@ impl ModelProvider for ApiKeyChannelProvider {
                         "API-key Chat Completions model does not declare provider-hosted tools",
                     ));
                 }
-                if self.preset.id == "kimi-platform" {
+                if self.policy.reject_external_image_urls {
                     crate::request::reject_kimi_external_image_urls(request)?;
                 }
                 self.chat
@@ -460,7 +482,7 @@ pub async fn verify_api_key(
     candidate_key: &str,
 ) -> Result<(), ProviderError> {
     let credential = ResolvedCredential::new(CredentialKind::ApiKey, candidate_key);
-    if config.preset.id == "opencode-go" {
+    if channel_policy(config.preset, &config.base_url).verify_via_usage {
         // 耗尽同样是有效凭证；任何畸形窗口都不能通过 verify-then-replace。
         let usage = fetch_go_usage(config, &credential, CancellationToken::new()).await?;
         usage.rolling?;
@@ -704,7 +726,7 @@ mod transport_resolution_tests {
                 Some(ResolvedCredential::new(CredentialKind::ApiKey, "test")),
             )
             .unwrap();
-            assert_eq!(provider.qwen_search_endpoint, supported);
+            assert_eq!(provider.policy.search_enabled, supported);
         }
     }
 

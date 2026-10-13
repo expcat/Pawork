@@ -250,6 +250,31 @@ impl OpenAiCompatibleProvider {
         };
         let mut saw_completion = false;
 
+        async fn emit_chunk(
+            ev: ProviderStreamEvent,
+            summary: &mut ModelResponseSummary,
+            saw_completion: &mut bool,
+            sink: &dyn ProviderEventSink,
+        ) -> Result<(), ProviderError> {
+            match &ev {
+                ProviderStreamEvent::UsageUpdated(u) => summary.usage = u.clone(),
+                ProviderStreamEvent::ResponseCompleted(stop) => {
+                    summary.stop_reason = stop.clone();
+                    *saw_completion = true;
+                }
+                // R-08：流内错误（如畸形 chunk）先广播再终止，
+                // 不得被后续 [DONE] 救回为成功。
+                ProviderStreamEvent::Error(error) => {
+                    let error = error.clone();
+                    sink.emit(ev).await?;
+                    return Err(error);
+                }
+                _ => {}
+            }
+            sink.emit(ev).await?;
+            Ok(())
+        }
+
         while let Some(item) = byte_stream.next().await {
             if cancel.is_cancelled() {
                 return Err(ProviderError::cancelled("stream cancelled"));
@@ -272,22 +297,7 @@ impl OpenAiCompatibleProvider {
                     continue;
                 }
                 for ev in chunk_to_events(data, &mut chunk_state) {
-                    match &ev {
-                        ProviderStreamEvent::UsageUpdated(u) => summary.usage = u.clone(),
-                        ProviderStreamEvent::ResponseCompleted(stop) => {
-                            summary.stop_reason = stop.clone();
-                            saw_completion = true;
-                        }
-                        // R-08：流内错误（如畸形 chunk）先广播再终止，
-                        // 不得被后续 [DONE] 救回为成功。
-                        ProviderStreamEvent::Error(error) => {
-                            let error = error.clone();
-                            sink.emit(ev).await?;
-                            return Err(error);
-                        }
-                        _ => {}
-                    }
-                    sink.emit(ev).await?;
+                    emit_chunk(ev, &mut summary, &mut saw_completion, sink).await?;
                 }
             }
         }
@@ -302,22 +312,7 @@ impl OpenAiCompatibleProvider {
                 saw_completion = true;
             } else if !data.is_empty() {
                 for ev in chunk_to_events(data, &mut chunk_state) {
-                    match &ev {
-                        ProviderStreamEvent::UsageUpdated(u) => summary.usage = u.clone(),
-                        ProviderStreamEvent::ResponseCompleted(stop) => {
-                            summary.stop_reason = stop.clone();
-                            saw_completion = true;
-                        }
-                        // R-08：流内错误（如畸形 chunk）先广播再终止，
-                        // 不得被后续 [DONE] 救回为成功。
-                        ProviderStreamEvent::Error(error) => {
-                            let error = error.clone();
-                            sink.emit(ev).await?;
-                            return Err(error);
-                        }
-                        _ => {}
-                    }
-                    sink.emit(ev).await?;
+                    emit_chunk(ev, &mut summary, &mut saw_completion, sink).await?;
                 }
             }
         }
@@ -388,25 +383,21 @@ impl ModelProvider for OpenAiCompatibleProvider {
                     });
                 // 只补逐 ID 已有的静态证据；远端实际给出的元数据仍覆盖静态值。
                 // Kimi Platform 字段契约：MoonshotAI/kimi-cli auth/platforms.py（2026-09-08）。
-                if let Some(name) = model.get("display_name").and_then(Value::as_str) {
-                    definition.display_name = name.to_owned();
-                }
-                if let Some(context) = model.get("context_length").and_then(Value::as_u64) {
-                    definition.context_window_tokens = context;
-                }
+                apply_catalog_common_fields(&mut definition, model);
                 // 显式 false 与纯文本模态也必须覆盖静态视觉声明。
-                if let Some(image) = model.get("supports_image_in").and_then(Value::as_bool) {
-                    definition.capabilities.image_input = image;
-                } else if let Some(modalities) =
-                    model.get("input_modalities").and_then(Value::as_array)
+                // supports_image_in 已落地；缺该字段时 input_modalities 覆盖默认表。
+                if model
+                    .get("supports_image_in")
+                    .and_then(Value::as_bool)
+                    .is_none()
                 {
-                    definition.capabilities.image_input = modalities
-                        .iter()
-                        .any(|modality| modality.as_str() == Some("image"));
-                } else {
-                    // VISION-2：远端未声明模态时按官方文档默认表回填
-                    //（显式 false / 纯文本模态已在上面分支覆盖静态声明）。
-                    pawork_models::registry::apply_default_image_input(&mut definition);
+                    if let Some(modalities) =
+                        model.get("input_modalities").and_then(Value::as_array)
+                    {
+                        definition.capabilities.image_input = modalities
+                            .iter()
+                            .any(|modality| modality.as_str() == Some("image"));
+                    }
                 }
                 // 输入模态的显式声明不阻断独立的输出 / 文本能力回填。
                 pawork_models::registry::apply_default_image_output(&mut definition);
@@ -423,9 +414,6 @@ impl ModelProvider for OpenAiCompatibleProvider {
                             .get("input_modalities")
                             .and_then(Value::as_array)
                             .is_none_or(|items| items.iter().any(|v| v.as_str() == Some("video")));
-                if let Some(thinking) = model.get("supports_reasoning").and_then(Value::as_bool) {
-                    definition.capabilities.thinking = thinking;
-                }
                 Ok(definition)
             })
             .collect()
@@ -589,6 +577,25 @@ pub(crate) fn opencode_session_header(
         )
     })?;
     Ok(Some(("x-opencode-session".into(), session_id.to_string())))
+}
+
+/// Kimi 与 OpenAI 兼容目录共用的四个字段。没有 `supports_image_in` 时走默认表，
+/// 不读取 `input_modalities`。
+pub(crate) fn apply_catalog_common_fields(definition: &mut ModelDefinition, model: &Value) {
+    if let Some(name) = model.get("display_name").and_then(Value::as_str) {
+        definition.display_name = name.to_owned();
+    }
+    if let Some(context) = model.get("context_length").and_then(Value::as_u64) {
+        definition.context_window_tokens = context;
+    }
+    if let Some(thinking) = model.get("supports_reasoning").and_then(Value::as_bool) {
+        definition.capabilities.thinking = thinking;
+    }
+    if let Some(image) = model.get("supports_image_in").and_then(Value::as_bool) {
+        definition.capabilities.image_input = image;
+    } else {
+        pawork_models::registry::apply_default_image_input(definition);
+    }
 }
 
 /// 合法空数组是成功；缺字段、类型错误或无效 ID 是目录格式错误。

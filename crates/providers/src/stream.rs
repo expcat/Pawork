@@ -30,7 +30,7 @@ fn is_safe_diagnostic_field(value: &str) -> bool {
 /// 解析单条 SSE data 行的 JSON，返回该 chunk 应发射的事件。
 ///
 /// `pending` 记录 index→id 映射，后续 chunk 仅带 index + arguments 片段时能补齐 id。
-pub fn chunk_to_events(data: &str, pending: &mut ChunkState) -> Vec<ProviderStreamEvent> {
+pub(crate) fn chunk_to_events(data: &str, pending: &mut ChunkState) -> Vec<ProviderStreamEvent> {
     let value: Value = match serde_json::from_str(data) {
         Ok(v) => v,
         Err(_) => {
@@ -185,13 +185,13 @@ pub(crate) fn content_to_events(content: &Value) -> Vec<ProviderStreamEvent> {
 
 /// 解析流期间需在 chunk 间保持的状态（tool index→id 映射等）。
 #[derive(Default)]
-pub struct ChunkState {
+pub(crate) struct ChunkState {
     pub tool_ids: HashMap<usize, String>,
     pub has_tool_calls: bool,
 }
 
 /// 判断某 data 是否为流的结束标记 `[DONE]`。
-pub fn is_done(data: &str) -> bool {
+pub(crate) fn is_done(data: &str) -> bool {
     data.trim() == "[DONE]"
 }
 

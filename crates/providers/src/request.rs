@@ -8,7 +8,7 @@ use serde_json::{json, Map, Value};
 /// 把 canonical 请求转换为 OpenAI Chat Completions 请求体。
 ///
 /// 一个适配同时覆盖云端 OpenAI 兼容接口与多数本地服务（Ollama / vLLM / LM Studio）。
-pub fn to_chat_completions_body(request: &CanonicalModelRequest) -> Value {
+pub(crate) fn to_chat_completions_body(request: &CanonicalModelRequest) -> Value {
     let image_generation =
         pawork_models::registry::default_text(request.model.as_str()) == Some(false);
     let mut body = Map::new();

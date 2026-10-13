@@ -24,20 +24,13 @@ mod responses_reasoning;
 pub mod stream;
 pub mod usage;
 
-pub use error_table::{normalize_vendor_error, VendorErrorRule, VENDOR_ERROR_RULES};
+pub use error_table::normalize_vendor_error;
 pub use memory_protector::InMemoryReasoningProtector;
 pub use provider::{OpenAiCompatibleConfig, OpenAiCompatibleProvider};
 pub use reasoning::{ReasoningProtectError, ReasoningProtector};
-pub use request::to_chat_completions_body;
-pub use stream::{chunk_to_events, is_done, ChunkState};
-pub use usage::{map_stop_reason, normalize_usage, UsageAccumulator};
 
 #[cfg(feature = "anthropic")]
-pub use channels::{
-    builtin_models as anthropic_builtin_models, event_to_events, parse_event, to_messages_body,
-    to_messages_body_with_plan, AnthropicConfig, AnthropicProvider, AnthropicStreamState,
-    MessagesWirePlan, StreamOutput, ANTHROPIC_VERSION,
-};
+pub use channels::{AnthropicConfig, AnthropicProvider, ANTHROPIC_VERSION};
 
 // S2 装配链仍用 `builtin_models` 指 Anthropic 静态目录；完整化后保持该别名。
 #[cfg(feature = "anthropic")]

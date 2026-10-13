@@ -9,14 +9,9 @@ use pawork_domain::{ProviderError, ProviderErrorKind};
 
 /// 归一化 HTTP 响应状态码为 [`ProviderError`]。
 ///
-/// `retry_after` 为响应头 `Retry-After` 的原始值（由调用方提取）。`body_snippet`
-/// 仍由调用方传入以保持签名稳定，但**不得**写入 `message`（上游正文可能回显 token）。
-pub fn classify_status(
-    status: reqwest::StatusCode,
-    retry_after: Option<&str>,
-    body_snippet: &str,
-) -> ProviderError {
-    let _ = body_snippet;
+/// `retry_after` 为响应头 `Retry-After` 的原始值（由调用方提取）。
+/// 响应正文不读取、不写入 `message`（上游正文可能回显 token）。
+pub fn classify_status(status: reqwest::StatusCode, retry_after: Option<&str>) -> ProviderError {
     let kind = match status.as_u16() {
         401 => ProviderErrorKind::Authentication,
         403 => ProviderErrorKind::Authorization,
@@ -80,17 +75,8 @@ fn redact_request_error(error: &reqwest::Error) -> String {
         "network"
     };
     match error.url() {
-        Some(url) => format!("http {kind} error from {}", redact_url_origin(url)),
+        Some(url) => format!("http {kind} error from {}", super::redact_url_origin(url)),
         None => format!("http {kind} error"),
-    }
-}
-
-fn redact_url_origin(url: &reqwest::Url) -> String {
-    let scheme = url.scheme();
-    let host = url.host_str().unwrap_or("invalid-host");
-    match url.port() {
-        Some(port) => format!("{scheme}://{host}:{port}"),
-        None => format!("{scheme}://{host}"),
     }
 }
 
@@ -191,28 +177,24 @@ mod tests {
 
     #[test]
     fn classifies_common_status_codes() {
-        let auth = classify_status(reqwest::StatusCode::UNAUTHORIZED, None, "bad key");
+        let auth = classify_status(reqwest::StatusCode::UNAUTHORIZED, None);
         assert_eq!(auth.kind, ProviderErrorKind::Authentication);
         assert_eq!(auth.message, "HTTP 401");
         assert!(!auth.retryable);
         assert!(!auth.message.contains("bad key"));
 
-        let rl = classify_status(
-            reqwest::StatusCode::TOO_MANY_REQUESTS,
-            Some("5"),
-            "slow down",
-        );
+        let rl = classify_status(reqwest::StatusCode::TOO_MANY_REQUESTS, Some("5"));
         assert_eq!(rl.kind, ProviderErrorKind::RateLimited);
         assert_eq!(rl.message, "HTTP 429");
         assert!(rl.retryable);
         assert_eq!(rl.retry_after_ms, Some(5_000));
 
-        let overflow = classify_status(reqwest::StatusCode::PAYLOAD_TOO_LARGE, None, "too big");
+        let overflow = classify_status(reqwest::StatusCode::PAYLOAD_TOO_LARGE, None);
         assert_eq!(overflow.kind, ProviderErrorKind::ContextTooLarge);
         assert_eq!(overflow.message, "HTTP 413");
         assert!(!overflow.retryable);
 
-        let server = classify_status(reqwest::StatusCode::BAD_GATEWAY, None, "upstream gone");
+        let server = classify_status(reqwest::StatusCode::BAD_GATEWAY, None);
         assert_eq!(server.kind, ProviderErrorKind::ProviderUnavailable);
         assert_eq!(server.message, "HTTP 502");
         assert!(server.retryable);
@@ -221,11 +203,7 @@ mod tests {
     #[test]
     fn classify_status_401_drops_body_plaintext_token() {
         const TOKEN: &str = "sk-leak-token-401-body";
-        let error = classify_status(
-            reqwest::StatusCode::UNAUTHORIZED,
-            None,
-            &format!("invalid api key {TOKEN}"),
-        );
+        let error = classify_status(reqwest::StatusCode::UNAUTHORIZED, None);
         assert_eq!(error.kind, ProviderErrorKind::Authentication);
         assert_eq!(error.message, "HTTP 401");
         assert!(!error.message.contains(TOKEN));
@@ -248,7 +226,7 @@ mod tests {
     #[test]
     fn non_retryable_kinds_ignore_retry_after() {
         // 401 不可重试，即使带 Retry-After 也不采纳
-        let err = classify_status(reqwest::StatusCode::UNAUTHORIZED, Some("10"), "no");
+        let err = classify_status(reqwest::StatusCode::UNAUTHORIZED, Some("10"));
         assert_eq!(err.retry_after_ms, None);
     }
 
@@ -262,10 +240,26 @@ mod tests {
             "precondition: reqwest error should carry the URL"
         );
         let classified = classify_request_error(error);
-        assert!(!classified.message.contains(SECRET), "{}", classified.message);
-        assert!(!classified.message.contains("alice"), "{}", classified.message);
-        assert!(!classified.message.contains("/v1/token"), "{}", classified.message);
-        assert!(!classified.message.contains("code=leak"), "{}", classified.message);
+        assert!(
+            !classified.message.contains(SECRET),
+            "{}",
+            classified.message
+        );
+        assert!(
+            !classified.message.contains("alice"),
+            "{}",
+            classified.message
+        );
+        assert!(
+            !classified.message.contains("/v1/token"),
+            "{}",
+            classified.message
+        );
+        assert!(
+            !classified.message.contains("code=leak"),
+            "{}",
+            classified.message
+        );
         assert!(
             classified.message.contains("https://oauth.example"),
             "{}",

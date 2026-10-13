@@ -6,7 +6,7 @@
 use pawork_domain::{ProviderError, ProviderErrorKind};
 
 #[derive(Clone, Debug)]
-pub struct VendorErrorRule {
+pub(crate) struct VendorErrorRule {
     pub vendor: &'static str,
     pub needles: &'static [&'static str],
     pub kind: ProviderErrorKind,
@@ -15,7 +15,7 @@ pub struct VendorErrorRule {
     pub diagnostic_key: &'static str,
 }
 
-pub const VENDOR_ERROR_RULES: &[VendorErrorRule] = &[
+pub(crate) const VENDOR_ERROR_RULES: &[VendorErrorRule] = &[
     VendorErrorRule {
         vendor: "chatgpt",
         needles: &["usage", "limit"],
@@ -158,7 +158,7 @@ mod tests {
         assert_eq!(qwen.kind, ProviderErrorKind::ContentFiltered);
         let http = normalize_vendor_error(
             "glm-coding",
-            crate::net::retry::classify_status(reqwest::StatusCode::BAD_REQUEST, None, "1113 敏感"),
+            crate::net::retry::classify_status(reqwest::StatusCode::BAD_REQUEST, None),
         );
         assert_eq!(http.kind, ProviderErrorKind::InvalidRequest);
         assert!(http.diagnostics.is_empty());

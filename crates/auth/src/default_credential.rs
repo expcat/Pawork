@@ -247,7 +247,7 @@ pub async fn refresh_default_oauth_credential_if_needed(
         http,
         default_oauth_needs_refresh_with_skew,
         update_default_oauth_token,
-        Some(reload_default_oauth_credential),
+        reload_default_oauth_credential,
     )
     .await
 }
@@ -674,7 +674,12 @@ mod tests {
             .and(path("/token"))
             .and(body_string_contains("refresh_token=old-refresh-1111"))
             .respond_with(ResponseTemplate::new(200).set_body_json(
-                crate::testsupport::token_success_json("new-access-token-2222", Some("new-refresh-token-2222"), Some("openid profile"))))
+                crate::testsupport::token_success_json(
+                    "new-access-token-2222",
+                    Some("new-refresh-token-2222"),
+                    Some("openid profile"),
+                ),
+            ))
             .expect(1)
             .mount(&server)
             .await;
@@ -769,7 +774,11 @@ mod tests {
             .respond_with(
                 ResponseTemplate::new(200)
                     .set_delay(Duration::from_millis(250))
-                    .set_body_json(crate::testsupport::token_success_json("process-new-access", Some("process-new-refresh"), Some("openid profile"))),
+                    .set_body_json(crate::testsupport::token_success_json(
+                        "process-new-access",
+                        Some("process-new-refresh"),
+                        Some("openid profile"),
+                    )),
             )
             .expect(1)
             .mount(&server)

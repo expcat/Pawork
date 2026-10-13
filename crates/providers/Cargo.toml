@@ -23,7 +23,6 @@ kimi-code = []
 pawork-models = { path = "../models" }
 pawork-domain = { path = "../domain" }
 async-trait.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }

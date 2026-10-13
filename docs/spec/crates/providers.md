@@ -19,7 +19,7 @@
 | `src/token_plan_video.rs` | ~200 | feature `qwen-token-plan`：原生 HappyHorse 文生视频客户端，固定 720P / 16:9 / 5 秒；提交 / 查询读取有界 JSON，归一任务 ID / 状态 / 结果地址 / 白名单失败码，复用 HTTP 与凭证、无自动重试 / 轮询 |
 | `src/request.rs` | ~1120 | `to_chat_completions_body`：canonical → Chat Completions 请求体（ADR-064：默认表声明的纯生图模型即使只有文本也发送 content parts 数组；2026-10-03 起发送 `stream=false` 且不带 `stream_options`，文本仍使用 SSE）；`provider_options` 保留键忽略并 `tracing` 警告 |
 | `src/stream.rs` | ~290 | `chunk_to_events` / `is_done` / `ChunkState` 与 crate 内 `content_to_events`（普通 JSON / SSE 共用）：Chat Completions SSE chunk → `ProviderStreamEvent`（文本/工具调用增量、usage、finish_reason）；`delta.content` 数组形态解析 text / image part——图像生成模型的输出归一为 `ImageOutput{url}`（ADR-064，qwen `{"type":"image","image":url}` 与 OpenAI `image_url` 形状）；畸形 chunk → `MalformedResponse` 错误事件（R-08）；`stream_error_message` 流错误安全文案（R-02） |
-| `src/usage.rs` | ~300 | `normalize_usage`（多厂商字段名归一为 `TokenUsage`）、`map_stop_reason`、`UsageAccumulator`（会话级累计） |
+| `src/usage.rs` | ~170 | `normalize_usage`（多厂商字段名归一为 `TokenUsage`）、`map_stop_reason`；会话累计在 app 的事件重放 |
 | `src/reasoning.rs` | ~100 | `ReasoningProtector` trait（protect/recover 不透明 payload）与 `ReasoningProtectError`（`Unavailable` / `Corrupted` 判别） |
 | `src/memory_protector.rs` | ~110 | `InMemoryReasoningProtector`：HashMap 存不透明字节，测试/内存场景用 |
 | `src/responses.rs` | ~1140 | Responses transport 共享件：`ResponsesTransport(Config)` / `ResponsesWireOptions` / `to_responses_body` / `ResponsesStreamAssembler` / `ResponsesAssemblyEvent` / `ResponsesFinalState`；保留键防覆盖；凭证头拒绝 |
@@ -37,7 +37,7 @@
 | `src/channels/anthropic/mod.rs` | ~20 | re-export 与 `ANTHROPIC_VERSION`（`anthropic-version` 头值） |
 | `src/channels/anthropic/provider.rs` | ~1.1k | `AnthropicProvider(Config)`：Messages transport；`prepare_request` 能力收口（§4.3）；`builtin_models` 静态目录（claude-3-5-sonnet / haiku） |
 | `src/channels/anthropic/request.rs` | ~790 | `to_messages_body(_with_plan)` / `MessagesWirePlan`：system 提升、`tool_use` 块、`thinking` 与 `cache_control` 按 plan 写 wire |
-| `src/channels/anthropic/stream.rs` | ~690 | `parse_event` / `event_to_events` / `AnthropicStreamState` / `StreamOutput`：Anthropic SSE 事件 → canonical 事件；thinking signature 以 `PendingSignature` 输出待 protect；畸形事件 JSON → `MalformedResponse`（R-08）；`error` 事件错误文案不含上游 message（R-02） |
+| `src/channels/anthropic/stream.rs` | ~680 | `parse_event` / `AnthropicStreamState` / `StreamOutput`：Anthropic SSE 事件 → canonical 事件；thinking signature 以 `PendingSignature` 输出待 protect；畸形事件 JSON → `MalformedResponse`（R-08）；`error` 事件错误文案不含上游 message（R-02） |
 
 模块地图以当前源码为准；共享模型逻辑见 [models](models.md)。
 
@@ -121,7 +121,7 @@ CAP-PROBE（2026-09-23 五通道端点实测，glm-coding / opencode-go / qwen-t
 
 - `normalize_usage(&Value) -> TokenUsage`：usage 视图可在顶层或嵌套 `"usage"` 键下；字段名兼容 OpenAI（`prompt_tokens` / `completion_tokens`、嵌套 `prompt_tokens_details.cached_tokens`）与 Anthropic（`input_tokens` / `output_tokens`、`cache_read_input_tokens` / `cache_creation_input_tokens`）等拼写；缺失按 0，绝不 panic。
 - `map_stop_reason(finish, has_tool_calls) -> StopReason`：`has_tool_calls` 为真直接 `ToolUse`；`stop`/`end_turn`/`ended` → `Completed`；`length`/`max_tokens`/`max_output_tokens` → `MaxTokens`；`tool_calls`/`tool_use`/`function_call` 等 → `ToolUse`；`content_filter`/`safety` → `ContentFiltered`；`cancelled` → `Cancelled`；`None`（协议正常收尾但未给 finish）→ `Completed`；其余 → `Other(原文)`。
-- `UsageAccumulator`：请求内「最新快照覆盖」、跨请求「累加」——`record(request_id, usage)` 同请求覆盖，请求 id 变化或 `finish_request()` 时把上一请求终值并入 `total()`；`current()` 读进行中快照。假设同一时刻只有一个进行中请求，交错回放不在支持范围。
+- 会话累计在 app 的事件重放（同 request 取最新快照，再跨 request 累加）。providers 只负责单次响应的 usage 归一，不维护会话累计器。
 - 定价由 `pawork_models::estimate_cost` 负责，providers 不再导出计价 API。
 
 ### 3.6 reasoning 续传保护
@@ -137,15 +137,14 @@ CAP-PROBE（2026-09-23 五通道端点实测，glm-coding / opencode-go / qwen-t
 
 - `HttpClientConfig::builder()`：`timeout` / `no_timeout` / `proxy` / `user_agent` / `header` / `disable_system_proxy`；`HttpClient::new(config)`（代理不合法等报 `ProviderError`）。凭证头在 Debug 输出中显示为脱敏值；proxy URL 的 Debug / 解析错误只保留 scheme/host/port。`is_local_target(host)` / `loopback_aware_proxy(proxy)`：loopback 目标绕过代理。
 - `SseParser::new()` / `feed(&[u8]) -> Vec<Result<SseEvent, SseParseError>>` / `finish()`：增量解析，容忍 CRLF/LF、注释行、跨 chunk UTF-8 截断；缓冲超 `MAX_BUFFER_BYTES`（1 MiB）报错。
-- `classify_status(status, retry_after, body_snippet)`：状态码 → `ProviderErrorKind` 固定映射——401 `Authentication`、403 `Authorization`、404 `ModelNotFound`、408 `Timeout`、413 `ContextTooLarge`、429 `RateLimited`、400 `InvalidRequest`、451 `ContentFiltered`、402 `QuotaExceeded`、500/502/503/504 `ProviderUnavailable`，其余 4xx/5xx 按类别兜底。`message` 固定为 `HTTP <code>`——`body_snippet` **不写入** message（上游正文可能回显 token）；`Retry-After`（秒数或 RFC 7231 IMF-fixdate，`parse_retry_after`）仅对 retryable 类采纳为 `retry_after_ms`。
+- `classify_status(status, retry_after)`：状态码 → `ProviderErrorKind` 固定映射——401 `Authentication`、403 `Authorization`、404 `ModelNotFound`、408 `Timeout`、413 `ContextTooLarge`、429 `RateLimited`、400 `InvalidRequest`、451 `ContentFiltered`、402 `QuotaExceeded`、500/502/503/504 `ProviderUnavailable`，其余 4xx/5xx 按类别兜底。非 2xx 直接丢弃响应，不把正文读入内存。`message` 固定为 `HTTP <code>`（上游正文可能回显 token）；`Retry-After`（秒数或 RFC 7231 IMF-fixdate，`parse_retry_after`）仅对 retryable 类采纳为 `retry_after_ms`。
 - `classify_request_error(reqwest::Error)`：timeout → `Timeout`、connect → `Network`、body/decode → `StreamInterrupted`、request 构造 → `InvalidRequest`、其余 → `Network`；消息只保留错误类别与 origin，不含 userinfo/path/query。
 
 ### 3.8 wire 纯函数与错误表
 
-- Chat Completions：`to_chat_completions_body`（`provider_options` 中保留键如 `model`/`messages`/`stream` 被忽略并告警）；`chunk_to_events(data, &mut ChunkState)` / `is_done`。
+- 下列 wire 辅助是 crate 内部实现，不从 crate 根重导出：Chat Completions 的 `to_chat_completions_body`（`provider_options` 中保留键如 `model`/`messages`/`stream` 被忽略并告警）、`chunk_to_events(data, &mut ChunkState)` / `is_done`；Anthropic 的 `to_messages_body` / `to_messages_body_with_plan(request, &MessagesWirePlan)`、`parse_event(data, &mut AnthropicStreamState) -> Vec<StreamOutput>`（`Event` / `MappingError` / `ReasoningError` / `PendingSignature`）。`normalize_usage` / `map_stop_reason` 与 `VENDOR_ERROR_RULES` 同样只在包内使用。对外保留 `ANTHROPIC_VERSION`、Anthropic `builtin_models` 与 `xai_builtin_models`。
 - Responses：`to_responses_body(request, reasoning_inputs, ResponsesWireOptions)`（同样拦截保留键覆盖）；`ResponsesStreamAssembler::feed/finish` 产出 `ResponsesAssemblyEvent` 与 `ResponsesFinalState`。
-- Anthropic：`to_messages_body` / `to_messages_body_with_plan(request, &MessagesWirePlan)`；`parse_event(data, &mut AnthropicStreamState) -> Vec<StreamOutput>`（`Event` / `MappingError` / `ReasoningError` / `PendingSignature`）；`event_to_events` 兼容入口；`ANTHROPIC_VERSION` 常量。
-- `normalize_vendor_error(vendor, error)`：按 `VENDOR_ERROR_RULES` 细化——`VendorErrorRule { vendor, needles, kind, retryable, detail, diagnostic_key }`，消息小写后须命中该厂商规则的**全部** needles 才改判 kind/retryable 并写入 diagnostics；未命中原样返回。表内只登记本期渠道的稳定标记：chatgpt（usage limit → `QuotaExceeded`、account deactivated → `Authorization`）、xai（live_search quota → `RateLimited`、collection not_ready → `ProviderUnavailable`、insufficient_quota → `QuotaExceeded`）、qwen-token-plan（数据检查 → `ContentFiltered`、throttling → `RateLimited`、quota_exhausted → `QuotaExceeded`）、glm-coding（错误码 1113 → `QuotaExceeded`、1301/敏感 → `ContentFiltered`）。
+- `normalize_vendor_error(vendor, error)`：按包内 `VENDOR_ERROR_RULES` 细化——`VendorErrorRule { vendor, needles, kind, retryable, detail, diagnostic_key }`，消息小写后须命中该厂商规则的**全部** needles 才改判 kind/retryable 并写入 diagnostics；未命中原样返回。规则只消费 Responses 流里已经净化的错误码，不读 HTTP 正文。表内只登记本期渠道的稳定标记：chatgpt（usage limit → `QuotaExceeded`、account deactivated → `Authorization`）、xai（live_search quota → `RateLimited`、collection not_ready → `ProviderUnavailable`、insufficient_quota → `QuotaExceeded`）、qwen-token-plan（数据检查 → `ContentFiltered`、throttling → `RateLimited`、quota_exhausted → `QuotaExceeded`）、glm-coding（错误码 1113 → `QuotaExceeded`、1301/敏感 → `ContentFiltered`）。
 
 ### 视频与搜索的端点边界（2026-09-24）
 
@@ -176,6 +175,8 @@ MM-1 图像限制（`reject_channel_image_limits`）：Chat Completions 与 Resp
 
 ADR-057：`ApiKeyChannelProvider` 仅为 `opencode-go` 启用内部会话头映射，Chat 与下述 Responses 共用 `opencode_session_header` 校验；每次从 `CanonicalModelRequest.session_id` 取 `x-opencode-session`，None 不发送、其他通道不发送。非法 header 值在发网前返回固定脱敏 `InvalidRequest`；不写入 body、trace_id 或持久配置。
 
+API-key 通道策略（Go 会话头、Responses hosted search、Qwen 搜索仅默认 base、Kimi platform 在发 HTTP 前拒绝外部图片 URL、Go 验证走 `/usage`）按 preset 与最终 base URL 计算。`ApiKeyChannelProvider::new` 存一份，`list_models` / `stream` 只读它；`verify_api_key` 发请求前用同一函数算一次，只读是否走 `/usage`。Chat 不声明 hosted search。Go 验证仍要求 rolling / weekly / monthly 三窗都成功。
+
 ### 4.2 Responses transport（ChatGPT / xAI Responses 模型）
 
 1. `requirements_from_request` → `CapabilityNegotiator::negotiate`；被拒能力（`Reject`）在发 HTTP 前变成 `InvalidRequest` 错误。
@@ -199,7 +200,7 @@ ADR-057：`ApiKeyChannelProvider` 仅为 `opencode-go` 启用内部会话头映�
 ### 4.4 usage / pricing 计量
 
 1. 每个 usage chunk → `normalize_usage` → `UsageUpdated` 事件（含 cache 读写 token）。
-2. 会话层 `UsageAccumulator::record` 以 `RequestId` 维度覆盖式累计，`finish_request` 后进入 `total`。
+2. 会话累计不在本包：app 重放事件时对同一 request 取最新 usage 快照，再跨 request 累加。
 3. 费用由 [models](models.md) 统一计算：`ModelRegistry::estimate_cost(id_or_alias, usage)` 或直接 `estimate_cost(usage, pricing)`；内置费率卡 `BUILTIN_RATE_CARD`/`BUILTIN_RATE_VERSION` 标注来源与版本。
 
 ### 4.5 消费 models 的目录与能力证据
@@ -229,13 +230,13 @@ canonical `ToolResultContent.content` 中 Image 不再被编码器丢弃。Chat 
 - **SSE 有界缓冲与收尾**：单事件缓冲上限 1 MiB（`MAX_BUFFER_BYTES`），防恶意/异常流占满内存；流结束后必须调 `finish()` 取出无终止空行的最后一个事件，否则尾事件丢失。
 - **`[DONE]` 哨兵**：Chat Completions 路径用 `is_done`（容忍首尾空白）判定收尾；Responses 路径把 `[DONE]` 与空 data 一并忽略后按自身完成事件收尾。
 - **流完成信号必需**：Anthropic 无 `message_stop`、Responses 流 malformed 均按 `StreamInterrupted`/错误处理，不伪造成功；Chat 与 Anthropic 的畸形 JSON 片段同样立即 `MalformedResponse` 终止，不被后续正常收尾救回（R-08）；合法 ping/未知扩展事件保持忽略兼容。Chat Completions 的 `[DONE]` 正常收尾但缺 finish_reason 时按 `Completed`（协议允许）。
-- **错误消息不携带响应正文**：`classify_status` 的 message 固定 `HTTP <code>`，body_snippet 不入 message（上游正文可能回显 token）；`Retry-After` 仅 retryable 错误采纳。流内错误事件同理（R-02）：上游 `message` 原文不进 `ProviderError`，只保留白名单诊断字段（Anthropic `type` / Responses `code`，限 ASCII 标识符字符与 64 字符长度），统一经 `stream_error_message` 生成。
+- **错误消息不携带响应正文**：非 2xx 不读取正文；`classify_status` 的 message 固定 `HTTP <code>`（上游正文可能回显 token）；`Retry-After` 仅 retryable 错误采纳。流内错误事件同理（R-02）：上游 `message` 原文不进 `ProviderError`，只保留白名单诊断字段（Anthropic `type` / Responses `code`，限 ASCII 标识符字符与 64 字符长度），统一经 `stream_error_message` 生成。
 - **计价单轨**：`usage` 模块不含任何计价逻辑，定价统一走 `pawork_models::pricing`（micro-unit 定点），避免双轨口径。
 - **编译边界**：models 不依赖 providers；其目录/协商/计价测试随实现整体迁移。
 
 ## 6. 依赖关系
 
-- **上游**：`pawork-models`（目录/协商），`pawork-domain`（canonical 类型、`ModelProvider` / `ProviderEventSink` trait、`ProviderError`）。三方：`reqwest`（HTTP）、`tokio` / `futures`（异步）、`serde(_json)`、`thiserror`、`tracing`、`bytes`、`async-trait`。
+- **上游**：`pawork-models`（目录/协商），`pawork-domain`（canonical 类型、`ModelProvider` / `ProviderEventSink` trait、`ProviderError`）。三方：`reqwest`（HTTP）、`tokio` / `futures`（异步）、`serde_json`、`thiserror`、`tracing`、`bytes`、`async-trait`。
 - **下游**：`pawork-app` 生产依赖并开启全部九个 feature（`anthropic` + 八通道）；`pawork-engine` 仅 dev-dependency（守护测试名单）。依赖方向与包布局见 [../../architecture.md](../../architecture.md) §2。
 - **features**（全部为空依赖集、只控制条件编译，互不依赖）：
   - `anthropic`（默认开）：Messages transport 适配器与 `builtin_models`；

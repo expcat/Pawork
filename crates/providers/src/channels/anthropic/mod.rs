@@ -11,8 +11,6 @@ pub mod request;
 pub mod stream;
 
 pub use provider::{builtin_models, AnthropicConfig, AnthropicProvider};
-pub use request::{to_messages_body, to_messages_body_with_plan, MessagesWirePlan};
-pub use stream::{event_to_events, parse_event, AnthropicStreamState, StreamOutput};
 
 /// Anthropic Messages 协议版本（请求头 `anthropic-version`，不是端点）。
 pub const ANTHROPIC_VERSION: &str = "2023-06-01";

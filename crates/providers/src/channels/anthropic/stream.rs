@@ -15,7 +15,7 @@ use crate::usage::{map_stop_reason, normalize_usage};
 
 /// 解析单条 SSE data 时可能得到的流产物。
 #[derive(Debug)]
-pub enum StreamOutput {
+pub(crate) enum StreamOutput {
     Event(ProviderStreamEvent),
     /// thinking / redacted_thinking 完成，待 adapter 经 protector 换成 ReasoningItem。
     PendingSignature {
@@ -29,21 +29,8 @@ pub enum StreamOutput {
     MappingError(ServerToolMappingError),
 }
 
-/// 解析单条 SSE data（一个 Anthropic 事件 JSON），返回应发射的 canonical 事件。
-pub fn event_to_events(data: &str, state: &mut AnthropicStreamState) -> Vec<ProviderStreamEvent> {
-    parse_event(data, state)
-        .into_iter()
-        .filter_map(|output| match output {
-            StreamOutput::Event(event) => Some(event),
-            StreamOutput::PendingSignature { .. }
-            | StreamOutput::ReasoningError(_)
-            | StreamOutput::MappingError(_) => None,
-        })
-        .collect()
-}
-
 /// 完整解析入口：thinking signature 与 server-tool 映射失败单独返回。
-pub fn parse_event(data: &str, state: &mut AnthropicStreamState) -> Vec<StreamOutput> {
+pub(crate) fn parse_event(data: &str, state: &mut AnthropicStreamState) -> Vec<StreamOutput> {
     let value: Value = match serde_json::from_str(data) {
         Ok(v) => v,
         Err(_) => {
@@ -437,7 +424,7 @@ struct ThinkingBlockState {
 
 /// 流解析期间需在事件间保持的状态。
 #[derive(Default)]
-pub struct AnthropicStreamState {
+pub(crate) struct AnthropicStreamState {
     pub tool_ids: HashMap<usize, String>,
     pub server_tool_ids: HashMap<usize, String>,
     thinking: HashMap<usize, ThinkingBlockState>,
@@ -457,11 +444,23 @@ mod tests {
     use super::*;
     use pawork_domain::StopReason;
 
+    fn canonical_events(data: &str, state: &mut AnthropicStreamState) -> Vec<ProviderStreamEvent> {
+        parse_event(data, state)
+            .into_iter()
+            .filter_map(|output| match output {
+                StreamOutput::Event(event) => Some(event),
+                StreamOutput::PendingSignature { .. }
+                | StreamOutput::ReasoningError(_)
+                | StreamOutput::MappingError(_) => None,
+            })
+            .collect()
+    }
+
     #[test]
     fn message_start_emits_response_started_and_input_usage() {
         let data = r#"{"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":12,"output_tokens":1}}}"#;
         let mut state = AnthropicStreamState::default();
-        let events = event_to_events(data, &mut state);
+        let events = canonical_events(data, &mut state);
         assert!(events.iter().any(|e| matches!(
             e,
             ProviderStreamEvent::ResponseStarted { response_id } if response_id.as_deref() == Some("msg_1")
@@ -476,7 +475,7 @@ mod tests {
         let data =
             r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}"#;
         let mut state = AnthropicStreamState::default();
-        let events = event_to_events(data, &mut state);
+        let events = canonical_events(data, &mut state);
         assert!(events.iter().any(|e| matches!(
             e,
             ProviderStreamEvent::TextDelta(t) if t == "Hi"
@@ -490,14 +489,14 @@ mod tests {
         let delta = r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"p\":"}}"#;
         let stop = r#"{"type":"content_block_stop","index":0}"#;
 
-        let started = event_to_events(start, &mut state);
+        let started = canonical_events(start, &mut state);
         assert!(started.iter().any(|ev| matches!(ev,
             ProviderStreamEvent::ToolCallStarted { name, .. } if name == "read")));
-        let args = event_to_events(delta, &mut state);
+        let args = canonical_events(delta, &mut state);
         assert!(args.iter().any(|ev| matches!(ev,
             ProviderStreamEvent::ToolCallArgumentsDelta { id, json }
                 if id.as_str()=="toolu_1" && json == r#"{"p":"#)));
-        let completed = event_to_events(stop, &mut state);
+        let completed = canonical_events(stop, &mut state);
         assert!(completed.iter().any(|ev| matches!(ev,
             ProviderStreamEvent::ToolCallCompleted { id } if id.as_str()=="toolu_1")));
     }
@@ -505,11 +504,11 @@ mod tests {
     #[test]
     fn input_json_delta_is_not_parsed() {
         let mut state = AnthropicStreamState::default();
-        let _ = event_to_events(
+        let _ = canonical_events(
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"read"}}"#,
             &mut state,
         );
-        let events = event_to_events(
+        let events = canonical_events(
             r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"p\":"}}"#,
             &mut state,
         );
@@ -522,16 +521,16 @@ mod tests {
     #[test]
     fn message_stop_completes_with_tool_use_priority() {
         let mut state = AnthropicStreamState::default();
-        let _ = event_to_events(
+        let _ = canonical_events(
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"r"}}"#,
             &mut state,
         );
-        let _ = event_to_events(r#"{"type":"content_block_stop","index":0}"#, &mut state);
-        let _ = event_to_events(
+        let _ = canonical_events(r#"{"type":"content_block_stop","index":0}"#, &mut state);
+        let _ = canonical_events(
             r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}"#,
             &mut state,
         );
-        let events = event_to_events(r#"{"type":"message_stop"}"#, &mut state);
+        let events = canonical_events(r#"{"type":"message_stop"}"#, &mut state);
         assert!(matches!(
             events.last(),
             Some(ProviderStreamEvent::ResponseCompleted(StopReason::ToolUse))
@@ -541,7 +540,7 @@ mod tests {
     #[test]
     fn message_stop_without_reason_is_completed() {
         let mut state = AnthropicStreamState::default();
-        let events = event_to_events(r#"{"type":"message_stop"}"#, &mut state);
+        let events = canonical_events(r#"{"type":"message_stop"}"#, &mut state);
         assert!(matches!(
             events.as_slice(),
             [ProviderStreamEvent::ResponseCompleted(
@@ -554,11 +553,11 @@ mod tests {
     #[test]
     fn cache_tokens_reflected_in_usage() {
         let mut state = AnthropicStreamState::default();
-        let _ = event_to_events(
+        let _ = canonical_events(
             r#"{"type":"message_start","message":{"id":"m","usage":{"input_tokens":100}}}"#,
             &mut state,
         );
-        let events = event_to_events(
+        let events = canonical_events(
             r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5,"cache_read_input_tokens":80}}"#,
             &mut state,
         );
@@ -570,14 +569,14 @@ mod tests {
     #[test]
     fn ping_is_ignored_and_thinking_server_tool_are_mapped() {
         let mut state = AnthropicStreamState::default();
-        assert!(event_to_events(r#"{"type":"ping"}"#, &mut state).is_empty());
+        assert!(canonical_events(r#"{"type":"ping"}"#, &mut state).is_empty());
 
-        let thinking_start = event_to_events(
+        let thinking_start = canonical_events(
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}"#,
             &mut state,
         );
         assert!(thinking_start.is_empty());
-        let thinking = event_to_events(
+        let thinking = canonical_events(
             r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}"#,
             &mut state,
         );
@@ -597,14 +596,14 @@ mod tests {
                 if String::from_utf8_lossy(payload).contains("sig-secret")
                     && String::from_utf8_lossy(payload).contains("hmm")
         ));
-        let public = event_to_events(
+        let public = canonical_events(
             r#"{"type":"content_block_stop","index":0}"#,
             &mut AnthropicStreamState::default(),
         );
         assert!(public.is_empty());
 
         let mut state = AnthropicStreamState::default();
-        let started = event_to_events(
+        let started = canonical_events(
             r#"{"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srv","name":"web_search"}}"#,
             &mut state,
         );
@@ -613,9 +612,9 @@ mod tests {
             ProviderStreamEvent::ServerTool(ServerToolEvent::Started { name, .. }) if name == "web_search"
         ));
         let arguments_stopped =
-            event_to_events(r#"{"type":"content_block_stop","index":1}"#, &mut state);
+            canonical_events(r#"{"type":"content_block_stop","index":1}"#, &mut state);
         assert!(arguments_stopped.is_empty());
-        let cited = event_to_events(
+        let cited = canonical_events(
             r#"{"type":"content_block_delta","index":1,"delta":{"type":"citations_delta","citation":{"url":"https://example.com"}}}"#,
             &mut state,
         );
@@ -680,14 +679,14 @@ mod tests {
     fn server_tool_use_and_result_emit_completed_once() {
         for failed in [false, true] {
             let mut state = AnthropicStreamState::default();
-            let started = event_to_events(
+            let started = canonical_events(
                 r#"{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srv","name":"web_search"}}"#,
                 &mut state,
             );
             assert!(matches!(&started[0],
                 ProviderStreamEvent::ServerTool(ServerToolEvent::Started { name, .. }) if name == "web_search"));
             assert!(
-                event_to_events(r#"{"type":"content_block_stop","index":0}"#, &mut state)
+                canonical_events(r#"{"type":"content_block_stop","index":0}"#, &mut state)
                     .is_empty()
             );
             let content = if failed {
@@ -697,8 +696,8 @@ mod tests {
             };
             let result = serde_json::json!({"type":"content_block_start", "index":1,
                 "content_block":{"type":"web_search_tool_result", "tool_use_id":"srv", "content":content}});
-            let mut terminal = event_to_events(&result.to_string(), &mut state);
-            terminal.extend(event_to_events(
+            let mut terminal = canonical_events(&result.to_string(), &mut state);
+            terminal.extend(canonical_events(
                 r#"{"type":"content_block_stop","index":1}"#,
                 &mut state,
             ));
@@ -715,10 +714,10 @@ mod tests {
                 ));
             }
             assert!(
-                event_to_events(r#"{"type":"content_block_stop","index":1}"#, &mut state)
+                canonical_events(r#"{"type":"content_block_stop","index":1}"#, &mut state)
                     .is_empty()
             );
-            let cited = event_to_events(
+            let cited = canonical_events(
                 r#"{"type":"content_block_delta","index":2,"delta":{"type":"citations_delta","citation":{"url":"https://example.com"}}}"#,
                 &mut state,
             );
@@ -732,7 +731,7 @@ mod tests {
     #[test]
     fn error_event_maps_to_provider_error() {
         let mut state = AnthropicStreamState::default();
-        let events = event_to_events(
+        let events = canonical_events(
             r#"{"type":"error","error":{"type":"overloaded_error","message":"busy"}}"#,
             &mut state,
         );
@@ -749,7 +748,7 @@ mod tests {
     #[test]
     fn error_event_does_not_leak_upstream_message() {
         let mut state = AnthropicStreamState::default();
-        let events = event_to_events(
+        let events = canonical_events(
             r#"{"type":"error","error":{"type":"authentication_error","message":"bad key sk-FAKE-SECRET-9f8e7d expired"}}"#,
             &mut state,
         );
@@ -770,7 +769,7 @@ mod tests {
     #[test]
     fn malformed_event_json_yields_malformed_error() {
         let mut state = AnthropicStreamState::default();
-        let events = event_to_events("not-json", &mut state);
+        let events = canonical_events("not-json", &mut state);
         assert!(matches!(
             &events[0],
             ProviderStreamEvent::Error(err)

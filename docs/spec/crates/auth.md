@@ -62,7 +62,7 @@
 ### 3.4 OAuth 流程
 
 - 类型：`PkceFlowConfig`（client_id / auth_url / token_url / redirect_uri / scopes / provider / extra_auth_params）与 `PkceSession`；`Pkce`（S256；verifier = 48 随机字节的 base64url，恰 64 字符，满足 RFC 7636 43–128 且无取模偏差）；`DeviceFlowConfig` / `DeviceUserPrompt`（user_code / verification_uri(_complete) / device_code / expires_in / interval）；`OAuthRefreshConfig { token_url, client_id, refresh_skew }`；`TokenSet { access_token, refresh_token?, id_token?, expires_in?, token_type, scope? }`（明文只短暂在内存，Debug 全脱敏，绝不落盘）。
-- 入口：`http_client()`（唯一 OAuth 默认构造：`redirect(Policy::none())`，失败映射 `AuthError::Http`）；`start_pkce_flow` / `start_pkce_flow_with_callback`（绑定一次性 `CallbackServer` 并回填实际端口）/ `exchange_pkce_code`（state 不符即 CSRF 拒绝）；`request_device_authorization` / `poll_device_token`（`authorization_pending` 按 interval 等待、`slow_down` interval +5s 后等待；HTTP 请求与轮询等待共同受 max_duration / device_code 有效期的较短期限约束，`expired_token` 或到期 → `ExpiredToken`）；`refresh_access_token`；`store_oauth_token` / `update_oauth_token`（多凭证形态，service=`pawork.<provider>.oauth`，account=`<cred_id>.access/.refresh`；空 access/refresh 先拒绝且不产生部分写入；轮换场景整批 `store_batch` 提交，兼容后端至少先写 refresh 再写 access）；`resolve_oauth_credential(_for_request)`（后者先 auto-refresh 再返回 `CredentialKind::OAuthBearer`）；`oauth_login_email`（不验签读 `id_token` 的 `email` claim，形态不合理则忽略）；`read_refresh_token`（条目缺失返回 `NotFound`，后端损坏 / IO 错误保留原错误）；`needs_refresh(stored, skew)`（无 `expires_at` 视为不需刷新）；`random_state`（32 随机字节 base64url）。
+- 入口：`http_client()`（唯一 OAuth 默认构造：`redirect(Policy::none())`，失败映射 `AuthError::Http`）；`start_pkce_flow` / `start_pkce_flow_with_callback`（绑定一次性 `CallbackServer` 并回填实际端口）/ `exchange_pkce_code`（state 不符即 CSRF 拒绝）；`request_device_authorization` / `poll_device_token`（`authorization_pending` 按 interval 等待、`slow_down` interval +5s 后等待；HTTP 请求与轮询等待共同受 max_duration / device_code 有效期的较短期限约束，`expired_token` 或到期 → `ExpiredToken`）；`refresh_access_token`；登录结果经 `store_default_oauth_token` / `add_oauth_account` 写入（`.access` / `.refresh` / `.meta`，空 access/refresh 先拒绝且不产生部分写入）；`resolve_oauth_credential` 从 access 账户读出 `CredentialKind::OAuthBearer`；`oauth_login_email`（不验签读 `id_token` 的 `email` claim，形态不合理则忽略）；`read_refresh_token`（条目缺失返回 `NotFound`，后端损坏 / IO 错误保留原错误）；`needs_refresh(stored, skew)`（无 `expires_at` 视为不需刷新）；`random_state`（32 随机字节 base64url）。
 - `CallbackServer::start(port)`（监听 127.0.0.1）/ `local_addr` / `bind_redirect_uri`（强制 http + loopback host、端口回填校验）/ `wait_for_code(timeout)`；单连接、5 分钟 accept 上限、请求头 64 KiB 上限、响应固定纯文本（不回显 query 输入）。
 - 错误：token endpoint 标准错误归一为 `TokenEndpoint { error, description }`；其余流程错误 `OAuth(String)` / `Callback(String)`，都不含 token。
 
@@ -94,15 +94,15 @@ UI-6b 起先解析账号索引：显式 API key 选择返回该账号；显式 O
 3. `wait_for_code` 取回 `(code, state)`；带 `error` 参数的回调判授权失败。
 4. `exchange_pkce_code` 校验 state（不符即 CSRF 拒绝）后 POST token endpoint（`grant_type=authorization_code` + verifier）换 `TokenSet`；OAuth2 标准错误归一 `TokenEndpoint`。
 5. Device：`request_device_authorization`（form POST；`verification_uri`/`verification_url` 两种拼写都接受，缺省 interval 5s）拿 `DeviceUserPrompt` → `poll_device_token` 按 interval 轮询直到成功、`expired_token` 或超出 max_duration。
-6. `TokenSet` 立即经 `store_default_oauth_token`（首发 default 条目）或 `store_oauth_token` 写入 `SecretBackend`；返回值只有元数据。ChatGPT 流从 `id_token` JWT claim（`https://api.openai.com/auth` 命名空间下的 `chatgpt_account_id`）提取 `account_id` 存入 meta（路由头用，非 secret）。
+6. `TokenSet` 立即经 `store_default_oauth_token`（首发 default 条目）或 `add_oauth_account`（命名账号）写入 `SecretBackend`；返回值只有元数据。ChatGPT 流从 `id_token` JWT claim（`https://api.openai.com/auth` 命名空间下的 `chatgpt_account_id`）提取 `account_id` 存入 meta（路由头用，非 secret）。
 
 ### 4.3 请求前置 auto refresh（singleflight + 跨进程锁）
 
-1. `resolve_oauth_credential_for_request` → `refresh_oauth_credential_if_needed`：`needs_refresh`（`expires_at ≤ now + skew`；无过期时间不刷）不满足直接返回。
+1. 请求前 `refresh_default_oauth_credential_if_needed`：无 `expires_at`，或 `expires_at ≤ now + refresh_skew` 时才刷新；否则直接返回。
 2. 进程内 gate：同 `(service, account)` 的并发请求共用一个 `RefreshGate`（async 锁 + 最新元数据发布）；等待者醒来后若后端 access 指纹（SHA-256）仍是已发布版本，直接复用元数据，**不再次消费一次性 refresh token**。
-3. 跨进程锁：后端提供 `refresh_lock_path`（FileBackend 为 `auth.refresh.lock`）时，锁外先快照 access/refresh，取锁（10ms 重试、120s 超时）后重读；若别的 Pawork 进程已完成轮换（token 或除 `display_name` 外的 meta 已变）则直接采用其结果并返回。账号索引里的 `display_name` 是展示别名，不在 OAuth meta 中，reload 后不得当作「凭证已变」而跳过刷新。
-4. 仍需刷新才 `refresh_access_token`；成功后按注入的持久化策略（多凭证 `update_oauth_token` / default 条目 `update_default_oauth_token`）把轮换后 token 与过期元数据整批写回（先 refresh 后 access 的原子批），最后向 gate 发布新 access 的 SHA-256 指纹与脱敏元数据。刷新响应缺 `expires_in` 时保留旧到期时间（下次仍尝试刷新，而不是误判永不过期），缺 refresh_token 时保留后端旧值；响应携带 `scope` 时按空白拆分覆盖 scopes。
-5. 两种条目形态共用同一 singleflight 核心 `refresh_oauth_credential_with`（crate 内），只注入到期判断、持久化与 reload 策略，gate 与发布顺序保持唯一实现——default 条目额外在锁内 reload meta 以吸收其他进程写入。
+3. 跨进程锁：后端提供 `refresh_lock_path`（FileBackend 为 `auth.refresh.lock`）时，锁外先快照 access/refresh，取锁（10ms 重试、120s 超时）后重读 meta 与 token；若别的 Pawork 进程已完成轮换（token 或除 `display_name` 外的 meta 已变）则直接采用其结果并返回。账号索引里的 `display_name` 是展示别名，不在 OAuth meta 中，reload 后不得当作「凭证已变」而跳过刷新。
+4. 仍需刷新才 `refresh_access_token`；成功后 `update_default_oauth_token` 把轮换后 token 与过期元数据整批写回（先 refresh 后 access，并同步 meta），最后向 gate 发布新 access 的 SHA-256 指纹与脱敏元数据。刷新响应缺 `expires_in` 时保留旧到期时间（下次仍尝试刷新，而不是误判永不过期），缺 refresh_token 时保留后端旧值；响应携带 `scope` 时按空白拆分覆盖 scopes。
+5. singleflight 核心是 crate 内 `refresh_oauth_credential_with`。default 与命名账号注入同一套到期判断、`update_default_oauth_token` 与锁内 meta reload；gate 与发布顺序只有这一处实现。
 
 ### 4.4 FileBackend 写路径
 
@@ -122,7 +122,7 @@ UI-6b 起先解析账号索引：显式 API key 选择返回该账号；显式 O
 - **refresh 安全**：一次性 refresh token 绝不被并发重复消费（进程内 singleflight gate + 跨进程文件锁 + 指纹校验三层防线）；轮换 refresh token 已落盘后才返回 bearer。
 - **回调安全**：redirect_uri 强制 http + loopback（host 原样保留、只回填端口）；回调响应固定文本不回显 query（防反射）；请求头 64 KiB 上限。
 - **base64url 严格解码**：非规范编码（填充/余位）一律拒绝，防止同值多表示。
-- **写入前验证**：`store_default_api_key` / `store_oauth_token` 等对空 secret 先拒绝（`InvalidSecret`）且不产生部分写入；`delete_default_api_key` / `delete_default_oauth_token` 幂等（不存在视为成功）。
+- **写入前验证**：`store_default_api_key` / `store_default_oauth_token` / `store_oauth_at` 对空 secret 先拒绝（`InvalidSecret`）且不产生部分写入；`delete_default_api_key` / `delete_default_oauth_token` 幂等（不存在视为成功）。
 - **测试纪律**：自动测试只用 `MemoryBackend` 或显式临时路径的 `FileBackend`，不读真实 auth 文件。
 
 ## 6. 依赖关系
@@ -148,8 +148,8 @@ UI-6b 起先解析账号索引：显式 API key 选择返回该账号；显式 O
 `oauth.rs` 内联回归要点：
 
 - PKCE verifier 长度/字符集/无偏 base64url、S256 challenge 对 RFC 7636 附录 B 向量确定性一致、state 高熵 URL-safe；
-- `TokenSet` / `PkceSession` / `DeviceUserPrompt` Debug 全脱敏；`store_oauth_token` 元数据与序列化无明文、空 refresh 拒绝且零写入；
-- `update_oauth_token` 轮换落盘、刷新缺 `expires_in` 保留旧到期时间、`needs_refresh` skew 边界；refresh 读取区分条目缺失与真实 FileBackend 损坏错误；
+- `TokenSet` / `PkceSession` / `DeviceUserPrompt` Debug 全脱敏；`store_default_oauth_token` 元数据与序列化无明文；空 refresh 拒绝且零写入（`store_rejects_empty_refresh_without_writes`）；
+- `update_default_oauth_token` 轮换落盘、刷新缺 `expires_in` 保留旧到期时间、`needs_refresh` skew 边界；refresh 读取区分条目缺失与真实 FileBackend 损坏错误；
 - wiremock 驱动：PKCE 交换成功 / state 不符拒绝 / token endpoint 标准错误归一、Device pending→成功轮询、`device_poll_waits_and_obeys_deadline` 覆盖 pending / slow_down 等待与慢 HTTP 总超时、refresh 换新 token、请求前置解析自动刷新并持久化轮换；
 - `concurrent_refreshes_share_one_singleflight_exchange`：并发刷新只发生一次 token exchange（`.expect(1)`）；
 - FileBackend 锁内 reload 比较排除账号 `display_name`（`file_backend_refresh_ignores_account_display_name`）；
@@ -160,7 +160,7 @@ UI-6b 定向回归覆盖 legacy 无写读取、同 kind 多账号、选择/重�
 ## 8. 注意事项与已知限制
 
 - 任务说明中常提的「master.key 与并发首建」不在本包：reasoning blob 加密的 master key 由 `pawork-app` protected 模块管理（见 [app.md](app.md)）；本包的并发原语是 OAuth refresh 的 singleflight gate 与 `auth.refresh.lock` 跨进程锁。
-- UI-6b 命名 OAuth 账号使用独立 `.access/.refresh/.meta`，旧 default 槽继续兼容；历史通用 `store_oauth_token` 无独立 meta，不作为命名账号入口。完整 account factory / accounts CLI 仍见 [backlog](../backlog.md)。
+- UI-6b 命名 OAuth 账号与旧 default 槽都使用 `.access/.refresh/.meta`（`store_oauth_at`）。完整 account factory / accounts CLI 仍见 [backlog](../backlog.md)。
 - 账号存取经 `transaction` 获得一致快照；回调失败不提交。FileBackend 只读事务不改写 auth 文件，`MemoryBackend` 同样实现事务隔离；通用 `store_batch` 的默认逐条语义不代替事务。
 - `decode_jwt_payload` 不验签，只用于提取非机密路由 claim，不构成信任边界。
 - 回调服务器一次性、单连接、固定 200 文本响应；不支持 https redirect（上游 allow-list 均为本机 http）。`CallbackServer::start` 需要已存在的 tokio runtime（`Handle::try_current`），纯同步上下文无法启动。

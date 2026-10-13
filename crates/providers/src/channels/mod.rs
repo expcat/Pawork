@@ -33,11 +33,7 @@ pub mod api_key;
 pub mod kimi;
 
 #[cfg(feature = "anthropic")]
-pub use anthropic::{
-    builtin_models, event_to_events, parse_event, to_messages_body, to_messages_body_with_plan,
-    AnthropicConfig, AnthropicProvider, AnthropicStreamState, MessagesWirePlan, StreamOutput,
-    ANTHROPIC_VERSION,
-};
+pub use anthropic::{builtin_models, AnthropicConfig, AnthropicProvider, ANTHROPIC_VERSION};
 
 #[cfg(feature = "chatgpt-oauth")]
 pub use chatgpt::{ChatGptConfig, ChatGptProvider};

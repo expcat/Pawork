@@ -538,15 +538,7 @@ fn requirements_from_request(request: &CanonicalModelRequest) -> CapabilityRequi
             .messages
             .iter()
             .flat_map(|message| message.content.iter())
-            .any(content_part_has_image),
-    }
-}
-
-fn content_part_has_image(part: &ContentPart) -> bool {
-    match part {
-        ContentPart::Image(_) => true,
-        ContentPart::ToolResult(result) => result.content.iter().any(content_part_has_image),
-        _ => false,
+            .any(pawork_models::negotiate::content_part_has_image),
     }
 }
 

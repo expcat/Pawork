@@ -292,7 +292,8 @@ pub fn capability_gate(
         })
 }
 
-fn content_part_has_image(part: &pawork_domain::ContentPart) -> bool {
+/// 检查正文或嵌套工具结果中的图片，供能力闸门与 wire 适配器共用。
+pub fn content_part_has_image(part: &pawork_domain::ContentPart) -> bool {
     match part {
         pawork_domain::ContentPart::Image(_) => true,
         pawork_domain::ContentPart::ToolResult(result) => {

@@ -15,7 +15,7 @@ const DEFAULT_MAX_TOKENS: u64 = 4096;
 
 /// Anthropic Messages 的能力落地计划（协商之后、写 wire 之前）。
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct MessagesWirePlan {
+pub(crate) struct MessagesWirePlan {
     /// 在最后一个 system 块与最后一个 tool 上写 `cache_control: ephemeral`；
     /// 两者都不存在时回退到最后一条 message 的最后一个 content block。
     pub write_cache: bool,
@@ -26,12 +26,14 @@ pub struct MessagesWirePlan {
 }
 
 /// 把 canonical 请求转换为 Anthropic Messages 请求体。
-pub fn to_messages_body(request: &CanonicalModelRequest) -> Value {
+/// 生产路径传协商后的 plan；默认 plan 入口留给包内测试。
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn to_messages_body(request: &CanonicalModelRequest) -> Value {
     to_messages_body_with_plan(request, &MessagesWirePlan::default())
 }
 
 /// 按协商后的 [`MessagesWirePlan`] 写 Messages 请求体。
-pub fn to_messages_body_with_plan(
+pub(crate) fn to_messages_body_with_plan(
     request: &CanonicalModelRequest,
     plan: &MessagesWirePlan,
 ) -> Value {

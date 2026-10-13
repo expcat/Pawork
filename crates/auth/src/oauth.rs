@@ -23,10 +23,9 @@ use serde_json::Value;
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
 
 use crate::backend::SecretBackend;
-use crate::credential::{generate_credential_id, StoredCredential};
+use crate::credential::StoredCredential;
 use crate::error::AuthError;
 use crate::file_backend::{try_acquire_file_lock, FileLockGuard};
-use crate::locator::oauth_secret_service;
 use crate::masked::MaskedCredential;
 
 /// 48 个均匀随机字节经无填充 base64url 编码后得到 64 字符 verifier，满足
@@ -43,10 +42,6 @@ fn now_unix_millis() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or_default()
-}
-
-fn expires_at_from_now(expires_in: u64) -> Timestamp {
-    Timestamp::from_unix_millis(now_unix_millis().saturating_add(expires_in.saturating_mul(1000)))
 }
 
 /// 一次 OAuth 交换得到的 token 集合（明文，仅短暂存在）。
@@ -142,10 +137,10 @@ pub fn random_state() -> String {
     crate::base64url::encode(&bytes)
 }
 
-/// OAuth / MCP 共用的 HTTP 客户端：禁止跟随跳转（F06）。
+/// OAuth HTTP 客户端：禁止跟随跳转（F06）。
 ///
 /// reqwest 默认会跟随 3xx 并把 Authorization / form body 带到新 origin；
-/// token endpoint 与 MCP OAuth 必须显式关闭。
+/// token endpoint 必须显式关闭。
 pub fn http_client() -> Result<reqwest::Client, AuthError> {
     Ok(reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -212,7 +207,8 @@ pub fn start_pkce_flow(config: PkceFlowConfig) -> Result<PkceSession, AuthError>
 /// 用回调 code 交换 token。
 ///
 /// `state` 必须与 [`start_pkce_flow`] 返回的 state 一致（CSRF 校验）。返回的
-/// [`TokenSet`] 含明文 token，应立即经 [`store_oauth_token`] 写入 SecretBackend。
+/// [`TokenSet`] 含明文 token，应立即经 `store_default_oauth_token` 或
+/// `add_oauth_account` 写入 SecretBackend。
 pub async fn exchange_pkce_code(
     session: &PkceSession,
     code: &str,
@@ -439,109 +435,6 @@ async fn exchange_token(
     })
 }
 
-/// 把 [`TokenSet`]（明文）写入 SecretBackend，返回**仅含元数据/脱敏状态**的
-/// [`StoredCredential`]。
-///
-/// access_token 与 refresh_token 分别存为两条 secret（service=`pawork.<provider>.oauth`，
-/// account=`<cred_id>.access`/`.refresh`）。明文绝不进入返回值。
-pub fn store_oauth_token(
-    backend: &dyn SecretBackend,
-    provider: ProviderId,
-    display_name: &str,
-    tokens: &TokenSet,
-    scopes: Vec<String>,
-) -> Result<StoredCredential, AuthError> {
-    if tokens.access_token.is_empty() {
-        return Err(AuthError::InvalidSecret("access_token is empty".into()));
-    }
-    if tokens.refresh_token.as_ref().is_some_and(String::is_empty) {
-        return Err(AuthError::InvalidSecret("refresh_token is empty".into()));
-    }
-    let id = generate_credential_id();
-    let service = oauth_secret_service(&provider);
-    let access_account = format!("{}.access", id.as_str());
-    let refresh_account = format!("{}.refresh", id.as_str());
-
-    let mut updates = Vec::with_capacity(2);
-    if let Some(refresh) = &tokens.refresh_token {
-        updates.push((service.as_str(), refresh_account.as_str(), refresh.as_str()));
-    }
-    updates.push((
-        service.as_str(),
-        access_account.as_str(),
-        tokens.access_token.as_str(),
-    ));
-    backend.store_batch(&updates)?;
-
-    let stored = StoredCredential {
-        masked: MaskedCredential::mask(&tokens.access_token),
-        id,
-        provider,
-        display_name: display_name.to_string(),
-        secret_service: service,
-        secret_account: access_account,
-        created_at: Timestamp::from_unix_millis(now_unix_millis()),
-        expires_at: tokens.expires_in.map(expires_at_from_now),
-        scopes,
-    };
-    Ok(stored)
-}
-
-/// 原地更新一条 OAuth credential 的 access token、可选轮换 refresh token 与
-/// 过期元数据。
-///
-/// token 明文只写回 [`SecretBackend`]；`StoredCredential` 仅更新脱敏展示与
-/// `expires_at`。刷新响应未携带 refresh token 时保留后端中的旧值。
-pub fn update_oauth_token(
-    backend: &dyn SecretBackend,
-    stored: &mut StoredCredential,
-    tokens: &TokenSet,
-) -> Result<(), AuthError> {
-    if tokens.access_token.is_empty() {
-        return Err(AuthError::InvalidSecret("access_token is empty".into()));
-    }
-    let expected_service = oauth_secret_service(&stored.provider);
-    let expected_access_account = format!("{}.access", stored.id.as_str());
-    if stored.secret_service != expected_service || stored.secret_account != expected_access_account
-    {
-        return Err(AuthError::MalformedMetadata(
-            "credential is not an OAuth token record".into(),
-        ));
-    }
-    if tokens.refresh_token.as_ref().is_some_and(String::is_empty) {
-        return Err(AuthError::InvalidSecret("refresh_token is empty".into()));
-    }
-
-    // 轮换型 Provider 可能在 token endpoint 响应时立即作废旧 refresh token。
-    // 正式后端把 refresh/access 整批原子提交；兼容后端至少按此顺序先写 refresh。
-    let refresh_account = format!("{}.refresh", stored.id.as_str());
-    let mut updates = Vec::with_capacity(2);
-    if let Some(refresh_token) = &tokens.refresh_token {
-        updates.push((
-            stored.secret_service.as_str(),
-            refresh_account.as_str(),
-            refresh_token.as_str(),
-        ));
-    }
-    updates.push((
-        stored.secret_service.as_str(),
-        stored.secret_account.as_str(),
-        tokens.access_token.as_str(),
-    ));
-    backend.store_batch(&updates)?;
-
-    stored.masked = MaskedCredential::mask(&tokens.access_token);
-    // 部分 Provider 的成功 refresh 响应不返回 expires_in。此时保留原到期时间，
-    // 让下一次请求继续尝试刷新，而不是把 None 误解释成“永不过期”。
-    if let Some(expires_in) = tokens.expires_in {
-        stored.expires_at = Some(expires_at_from_now(expires_in));
-    }
-    if let Some(scope) = &tokens.scope {
-        stored.scopes = scope.split_whitespace().map(str::to_string).collect();
-    }
-    Ok(())
-}
-
 /// 从 SecretBackend 解析出 OAuth bearer credential。
 pub fn resolve_oauth_credential(
     stored: &StoredCredential,
@@ -720,7 +613,7 @@ async fn acquire_backend_refresh_lock(path: &std::path::Path) -> Result<FileLock
     }
 }
 
-/// OAuth refresh 的共享 singleflight 核心。不同条目形态只注入到期判断与持久化策略，
+/// OAuth refresh 的共享 singleflight 核心。调用方注入到期判断、持久化与锁内 reload，
 /// gate、token exchange 与发布顺序保持唯一实现。
 pub(crate) async fn refresh_oauth_credential_with(
     stored: &mut StoredCredential,
@@ -729,7 +622,7 @@ pub(crate) async fn refresh_oauth_credential_with(
     http: &reqwest::Client,
     should_refresh: RefreshPredicate,
     persist: RefreshPersistence,
-    reload: Option<RefreshReload>,
+    reload: RefreshReload,
 ) -> Result<bool, AuthError> {
     if !should_refresh(stored, config.refresh_skew) {
         return Ok(false);
@@ -761,25 +654,15 @@ pub(crate) async fn refresh_oauth_credential_with(
     };
 
     if let Some(observed_tokens) = observed_tokens {
-        let metadata_changed = if let Some(reload) = reload {
-            let latest = reload(backend, stored)?.ok_or(AuthError::NotFound)?;
-            let changed = !refresh_metadata_matches(&latest, stored);
-            let display_name = stored.display_name.clone();
-            *stored = latest;
-            stored.display_name = display_name;
-            changed
-        } else {
-            false
-        };
+        let latest = reload(backend, stored)?.ok_or(AuthError::NotFound)?;
+        let metadata_changed = !refresh_metadata_matches(&latest, stored);
+        let display_name = stored.display_name.clone();
+        *stored = latest;
+        stored.display_name = display_name;
         let current_tokens = backend_token_snapshot(stored, backend)?;
         let access_metadata_changed =
             MaskedCredential::mask(&current_tokens.access_token) != stored.masked;
         if current_tokens != observed_tokens || metadata_changed || access_metadata_changed {
-            // 通用 OAuth 条目没有独立持久化 meta；至少同步 access 掩码，当前请求
-            // 随后会从后端解析出新 bearer。default 条目已由 reload 完整同步。
-            if reload.is_none() {
-                stored.masked = MaskedCredential::mask(&current_tokens.access_token);
-            }
             return Ok(false);
         }
         if !should_refresh(stored, config.refresh_skew) {
@@ -807,41 +690,6 @@ pub(crate) async fn refresh_oauth_credential_with(
     })?;
     gate.publish(stored, &tokens.access_token);
     Ok(true)
-}
-
-/// 请求前置刷新编排：需要刷新时读取旧 refresh token、调用 token endpoint，
-/// 再把轮换后的 access/refresh token 与过期元数据原地回写。同一 credential 的
-/// 并发请求共用 singleflight gate，避免并行消费同一个一次性 refresh token。
-pub async fn refresh_oauth_credential_if_needed(
-    stored: &mut StoredCredential,
-    backend: &dyn SecretBackend,
-    config: &OAuthRefreshConfig,
-    http: &reqwest::Client,
-) -> Result<bool, AuthError> {
-    refresh_oauth_credential_with(
-        stored,
-        backend,
-        config,
-        http,
-        needs_refresh,
-        update_oauth_token,
-        None,
-    )
-    .await
-}
-
-/// Provider 构造或每次请求前使用的 OAuth credential 解析入口。
-///
-/// 与 [`resolve_oauth_credential`] 相比，此入口先执行 auto-refresh，并保证刷新
-/// 响应中的轮换 refresh token 已写回 SecretBackend 后才返回 bearer credential。
-pub async fn resolve_oauth_credential_for_request(
-    stored: &mut StoredCredential,
-    backend: &dyn SecretBackend,
-    config: &OAuthRefreshConfig,
-    http: &reqwest::Client,
-) -> Result<ResolvedCredential, AuthError> {
-    refresh_oauth_credential_if_needed(stored, backend, config, http).await?;
-    resolve_oauth_credential(stored, backend)
 }
 
 /// 最小化一次性回调服务器：监听 `port`，接收 `GET /?code=&state=`，通过 channel
@@ -1277,7 +1125,7 @@ mod tests {
     }
 
     #[test]
-    fn store_oauth_token_keeps_plaintext_out_of_metadata() {
+    fn store_default_oauth_token_keeps_plaintext_out_of_metadata() {
         let backend = MemoryBackend::new();
         let tokens = TokenSet {
             access_token: "ya29.access-secret-token-abcdefgh".into(),
@@ -1287,16 +1135,9 @@ mod tests {
             token_type: "Bearer".into(),
             scope: Some("read write".into()),
         };
-        let stored = store_oauth_token(
-            &backend,
-            ProviderId::new("google"),
-            "Google OAuth",
-            &tokens,
-            vec!["read".into(), "write".into()],
-        )
-        .expect("store");
+        let stored = crate::store_default_oauth_token(&backend, ProviderId::new("google"), &tokens)
+            .expect("store");
 
-        // 返回值与序列化都不含明文 token
         assert!(!format!("{stored:?}").contains("access-secret-token"));
         assert!(!format!("{stored:?}").contains("refresh-secret-token"));
         assert!(!serde_json::to_string(&stored)
@@ -1306,7 +1147,6 @@ mod tests {
         assert_eq!(stored.scopes, vec!["read".to_string(), "write".to_string()]);
         assert!(stored.expires_at.is_some());
 
-        // 明文进入了后端
         let access_secret = backend
             .get(&stored.secret_service, &stored.secret_account)
             .expect("get access");
@@ -1321,30 +1161,6 @@ mod tests {
     }
 
     #[test]
-    fn store_oauth_token_rejects_empty_refresh_without_writes() {
-        let backend = MemoryBackend::new();
-        let tokens = TokenSet {
-            access_token: "valid-access".into(),
-            refresh_token: Some(String::new()),
-            id_token: None,
-            expires_in: Some(3600),
-            token_type: "Bearer".into(),
-            scope: None,
-        };
-        assert!(matches!(
-            store_oauth_token(
-                &backend,
-                ProviderId::new("xai"),
-                "xAI OAuth",
-                &tokens,
-                Vec::new(),
-            ),
-            Err(AuthError::InvalidSecret(message)) if message == "refresh_token is empty"
-        ));
-        assert!(backend.is_empty());
-    }
-
-    #[test]
     fn resolve_oauth_credential_returns_bearer() {
         let backend = MemoryBackend::new();
         let tokens = TokenSet {
@@ -1355,28 +1171,20 @@ mod tests {
             token_type: "Bearer".into(),
             scope: None,
         };
-        let stored = store_oauth_token(
-            &backend,
-            ProviderId::new("github"),
-            "GitHub",
-            &tokens,
-            Vec::new(),
-        )
-        .expect("store");
+        let stored = crate::store_default_oauth_token(&backend, ProviderId::new("github"), &tokens)
+            .expect("store");
         let resolved = resolve_oauth_credential(&stored, &backend).expect("resolve");
         assert_eq!(resolved.kind(), CredentialKind::OAuthBearer);
         assert_eq!(resolved.expose_secret(), "access-xyz");
-        // Debug 脱敏
         assert!(!format!("{resolved:?}").contains("access-xyz"));
     }
 
     #[test]
-    fn update_oauth_token_persists_rotated_refresh_and_expiry() {
+    fn update_default_oauth_token_persists_rotated_refresh_and_expiry() {
         let backend = MemoryBackend::new();
-        let mut stored = store_oauth_token(
+        let mut stored = crate::store_default_oauth_token(
             &backend,
             ProviderId::new("xai"),
-            "Grok OAuth",
             &TokenSet {
                 access_token: "old-access".into(),
                 refresh_token: Some("old-refresh".into()),
@@ -1385,11 +1193,10 @@ mod tests {
                 token_type: "Bearer".into(),
                 scope: Some("read".into()),
             },
-            vec!["read".into()],
         )
         .expect("store");
 
-        update_oauth_token(
+        crate::update_default_oauth_token(
             &backend,
             &mut stored,
             &TokenSet {
@@ -1431,12 +1238,11 @@ mod tests {
     }
 
     #[test]
-    fn update_oauth_token_preserves_expiry_when_refresh_omits_ttl() {
+    fn update_default_oauth_token_preserves_expiry_when_refresh_omits_ttl() {
         let backend = MemoryBackend::new();
-        let mut stored = store_oauth_token(
+        let mut stored = crate::store_default_oauth_token(
             &backend,
             ProviderId::new("xai"),
-            "Grok OAuth",
             &TokenSet {
                 access_token: "old-access".into(),
                 refresh_token: Some("old-refresh".into()),
@@ -1445,12 +1251,11 @@ mod tests {
                 token_type: "Bearer".into(),
                 scope: None,
             },
-            Vec::new(),
         )
         .expect("store");
         let original_expiry = stored.expires_at;
 
-        update_oauth_token(
+        crate::update_default_oauth_token(
             &backend,
             &mut stored,
             &TokenSet {
@@ -1723,10 +1528,9 @@ mod tests {
             .await;
 
         let backend = MemoryBackend::new();
-        let mut stored = store_oauth_token(
+        let mut stored = crate::store_default_oauth_token(
             &backend,
             ProviderId::new("xai"),
-            "Grok OAuth",
             &TokenSet {
                 access_token: "old-access".into(),
                 refresh_token: Some("old-refresh".into()),
@@ -1735,7 +1539,6 @@ mod tests {
                 token_type: "Bearer".into(),
                 scope: Some("read".into()),
             },
-            vec!["read".into()],
         )
         .expect("store");
         let config = OAuthRefreshConfig {
@@ -1743,15 +1546,16 @@ mod tests {
             client_id: "client-id".into(),
             refresh_skew: Duration::from_secs(30),
         };
-
-        let resolved = resolve_oauth_credential_for_request(
+        let http = http_client().expect("http client");
+        assert!(crate::refresh_default_oauth_credential_if_needed(
             &mut stored,
             &backend,
             &config,
-            &http_client().expect("http client"),
+            &http,
         )
         .await
-        .expect("resolve with refresh");
+        .expect("refresh"));
+        let resolved = resolve_oauth_credential(&stored, &backend).expect("resolve with refresh");
 
         assert_eq!(resolved.kind(), CredentialKind::OAuthBearer);
         assert_eq!(resolved.expose_secret(), "new-access");
@@ -1782,10 +1586,9 @@ mod tests {
             .await;
 
         let backend = MemoryBackend::new();
-        let stored = store_oauth_token(
+        let stored = crate::store_default_oauth_token(
             &backend,
             ProviderId::new("xai"),
-            "Grok OAuth",
             &TokenSet {
                 access_token: "old-access".into(),
                 refresh_token: Some("old-refresh".into()),
@@ -1794,7 +1597,6 @@ mod tests {
                 token_type: "Bearer".into(),
                 scope: Some("read".into()),
             },
-            vec!["read".into()],
         )
         .expect("store");
         let mut first = stored.clone();
@@ -1807,8 +1609,13 @@ mod tests {
         let http = http_client().expect("http client");
 
         let (first_result, second_result) = tokio::join!(
-            refresh_oauth_credential_if_needed(&mut first, &backend, &config, &http),
-            refresh_oauth_credential_if_needed(&mut second, &backend, &config, &http)
+            crate::refresh_default_oauth_credential_if_needed(&mut first, &backend, &config, &http),
+            crate::refresh_default_oauth_credential_if_needed(
+                &mut second,
+                &backend,
+                &config,
+                &http
+            )
         );
         let refreshed = [first_result.expect("first"), second_result.expect("second")];
 
