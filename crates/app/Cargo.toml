@@ -43,7 +43,6 @@ pawork-workflow = { path = "../workflow" }
 pawork-orchestration = { path = "../orchestration", default-features = false }
 pawork-control-plane = { path = "../control-plane" }
 pawork-protocol = { path = "../protocol" }
-pawork-transport = { path = "../transport" }
 pawork-computer-use = { path = "../computer-use" }
 tracing.workspace = true
 async-trait.workspace = true

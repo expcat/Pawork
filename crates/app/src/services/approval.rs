@@ -452,9 +452,9 @@ mod tests {
 
         let (store, _) = SessionStore::open(&db).await.expect("reopen after crash");
         let mut core = AppCore::from_parts(
-            Arc::new(MockProvider::sequence(vec![
-                MockScript::new().text("idle").complete(),
-            ])),
+            Arc::new(MockProvider::sequence(vec![MockScript::new()
+                .text("idle")
+                .complete()])),
             None,
             pawork_domain::ModelId::from("model-1"),
             pawork_domain::ProviderId::from("mock"),
@@ -466,11 +466,9 @@ mod tests {
             .resume_messages_keep_pending(&session)
             .await
             .expect("keep pending");
-        assert!(
-            messages
-                .iter()
-                .all(|message| message.role != MessageRole::Tool)
-        );
+        assert!(messages
+            .iter()
+            .all(|message| message.role != MessageRole::Tool));
         let snap = core
             .store()
             .expect("store")
@@ -560,9 +558,9 @@ mod tests {
         assert_eq!(sequences, (1..=after.len() as u64).collect::<Vec<_>>());
         let store = adapter.session_store().await.expect("store clone");
         let core = AppCore::from_parts(
-            std::sync::Arc::new(MockProvider::sequence(vec![
-                MockScript::new().text("idle").complete(),
-            ])),
+            std::sync::Arc::new(MockProvider::sequence(vec![MockScript::new()
+                .text("idle")
+                .complete()])),
             None,
             pawork_domain::ModelId::from("model-1"),
             pawork_domain::ProviderId::from("mock"),
@@ -624,10 +622,12 @@ mod tests {
             .await
             .expect("create");
 
-        let bus = Arc::new(crate::GuiEventBus::new(512));
+        let bus = Arc::new(crate::gui_host::GuiEventBus::new(512));
         let mut subscription = bus.subscribe();
-        let broadcast =
-            crate::GuiBroadcastSink::new(bus, pawork_domain::CoreInstanceId::from("instance-test"));
+        let broadcast = crate::gui_host::GuiBroadcastSink::new(
+            bus,
+            pawork_domain::CoreInstanceId::from("instance-test"),
+        );
         core.chat_turn(
             &session,
             vec![user_hello()],
@@ -660,13 +660,11 @@ mod tests {
             details.get("path").and_then(serde_json::Value::as_str),
             Some("../escape.txt")
         );
-        assert!(
-            details
-                .get("error")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default()
-                .contains("parent traversal")
-        );
+        assert!(details
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .contains("parent traversal"));
         assert!(replayed.iter().any(|envelope| matches!(
             &envelope.payload,
             pawork_domain::AgentEvent::RunCompleted { .. }

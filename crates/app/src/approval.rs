@@ -42,7 +42,7 @@ impl ApprovalPromptHost for DenyAllApprovals {
 
 /// Snapshot / Desktop 卡片用的待审批摘要。
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PendingToolApproval {
+pub(crate) struct PendingToolApproval {
     pub run_id: RunId,
     pub session_id: Option<pawork_domain::SessionId>,
     pub tool_call_id: ToolCallId,
@@ -75,7 +75,7 @@ struct ApprovalState {
 /// 不走 restore_detached。Queued 在 run 仍 live 时禁止落盘，避免
 /// ToolApprove 先于 pending 注册到达时误封 live 调用。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ApprovalResolve {
+pub(crate) enum ApprovalResolve {
     Live,
     Queued,
 }
@@ -106,7 +106,7 @@ impl GuiApprovalHost {
     }
 
     /// `ToolApprove` 入口：映射后的 domain 决策唤醒等待项，或先入队。
-    pub fn resolve(
+    pub(crate) fn resolve(
         &self,
         run_id: &RunId,
         tool_call_id: &ToolCallId,
@@ -140,7 +140,7 @@ impl GuiApprovalHost {
         Ok(ApprovalResolve::Queued)
     }
 
-    pub fn pending(&self) -> Vec<PendingToolApproval> {
+    pub(crate) fn pending(&self) -> Vec<PendingToolApproval> {
         let state = self
             .state
             .lock()

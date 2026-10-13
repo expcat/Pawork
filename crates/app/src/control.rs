@@ -311,10 +311,7 @@ pub fn append_audit(
     reason_code: &str,
 ) {
     let event = AuditEventV1::new(
-        EventId::from(format!(
-            "aud-{}",
-            pawork_engine::now_timestamp().as_unix_millis()
-        )),
+        EventId::from(crate::ids::process_unique("aud")),
         pawork_engine::now_timestamp(),
         default_tenant(),
         default_principal(),

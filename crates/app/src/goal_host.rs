@@ -6,7 +6,7 @@ use pawork_domain::{
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct GoalSnapshot {
+pub(crate) struct GoalSnapshot {
     pub goal_id: GoalId,
     pub title: String,
     pub criteria: Vec<SuccessCriterionSnapshot>,
@@ -31,7 +31,7 @@ impl GoalSnapshot {
 }
 impl AppCore {
     /// Rebuild from canonical events, including canceled/failed run usage.
-    pub async fn goal_snapshot(
+    pub(crate) async fn goal_snapshot(
         &self,
         session: &SessionId,
     ) -> Result<Option<GoalSnapshot>, AppError> {

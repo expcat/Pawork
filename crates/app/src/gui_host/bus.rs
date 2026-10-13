@@ -312,7 +312,7 @@ impl GuiEventBus {
 }
 
 /// GUI 侧渲染 sink：把 persist 之后的事件映射为 App 事件广播出去。
-pub struct GuiBroadcastSink {
+pub(crate) struct GuiBroadcastSink {
     bus: Arc<GuiEventBus>,
     instance: pawork_domain::CoreInstanceId,
 }

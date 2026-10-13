@@ -45,7 +45,8 @@ mod terminal_tool;
 #[cfg(test)]
 mod tests;
 
-pub use bus::{ActiveGuiRun, GuiBroadcastSink, GuiEventBus, GuiRunRegistry};
+pub use bus::{ActiveGuiRun, GuiRunRegistry};
+pub(crate) use bus::{GuiBroadcastSink, GuiEventBus};
 use events::client_scope_from_source;
 #[cfg(test)]
 use handlers::run_start::{run_start_overview_owner, run_start_requested_provider_switch};
@@ -96,7 +97,6 @@ pub struct GuiHostAdapter {
     approvals: Arc<GuiApprovalHost>,
     waiters: IdempotencyStore,
     instance: pawork_domain::CoreInstanceId,
-    next_gui_run: Arc<AtomicU64>,
     next_fork: Arc<AtomicU64>,
     goals: handlers::goal::GoalFlights,
     goal_commands: Arc<tokio::sync::Mutex<()>>,
@@ -167,7 +167,6 @@ impl GuiHostAdapter {
             approvals,
             waiters: IdempotencyStore::new(DEFAULT_IDEMPOTENCY_CAPACITY),
             instance,
-            next_gui_run: Arc::new(AtomicU64::new(1)),
             next_fork: Arc::new(AtomicU64::new(1)),
             goals: Arc::new(Mutex::new(HashMap::new())),
             goal_commands: Arc::new(tokio::sync::Mutex::new(())),
@@ -188,10 +187,6 @@ impl GuiHostAdapter {
     ) -> Self {
         self.connections = Some(connections);
         self
-    }
-
-    pub fn bus(&self) -> Arc<GuiEventBus> {
-        Arc::clone(&self.bus)
     }
 
     pub fn runs(&self) -> Arc<GuiRunRegistry> {
@@ -1045,4 +1040,4 @@ impl GuiHostAdapter {
 
 // Timeline 条目映射已下沉 pawork-protocol::projection（R3 波 C）；保留原名
 // 供 app 内 timeline() 与既有 re-export 消费，wire 形状不变。
-pub use pawork_protocol::projection::project_event as project_timeline_item;
+pub(crate) use pawork_protocol::projection::project_event as project_timeline_item;

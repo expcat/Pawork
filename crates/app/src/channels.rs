@@ -51,11 +51,11 @@ pub static FIRST_PARTY_CHANNELS: LazyLock<Vec<FirstPartyChannel>> = LazyLock::ne
         .collect()
 });
 
-pub fn first_party_channel(id: &str) -> Option<&'static FirstPartyChannel> {
+pub(crate) fn first_party_channel(id: &str) -> Option<&'static FirstPartyChannel> {
     FIRST_PARTY_CHANNELS.iter().find(|channel| channel.id == id)
 }
 
-pub fn is_first_party(id: &str) -> bool {
+pub(crate) fn is_first_party(id: &str) -> bool {
     first_party_channel(id).is_some()
 }
 

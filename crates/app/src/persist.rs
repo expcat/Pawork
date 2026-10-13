@@ -6,7 +6,7 @@ use pawork_storage::session::SessionStore;
 /// persist-first：先 `append_event`，成功后再交给渲染 sink。
 ///
 /// `branch_id` 必须是该 session 当前 active branch（fork 后不再默认 `main`）。
-pub struct PersistThenRender<'a> {
+pub(crate) struct PersistThenRender<'a> {
     pub store: &'a SessionStore,
     pub render: &'a dyn AgentEventSink,
     pub branch_id: String,

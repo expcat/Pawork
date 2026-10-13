@@ -1,9 +1,6 @@
 //! Parent-owned, persisted child runs. All tool work still goes through SessionLoopCtx.
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc, Mutex,
-};
+use std::sync::{atomic::Ordering, Arc, Mutex};
 
 use async_trait::async_trait;
 use pawork_domain::*;
@@ -148,18 +145,6 @@ fn reply(call: PendingToolInvocation, outcome: Result<Value, AppError>) -> ToolC
 }
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::Orchestration(message.into())
-}
-fn unique(prefix: &str) -> String {
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-    format!(
-        "{prefix}-{:x}-{:x}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    )
 }
 
 pub(crate) struct SubagentRun<'a> {
@@ -330,8 +315,8 @@ impl<'a> SubagentRun<'a> {
             ))
             .await
             .map_err(|e| invalid(e.to_string()))?;
-        let child_session = SessionId::from(unique("child"));
-        let child_run = RunId::from(unique("run-child"));
+        let child_session = SessionId::from(crate::ids::process_unique("child"));
+        let child_run = RunId::from(crate::ids::process_unique("run-child"));
         let title: String = input
             .title
             .as_deref()

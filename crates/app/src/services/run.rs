@@ -1,6 +1,6 @@
 //! Run 领域服务：事件化单轮执行（persist-first 双写）与追补事件入口。
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 
 use pawork_domain::{
     AgentEvent, AgentEventEnvelope, CancellationToken, ContentPart, DegradeEvent, EventId,
@@ -18,23 +18,10 @@ use crate::loop_ctx::SessionLoopCtx;
 use crate::persist::PersistThenRender;
 use crate::{AppCore, AppError};
 
-/// 账本幂等键含 request_id（control-plane 按 (tenant, account, request_id,
-/// upstream_attempt) 去重）：裸 `req-{n}` 在 Host 重启、计数器归零后撞键，
-/// 新 run 的用量会被账本当成同一请求的重放拒收（实证见 docs/ROADMAP.md
-/// §2.2，2026-09-14）。与 client `new_request_namespace` 同形态：pid +
-/// 纳秒 + 进程级计数器——毫秒粒度不够，纳秒也不够（同进程双 AppCore
-/// 各自计数器同从 1 起，同一时钟嘀嗒取到相同纳秒仍撞，定向测试实证），
-/// 故计数器为进程级 static，同进程内不再依赖时钟分辨率为唯一性兜底。
-fn run_request_id(_core: &AppCore) -> RequestId {
-    // 计数器须为进程级：AppCore 实例各自的 next_request 同从 1 起，
-    // 同进程双实例在同一时钟嘀嗒内取到相同纳秒仍会撞键（定向测试实证）。
-    static PROCESS_NEXT: AtomicU64 = AtomicU64::new(1);
-    let n = PROCESS_NEXT.fetch_add(1, Ordering::Relaxed);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    RequestId::from(format!("req-{:x}-{nanos:x}-{n}", std::process::id()))
+/// 账本按 (tenant, account, request_id, upstream_attempt) 去重。
+/// 裸 `req-{n}` 在 Host 重启后撞键，新用量会被当成重放拒收。
+fn run_request_id() -> RequestId {
+    RequestId::from(crate::ids::process_unique("req"))
 }
 
 pub(crate) struct RunService;
@@ -100,11 +87,7 @@ impl RunService {
         render: &dyn AgentEventSink,
         cancel: CancellationToken,
     ) -> Result<ModelResponseSummary, AppError> {
-        let run_n = core.next_run.fetch_add(1, Ordering::Relaxed);
-        let run_id = RunId::from(format!(
-            "run-{}-{run_n}",
-            pawork_engine::now_timestamp().as_unix_millis()
-        ));
+        let run_id = RunId::from(crate::ids::process_unique("run"));
         self.chat_turn_with_run_id(
             core, run_id, session_id, messages, render, cancel, None, None, false,
         )
@@ -127,7 +110,7 @@ impl RunService {
         // opt-in 的 CLI 客户端经 GUI Host 运行时为 true）。
         wait_target_approval: bool,
     ) -> Result<ModelResponseSummary, AppError> {
-        let request_id = run_request_id(core);
+        let request_id = run_request_id();
         let trigger = messages.last_mut().ok_or(AppError::EmptyTurn)?;
         if trigger.role != MessageRole::User {
             return Err(AppError::EmptyTurn);
@@ -570,17 +553,12 @@ impl RunService {
         let run_workspace = core.workspace_for_session_or_unbound(session_id)?;
         let messages = core.resume_messages(session_id).await?;
         let trigger = messages.last().cloned().ok_or(AppError::EmptyTurn)?;
-        let n = core.next_request.fetch_add(1, Ordering::Relaxed);
         let request = assemble_request(
-            RequestId::from(format!("req-compact-{n}")),
+            RequestId::from(crate::ids::process_unique("req-compact")),
             core.model.clone(),
             messages,
         );
-        let run_n = core.next_run.fetch_add(1, Ordering::Relaxed);
-        let run_id = RunId::from(format!(
-            "compact-{}-{run_n}",
-            pawork_engine::now_timestamp().as_unix_millis()
-        ));
+        let run_id = RunId::from(crate::ids::process_unique("compact"));
         let turn = SessionTurn::new(
             session_id.clone(),
             run_id.clone(),
@@ -679,8 +657,22 @@ mod tests {
     /// 账本幂等键含 request_id：Host 重启计数器归零后，不同 run 的 id
     /// 不得相同，否则新用量被 (tenant, account, request_id, attempt)
     /// 去重拒收（2026-09-14 vfix 实证：echo run 2474/29 未入帐）。
+    /// 同进程两份 AppCore 的 session / run 主键同样必须不同，且带 pid 段。
     #[tokio::test]
     async fn run_request_id_survives_counter_reset_across_host_restarts() {
+        fn assert_unique_id(id: &str, prefix: &str) {
+            let pid = format!("{:x}", std::process::id());
+            let rest = id
+                .strip_prefix(prefix)
+                .and_then(|body| body.strip_prefix('-'))
+                .unwrap_or_else(|| panic!("{prefix}- prefix missing: {id}"));
+            let parts: Vec<&str> = rest.split('-').collect();
+            assert_eq!(parts.len(), 3, "{prefix}-<pid>-<nanos>-<n>: {id}");
+            assert_eq!(parts[0], pid, "{id}");
+            assert!(u128::from_str_radix(parts[1], 16).is_ok(), "{id}");
+            assert!(parts[2].parse::<u64>().is_ok(), "{id}");
+        }
+
         let (core_a, _dir_a) = mock_core(vec![ProviderStreamEvent::ResponseCompleted(
             StopReason::Completed,
         )])
@@ -689,19 +681,56 @@ mod tests {
             StopReason::Completed,
         )])
         .await;
-        let id_a = super::run_request_id(&core_a);
-        let id_b = super::run_request_id(&core_b);
-        // 修复前两者都是 req-1（计数器各从 1 起）必然撞键；仅毫秒也不够，
-        // 本测试两个 AppCore 即在同毫秒内构造完成。
+        let session_a = core_a.create_session("a").await.expect("session a");
+        let session_b = core_b.create_session("b").await.expect("session b");
+        assert_ne!(session_a.as_str(), session_b.as_str());
+        assert_unique_id(session_a.as_str(), "ses");
+        assert_unique_id(session_b.as_str(), "ses");
+
+        let sink_a = RecordingEvents::default();
+        core_a
+            .chat_turn(
+                &session_a,
+                vec![user_hello()],
+                &sink_a,
+                CancellationToken::new(),
+            )
+            .await
+            .expect("turn a");
+        let sink_b = RecordingEvents::default();
+        core_b
+            .chat_turn(
+                &session_b,
+                vec![user_hello()],
+                &sink_b,
+                CancellationToken::new(),
+            )
+            .await
+            .expect("turn b");
+        let run_of = |sink: &RecordingEvents| {
+            sink.0
+                .lock()
+                .expect("events")
+                .iter()
+                .find(|event| matches!(event.payload, AgentEvent::RunStarted { .. }))
+                .expect("RunStarted")
+                .run_id
+                .as_str()
+                .to_string()
+        };
+        let run_a = run_of(&sink_a);
+        let run_b = run_of(&sink_b);
+        assert_ne!(run_a, run_b);
+        assert_unique_id(&run_a, "run");
+        assert_unique_id(&run_b, "run");
+
+        let id_a = super::run_request_id();
+        let id_b = super::run_request_id();
         assert_ne!(id_a.as_str(), id_b.as_str());
-        for id in [id_a.as_str(), id_b.as_str()] {
-            let body = id.strip_prefix("req-").expect("req- prefix");
-            let parts: Vec<&str> = body.split('-').collect();
-            assert_eq!(parts.len(), 3, "req-<pid>-<nanos>-<n>: {id}");
-            assert!(u64::from_str_radix(parts[0], 16).is_ok());
-            assert!(u128::from_str_radix(parts[1], 16).is_ok());
-            assert!(parts[2].parse::<u64>().is_ok());
-        }
+        assert_unique_id(id_a.as_str(), "req");
+        assert_unique_id(id_b.as_str(), "req");
+        core_a.shutdown().await.expect("shutdown a");
+        core_b.shutdown().await.expect("shutdown b");
     }
 
     /// SEARCH-1：web_search = true 且模型声明 WebSearch 时，请求注入

@@ -1,4 +1,3 @@
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use pawork_domain::{
@@ -580,8 +579,7 @@ async fn start(
             .is_some_and(|session| session.name == "pawork-cli"),
         _ => false,
     };
-    let n = adapter.next_gui_run.fetch_add(1, Ordering::Relaxed);
-    let run_id = RunId::from(format!("run-gui-{}-{n}", now_timestamp().as_unix_millis()));
+    let run_id = RunId::from(crate::ids::process_unique("run-gui"));
     adapter.browser.bind(&run_id, &envelope.source);
     let token = CancellationToken::new();
     let target_workspace = workspace_id.clone();

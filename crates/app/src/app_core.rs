@@ -412,10 +412,7 @@ pub struct AppCore {
     pub(crate) tasks: services::tasks::TaskService,
     pub(crate) imports: services::import::ImportService,
     pub(crate) next_request: AtomicU64,
-    pub(crate) next_run: AtomicU64,
-    pub(crate) next_session: AtomicU64,
     pub(crate) next_message: AtomicU64,
-    pub(crate) next_workspace: AtomicU64,
     /// R-04/R-24：实例所有权。load_with 按 InstanceRole 获取；
     /// from_parts 等直连装配为 None（沿用既有清扫语义，仅供测试与
     /// 进程内复用）。
@@ -722,10 +719,7 @@ impl AppCore {
             tasks: services::tasks::TaskService::new(),
             imports: services::import::ImportService,
             next_request: AtomicU64::new(1),
-            next_run: AtomicU64::new(1),
-            next_session: AtomicU64::new(1),
             next_message: AtomicU64::new(1),
-            next_workspace: AtomicU64::new(1),
             instance_ownership: None,
             native: Arc::new(NativeHost::host()) as Arc<dyn NativeControl>,
         }
@@ -1136,7 +1130,8 @@ impl AppCore {
         self.effort = effort;
     }
 
-    pub fn adapter_protocol(&self) -> AdapterProtocol {
+    #[cfg(test)]
+    pub(crate) fn adapter_protocol(&self) -> AdapterProtocol {
         self.adapter_protocol
     }
 
@@ -1400,13 +1395,7 @@ impl AppCore {
     }
 
     fn allocate_workspace_id(&self) -> WorkspaceId {
-        let sequence = self
-            .next_workspace
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        WorkspaceId::from(format!(
-            "ws-{}-{sequence}",
-            pawork_engine::now_timestamp().as_unix_millis()
-        ))
+        WorkspaceId::from(crate::ids::process_unique("ws"))
     }
 
     pub fn workspace_trusted(&self) -> bool {

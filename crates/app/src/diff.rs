@@ -82,7 +82,7 @@ pub fn render_session_diff(diff: &SessionDiff) -> String {
     out
 }
 
-pub fn render_diff_file(file: &DiffFile) -> String {
+pub(crate) fn render_diff_file(file: &DiffFile) -> String {
     let old = file.previous_path.as_deref().unwrap_or(file.path.as_str());
     let mut out = format!("--- {old}\n+++ {}\n", file.path);
     if file.binary {

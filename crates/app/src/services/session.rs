@@ -72,9 +72,8 @@ impl SessionService {
         core: &AppCore,
         title: impl Into<String>,
     ) -> Result<SessionId, AppError> {
-        let n = core.next_session.fetch_add(1, Ordering::Relaxed);
         let ts = pawork_engine::now_timestamp();
-        let id = SessionId::from(format!("ses-{}-{n}", ts.as_unix_millis()));
+        let id = SessionId::from(crate::ids::process_unique("ses"));
         let workspace_id = core.workspace_id().clone();
         if workspace_id.as_str() != "ws-unbound" && core.workspace_by_id(&workspace_id).is_ok() {
             core.store()?
@@ -94,9 +93,8 @@ impl SessionService {
         title: impl Into<String>,
         workspace_id: WorkspaceId,
     ) -> Result<SessionId, AppError> {
-        let n = core.next_session.fetch_add(1, Ordering::Relaxed);
         let ts = pawork_engine::now_timestamp();
-        let id = SessionId::from(format!("ses-{}-{n}", ts.as_unix_millis()));
+        let id = SessionId::from(crate::ids::process_unique("ses"));
         core.store()?
             .create_session_with_workspace(&id, title, ts, &workspace_id)
             .await?;
@@ -111,9 +109,8 @@ impl SessionService {
         core: &AppCore,
         title: impl Into<String>,
     ) -> Result<SessionId, AppError> {
-        let n = core.next_session.fetch_add(1, Ordering::Relaxed);
         let ts = pawork_engine::now_timestamp();
-        let id = SessionId::from(format!("ses-{}-{n}", ts.as_unix_millis()));
+        let id = SessionId::from(crate::ids::process_unique("ses"));
         core.store()?.create_session(&id, title, ts).await?;
         Ok(id)
     }

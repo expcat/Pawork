@@ -121,12 +121,12 @@ pub fn session_db_path_for(data_dir: impl AsRef<Path>, instance: &str) -> PathBu
 }
 
 /// `<data_dir>/<instance>/artifacts`。
-pub fn artifact_store_path_for(data_dir: impl AsRef<Path>, instance: &str) -> PathBuf {
+pub(crate) fn artifact_store_path_for(data_dir: impl AsRef<Path>, instance: &str) -> PathBuf {
     instance_dir(data_dir, instance).join("artifacts")
 }
 
 /// `<data_dir>/<instance>/protected`：PWB1 ReasoningProtector 存储根。
-pub fn protected_store_path_for(data_dir: impl AsRef<Path>, instance: &str) -> PathBuf {
+pub(crate) fn protected_store_path_for(data_dir: impl AsRef<Path>, instance: &str) -> PathBuf {
     instance_dir(data_dir, instance).join("protected")
 }
 

@@ -22,9 +22,9 @@ pub mod gateway_backend;
 mod gateway_tests;
 mod goal_host;
 mod gui_host;
-pub use goal_host::GoalSnapshot;
 mod hub;
 mod idempotency;
+mod ids;
 mod import_host;
 mod instance_lock;
 mod loop_ctx;
@@ -47,25 +47,21 @@ pub use app_core::{
 pub(crate) use app_core::{unbound_workspace, RETAINED_MESSAGES};
 
 pub use approval::{
-    parse_approval_mode, ApprovalAsk, ApprovalPromptHost, ApprovalResolve, DenyAllApprovals,
-    GuiApprovalHost, PendingToolApproval,
+    parse_approval_mode, ApprovalAsk, ApprovalPromptHost, DenyAllApprovals, GuiApprovalHost,
 };
+pub(crate) use approval::{ApprovalResolve, PendingToolApproval};
 pub use auth::{AuthChannelStatus, AuthSource, OAuthLogin};
-pub use channels::{
-    first_party_channel, is_first_party, ChannelKind, FirstPartyChannel, FIRST_PARTY_CHANNELS,
-};
+pub use channels::{ChannelKind, FirstPartyChannel, FIRST_PARTY_CHANNELS};
 pub use checkpoint::{CheckpointSummary, RollbackOutcome};
 pub use control::{LedgerTotals, QuotaWindowLine, SessionUsageLine, UsageOverview};
 pub use data_dir::{
-    artifact_store_path_for, consume_data_dir_outcome, default_data_dir, default_data_dir_outcome,
-    instance_dir, normalize_instance, protected_store_path_for, session_db_path_for,
-    DataDirOutcome, DEFAULT_INSTANCE,
+    consume_data_dir_outcome, default_data_dir, default_data_dir_outcome, instance_dir,
+    normalize_instance, session_db_path_for, DataDirOutcome, DEFAULT_INSTANCE,
 };
-pub use diff::{paginate_diff, render_diff_file, render_session_diff, GitDiffHeader, SessionDiff};
+pub use diff::{paginate_diff, render_session_diff, GitDiffHeader, SessionDiff};
 pub use extensions::McpServerStatus;
-pub use gui_host::{
-    project_timeline_item, GuiBroadcastSink, GuiEventBus, GuiHostAdapter, GuiRunRegistry,
-};
+pub(crate) use goal_host::GoalSnapshot;
+pub use gui_host::{GuiHostAdapter, GuiRunRegistry};
 pub(crate) use hub::{EventHub, HubError, DEFAULT_HUB_CAPACITY};
 pub(crate) use idempotency::{
     should_cache, IdempotencyCheck, IdempotencyError, IdempotencyStore,
@@ -79,12 +75,11 @@ pub use instance_lock::{active_instance_host_pids, InstanceRole};
 pub use orchestration_host::{MultiAgentDemoOptions, MultiAgentDemoReport};
 pub use pawork_git::{DiffFile, DiffPage};
 pub use pawork_policy::{ApprovalMode, RiskLevel};
-pub use pawork_storage::session::{SessionExport, SessionRecord, EXPORT_SCHEMA_VERSION};
+pub use pawork_storage::session::{SessionExport, SessionRecord};
 pub use pawork_workflow::plan::PlanSnapshot;
 pub use pawork_workflow::task::TaskSnapshot;
-pub use pawork_workspace::import::ExternalSource as CompatExternalSource;
 pub use pawork_workspace::import::{LocalSessionFile, LocalSessionSource};
-pub use persist::PersistThenRender;
 pub use plan_host::review_status_label;
 pub use protocol::{AdapterProtocol, ProtocolError};
+pub use services::extension::{base64_encode, image_media_type};
 pub use tasks_host::parse_task_kind;

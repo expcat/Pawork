@@ -350,7 +350,7 @@ impl ExtensionService {
 
 /// VISION-2：图片扩展名 → MIME（大小写不敏感）。取 2026-09-15 调研各供应商
 /// 图片格式的交集（png / jpeg / gif / webp）；非图片返回 None，走既有文本路径。
-fn image_media_type(relative_path: &str) -> Option<&'static str> {
+pub fn image_media_type(relative_path: &str) -> Option<&'static str> {
     let extension = relative_path.rsplit('.').next()?.to_ascii_lowercase();
     match extension.as_str() {
         "png" => Some("image/png"),
@@ -363,7 +363,7 @@ fn image_media_type(relative_path: &str) -> Option<&'static str> {
 
 /// VISION-2：标准 base64（RFC 4648 带 padding）。与 pawork-auth 手写
 /// base64url 同理，不为单一编码需求新增生产依赖边。
-pub(crate) fn base64_encode(bytes: &[u8]) -> String {
+pub fn base64_encode(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
