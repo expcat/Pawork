@@ -54,36 +54,64 @@ struct Args {
     probe_smoke: bool,
 }
 
+const USAGE: &str =
+    "usage: pawork-desktop [--socket <path>] [--instance <name>] [--probe|--probe-smoke]";
+
 fn parse_args() -> Result<Args, String> {
-    let mut args = Args {
+    parse_args_from(std::env::args().skip(1))
+}
+
+fn parse_args_from<I, S>(args: I) -> Result<Args, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut parsed = Args {
         socket: None,
         instance: None,
         probe: false,
         probe_smoke: false,
     };
-    let usage =
-        "usage: pawork-desktop [--socket <path>] [--instance <name>] [--probe|--probe-smoke]";
-    let mut iter = std::env::args().skip(1);
+    let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
-        match arg.as_str() {
+        match arg.as_ref() {
             "--socket" => {
                 let Some(path) = iter.next() else {
-                    return Err(usage.into());
+                    return Err(USAGE.into());
                 };
-                args.socket = Some(PathBuf::from(path));
+                parsed.socket = Some(PathBuf::from(path.as_ref()));
             }
             "--instance" => {
                 let Some(name) = iter.next() else {
-                    return Err(usage.into());
+                    return Err(USAGE.into());
                 };
-                args.instance = Some(name);
+                let name = name.as_ref();
+                if let Some(detail) = instance_name_error(name) {
+                    return Err(format!("{detail}; {USAGE}"));
+                }
+                parsed.instance = Some(name.to_string());
             }
-            "--probe" => args.probe = true,
-            "--probe-smoke" => args.probe_smoke = true,
-            other => return Err(format!("unknown argument {other}; {usage}")),
+            "--probe" => parsed.probe = true,
+            "--probe-smoke" => parsed.probe_smoke = true,
+            other => return Err(format!("unknown argument {other}; {USAGE}")),
         }
     }
-    Ok(args)
+    Ok(parsed)
+}
+
+/// 与 `pawork-app` 的 `normalize_instance` 同一允许集。desktop 不依赖 app。
+fn instance_name_error(name: &str) -> Option<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Some("instance name must not be empty".into());
+    }
+    let allowed = name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    if !allowed || name.contains("..") {
+        return Some(format!("invalid instance name `{name}`"));
+    }
+    None
 }
 
 /// 连接冒烟模式：不开窗，connect + snapshot 后打印一行摘要退出
@@ -1230,5 +1258,77 @@ mod probe_smoke_model_tests {
         let error = pick_probe_smoke_model(&models).expect_err("no authorized pair");
         assert!(error.contains("glm-coding/glm-5.3=disabled"), "{error}");
         assert!(error.contains("xai/grok-4.7=text_false"), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod instance_args_tests {
+    use super::{parse_args_from, USAGE};
+    use crate::platform::{socket_path_for_instance, token_path_for_socket};
+
+    #[test]
+    fn instance_names_reject_path_escape_and_blank() {
+        for name in ["../x", "../../../x", "a/b", "..", "", "   ", "a b", "a\\b"] {
+            let Err(error) = parse_args_from(["--instance", name]) else {
+                panic!("accepted {name}");
+            };
+            assert!(error.ends_with(&format!("; {USAGE}")), "{name}: {error}");
+            if name.trim().is_empty() {
+                assert!(
+                    error.starts_with("instance name must not be empty"),
+                    "{name}: {error}"
+                );
+            } else {
+                assert!(
+                    error.starts_with(&format!("invalid instance name `{}`", name.trim())),
+                    "{name}: {error}"
+                );
+            }
+        }
+        let Err(missing) = parse_args_from(["--instance"]) else {
+            panic!("missing instance value accepted");
+        };
+        assert_eq!(missing, USAGE);
+        let Err(unknown) = parse_args_from(["--nope"]) else {
+            panic!("unknown argument accepted");
+        };
+        assert!(
+            unknown.starts_with("unknown argument --nope; "),
+            "{unknown}"
+        );
+        assert!(unknown.ends_with(USAGE), "{unknown}");
+    }
+
+    #[test]
+    fn instance_names_keep_socket_and_token_paths() {
+        for name in ["default", "dev-1", "a.b_c"] {
+            let args = parse_args_from(["--instance", name]).expect(name);
+            assert_eq!(args.instance.as_deref(), Some(name));
+            let socket = socket_path_for_instance(args.instance.as_deref());
+            let expected_file = if name == "default" {
+                "pawork-gui.sock".to_string()
+            } else {
+                format!("pawork-gui-{name}.sock")
+            };
+            let expected_token = if name == "default" {
+                "gui.token".to_string()
+            } else {
+                format!("gui-{name}.token")
+            };
+            assert_eq!(
+                socket,
+                socket_path_for_instance(None).with_file_name(&expected_file),
+                "{name}"
+            );
+            assert_eq!(
+                token_path_for_socket(&socket),
+                socket.parent().unwrap().join(expected_token),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            socket_path_for_instance(Some("default")),
+            socket_path_for_instance(None)
+        );
     }
 }

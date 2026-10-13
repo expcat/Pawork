@@ -146,7 +146,7 @@ fn tool_headline_target(name: &str, arguments: Option<&str>) -> Option<String> {
     Some(truncate_headline_target(&target, HEADLINE_TARGET_MAX_CHARS))
 }
 
-fn preview_result_text(text: &str, expanded: bool) -> (String, bool) {
+pub(super) fn preview_result_text(text: &str, expanded: bool) -> (String, bool) {
     let can_expand = text.lines().count() > RESULT_PREVIEW_LINES;
     if !can_expand || expanded {
         (text.to_string(), can_expand)
@@ -161,7 +161,7 @@ fn preview_result_text(text: &str, expanded: bool) -> (String, bool) {
     }
 }
 
-fn arguments_secondary(arguments: Option<&str>) -> String {
+pub(super) fn arguments_secondary(arguments: Option<&str>) -> String {
     arguments
         .filter(|text| !text.is_empty())
         .map(|text| {

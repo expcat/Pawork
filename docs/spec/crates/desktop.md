@@ -103,8 +103,8 @@
 | `src/ui/product_access.rs` | ~123 | 产品子窗口的 AX / 键盘桥；AppKit Tab monitor 只作用于活动窗口 |
 | `src/ui/task_usage.rs` | ~752 | 任务消耗独立窗口（API 1.26）；复用产品窗口与 `PanelAccess` |
 | `src/ui/components/mod.rs` | ~19 | 组件族模块声明（含 `icon` / `empty_state`） |
-| `src/ui/components/empty_state.rs` | ~87 | GUI4：居中空状态容器（可选图标 + 调用方标题 / 说明 / 动作 / 骨架）；不发布 AX，identifier 仍由调用方 shell 节点承担 |
-| `src/ui/components/icon.rs` | ~281 | GUI3-05：`Icon` 枚举 41 项 + `Icon::path()`（`icons/<kebab>.svg`）/ `Icon::all()`；`icon()`（20px `flex_none` `svg()`）与 `icon_sized()`（16px），默认 `text.primary`（gpui 将 SVG 渲染为 alpha mask，必须在 Svg 上染色；调用方可再覆盖，如 Send/Cancel 的 `on_accent`）；`Assets` 以 `include_bytes!` 静态表实现 gpui `AssetSource`（`load` / `list("icons")`），资产在 `apps/desktop/assets/icons/`，不引入 rust-embed；`TestAppContext` 无资产源时 svg 静默占位；1 个测试（全部登记路径可加载、`<svg` 开头、数量一致、无重复） |
+| `src/ui/components/empty_state.rs` | ~87 | GUI4：居中空状态容器（可选图标 + 调用方标题 / 说明 / 动作 / 骨架）；不发布 AX，identifier 仍由调用方 shell 节点承担。`labeled` 展开为 20px 图标 + `Label` BASE 标题 + `Label` SM 次要说明，标题色由参数传入；Changes / Resources / Computer / 子代理空态走它，各页仍保留自己的 key→说明与骨架 id。`stale_notice` 是 Changes / Resources / Computer 的过期条（`px_2` / `py_1` / `border_b_1` / `warning_text` / `font::XS` / `common.stale_data · {reason}`）。居中、`min_h_0` 与不发布 AX 不变 |
+| `src/ui/components/icon.rs` | ~281 | GUI3-05：`Icon` 枚举 40 项 + `Icon::path()`（`icons/<kebab>.svg`）/ `Icon::all()`；`icon()`（20px `flex_none` `svg()`）与 `icon_sized()`（16px），默认 `text.primary`（gpui 将 SVG 渲染为 alpha mask，必须在 Svg 上染色；调用方可再覆盖，如 Send/Cancel 的 `on_accent`）；`Assets` 以 `include_bytes!` 静态表实现 gpui `AssetSource`（`load` / `list("icons")`），资产在 `apps/desktop/assets/icons/`，不引入 rust-embed；`TestAppContext` 无资产源时 svg 静默占位；1 个测试（全部登记路径可加载、`<svg` 开头、数量一致、无重复） |
 | `src/ui/components/switch.rs` | ~194 | `Switch`（OPT-3c / GUI3-08）：36×20 轨道 + 16px 滑块，On/Off 状态词由调用方并排渲染；disabled 无 Press；mouse / Enter / Space / AX Press 同源；GUI2-06 关态 hover 用 `surface.hover` 不走 `accent.hover`；状态切换 120ms ease-out 位移，首帧瞬移避免挂载滑入 |
 | `src/ui/components/skeleton.rs` | ~48 | GUI3-08：Changes / Resources 加载骨架（4 条静态 hover 色条，宽 220/168/196/132、高 8，不循环）。`cfg(test)` selector `{骨架 id}/skeleton-bar-{n}` 只给布局用例读框；Changes 加载 id 是 `changes.loading-skeleton`，Resources 是 `resources.loading-skeleton`。生产元素 id 仍是 `skeleton-bar-{n}` |
 | `src/ui/components/button.rs` | ~409 | `Button`：六 variant（Primary / Ghost / Danger / Success / Raised / IconCircle；IconCircle 为 Composer 32×32 圆形动作槽）的底色·文字色·hover/pressed 映射；默认 14px control / `CONTROL_RADIUS`；`child()` 承载自绘图标；焦点描边经 `focus_ring` 覆盖层（零布局参与）；`ButtonPadding` 四档及描边/尺寸/对齐 builder；disabled 无 pointer cursor、mouse press、hover 或 keyboard activate，仍保留可读文字与 tooltip |
@@ -140,7 +140,8 @@ UX-04：连接失败 / 断线的原因在主区呈现，无任务时替代新任
 pawork-desktop [--socket <path>] [--instance <name>] [--probe|--probe-smoke]
 ```
 
-- 手动 argv 解析；未知参数打印 usage 并 exit 2。
+- 手动 argv 解析；未知参数与非法 `--instance` 都打印 usage 并 exit 2。
+- `--instance` 在 desktop 内校验（不依赖 `pawork-app`）：trim 后非空，只允许 `[A-Za-z0-9._-]`，不得包含 `..`。空串、纯空白、路径分量（`../x`、`a/b`、`..`）以及空格或 `\` 拒绝。通过校验的名字原样保存。
 - socket 解析：`--socket` 直接指定；否则按 `--instance` 推导 `<data_dir>/pawork-gui[-{instance}].sock`（`default` 等价无后缀）。
 - `--instance` 与 `PAWORK_DATA_DIR` 只决定 socket 和数据目录，不隔离全局认证。认证文件仍是 `$PAWORK_HOME/auth.json`；未设置 `PAWORK_HOME` 时为 `~/.pawork/auth.json`。
 - `--probe`：不开窗。只 connect、取 snapshot、拉 `model_list`，打印一行 `connected: instance=… sessions=… models=… catalog=…` 后退出（成功 0 / 失败 1）。`fetch_models` 失败原样失败，不用空目录冒充成功。不选择模型、不发消息、不启动 run。
@@ -465,7 +466,7 @@ terminal_create 的 Data 回执只取字符串 `terminal_session_id`；同一对
 | `raw-window-handle` | `0.6` | 从 GPUI 窗口借用原生句柄交给 browser |
 
 - **被依赖**：无。独立二进制，不进 `pawork` CLI 的依赖闭包。
-- **运行时对端**：`pawork gui serve`（host 侧 gui-server）。数据目录规则镜像 app（`PAWORK_DATA_DIR` →（Windows）`%LOCALAPPDATA%/pawork` → `~/.pawork` → 临时目录/pawork），但按分层约束**不**依赖 `pawork-app` crate。
+- **运行时对端**：`pawork gui serve`（host 侧 gui-server）。数据目录规则镜像 app（`PAWORK_DATA_DIR` →（Windows）`%LOCALAPPDATA%/pawork` → `~/.pawork` → 临时目录/pawork），但按分层约束**不**依赖 `pawork-app` crate。`--instance` 允许集在 desktop 内本地校验，不搬 app 的路径函数。
 
 UX-05 模型管理弹层：共用 `model_search_input` / query，仅过滤显示目录，不改变模型或批量启用语义；固定头部含搜索、状态 / 来源、完整目录计数、全开 / 全关。最大高 520px，内部模型列表独立滚动，名字与 ID 不截断并可横滚；↑/↓ 移 Switch 焦点，Tab 后实际聚焦行滚入，Esc 回管理入口。render / 键盘 / AX 使用同一筛选结果和实际列表框，保留所有入口写 gate 与 Host 回执权威。
 
@@ -523,7 +524,7 @@ UI-2 新增 `session_actions_follow_hover_and_keyboard_without_opening`：真实
 
 | 文件 | 覆盖面 |
 | --- | --- |
-| `main.rs` | 窗口最小尺寸不再靠常量副本断言；宽窄窗可用性由 shell / AppView 的实际布局测试验证。B20：`probe_run_terminal_completed_turn_uses_current_text` 覆盖当前 run 正文、审批后不再次回执完成、终态早于回执；`probe_run_terminal_rejects_false_success` 拒绝提前失败、Completed 冒充取消、失败审批、其它 session/run 和提前取消 |
+| `main.rs` | 窗口最小尺寸不再靠常量副本断言；宽窄窗可用性由 shell / AppView 的实际布局测试验证。B20：`probe_run_terminal_completed_turn_uses_current_text` 覆盖当前 run 正文、审批后不再次回执完成、终态早于回执；`probe_run_terminal_rejects_false_success` 拒绝提前失败、Completed 冒充取消、失败审批、其它 session/run 和提前取消。`instance_names_reject_path_escape_and_blank` 拒绝 `../x`、`../../../x`、`a/b`、`..`、空串、纯空白、空格与 `\`，失败文案带 usage；`instance_names_keep_socket_and_token_paths` 接受 `default` / `dev-1` / `a.b_c`，`default` 的 socket 与无后缀相同，具名实例为 `pawork-gui-{name}.sock` 与同目录 `gui-{name}.token` |
 | `controller/mod.rs` | 既有 wire/解析/安全回归；R6 Wave B 增 terminal create 失败 workspace 归属与 diff 内容 session id 生命周期字段。SET-6d 增 terminal_settings 查询/全态写 wire 与回执解析主路径一条（shell Some/null 两态）。B19 增 terminal_create 回执只认 `terminal_session_id`（正式键优先于同对象 `id`，只含 `id` 或非字符串拒绝）。删除 last_acked 单调性和生命周期字段自证；保留握手能力面钉板。 |
 | `projection/tests.rs` | 既有 snapshot/replay、Run/Timeline/TaskRail 与 Terminal 投影；未开始任务钉顶 / 复用、live 活动清钉顶、多标签 Close 回落与 create 失败保兄弟标签；Settings Data 走 protocol 类型 fail-closed（缺 nullable 键 / 类型错误）；SET-3～6d 解析与 stale/禁写回归仍在；子代理对话栏状态（选代理复位 / 分页去重 / 异会话与异代理 fail-closed / 加载代际拒绝过期回执 / live 过滤）主路径一条。 |
 | `platform.rs` | `socket_path_for_instance` 的默认 / `default` / 具名实例文件名，以及 `token_path_for_socket` 同目录推导（`pawork-gui.sock` → `gui.token`，`pawork-gui-dev.sock` → `gui-dev.token`）；deny-list 恰为 `{pawork-client, pawork-terminal, pawork-browser}`；扫描器覆盖别名 / target 表（负例含 dev-dependencies 排除） |

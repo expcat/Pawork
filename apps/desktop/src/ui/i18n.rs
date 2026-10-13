@@ -247,7 +247,6 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "changes.dirty_files" => ("Dirty files", "未提交文件"),
         "changes.work_dir" => ("Work dir", "工作目录"),
         "inspector.output_dropped" => ("{} output events dropped", "已丢弃 {} 条输出事件"),
-        "inspector.stop" => ("Stop", "停止"),
         "settings.tools.configure" => (
             "Add a server under [mcp.servers.<name>] in the global config.toml, with transport (stdio command or http url). Restart the Pawork service, then refresh this page.",
             "在全局 config.toml 的 [mcp.servers.<名称>] 中配置 transport（stdio 的 command 或 http 的 url）。重启 Pawork 服务后刷新此页。",
@@ -1724,7 +1723,7 @@ mod tests {
             ("changes.files", "文件"),
             ("changes.summary", "摘要"),
             ("tool.group_completed", "已完成"),
-            ("inspector.stop", "停止"),
+            ("computer.stop_task", "停止任务"),
             ("inspector.panel", "工作面板"),
             ("inspector.back_to_conversation", "返回对话"),
             ("inspector.return_for_approval", "返回对话处理审批"),

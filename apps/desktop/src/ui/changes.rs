@@ -12,7 +12,7 @@ use crate::controller::{
 };
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{MenuPanel, MenuRow};
-use crate::ui::components::empty_state::EmptyState;
+use crate::ui::components::empty_state::{stale_notice, EmptyState};
 use crate::ui::components::focus_ring::focus_ring;
 use crate::ui::components::icon::{icon_sized, Icon};
 use crate::ui::components::label::Label;
@@ -509,16 +509,7 @@ impl AppView {
                     .child(t("changes.scope_note")),
             )
             .when_some(self.changes.stale_reason.clone(), |block, reason| {
-                block.child(
-                    div()
-                        .px_2()
-                        .py_1()
-                        .border_b_1()
-                        .border_color(dark().semantic.warning_text)
-                        .text_size(font::XS)
-                        .text_color(dark().semantic.warning_text)
-                        .child(format!("{} · {reason}", t("common.stale_data"))),
-                )
+                block.child(stale_notice(reason))
             })
             .when_some(self.changes_session_mismatch(), |block, data_session| {
                 // host diff_* 固定解析 latest 会话（P2-1）：数据会话与当前
@@ -1294,7 +1285,8 @@ fn changes_placeholder(key: &'static str) -> EmptyState {
         "changes.diff_loading" => t("changes.diff_loading_desc"),
         _ => t("common.placeholder_no_details"),
     };
-    let mut placeholder = changes_placeholder_content(
+    let mut placeholder = EmptyState::labeled(
+        Icon::Changes,
         t(key).to_string(),
         description.to_string(),
         dark().text.primary,
@@ -1307,23 +1299,7 @@ fn changes_placeholder(key: &'static str) -> EmptyState {
 
 /// 失败占位：标题本地化；reason 为 wire 数据，不翻译。
 fn changes_placeholder_colored(text: impl Into<String>, color: gpui::Rgba) -> EmptyState {
-    changes_placeholder_content(t("changes.error_title").into(), text.into(), color)
-}
-
-fn changes_placeholder_content(
-    title: String,
-    description: String,
-    color: gpui::Rgba,
-) -> EmptyState {
-    EmptyState::new()
-        .icon(Icon::Changes)
-        .icon_size(px(metrics::ICON_SIZE))
-        .child(Label::new(title).size(font::BASE).color(color))
-        .child(
-            Label::new(description)
-                .size(font::SM)
-                .color(dark().text.secondary),
-        )
+    EmptyState::labeled(Icon::Changes, t("changes.error_title"), text.into(), color)
 }
 
 fn summary_row(label: &str, value: String) -> impl IntoElement {

@@ -114,37 +114,6 @@ fn panel_items(conversation: &SubagentConversationState) -> Vec<PanelItem> {
         .collect()
 }
 
-/// 工具参数展示（RV-04）：JSON 参数 pretty 打印，畸形 / 缺失回退原文
-/// 或占位（与主 Timeline arguments_secondary 同口径，不翻译数据内容）。
-fn subagent_arguments_display(arguments: Option<&str>) -> String {
-    arguments
-        .filter(|text| !text.is_empty())
-        .map(|text| {
-            serde_json::from_str::<serde_json::Value>(text)
-                .ok()
-                .and_then(|value| serde_json::to_string_pretty(&value).ok())
-                .unwrap_or_else(|| text.to_string())
-        })
-        .unwrap_or_else(|| t("tool.arguments_missing").into())
-}
-
-/// 工具结果 / 错误预览（RV-04）：与主 Timeline RESULT_PREVIEW_LINES 同
-/// 口径——超过 10 行折叠为预览，展开按钮补全剩余。
-fn subagent_detail_preview(text: &str, expanded: bool) -> (String, bool) {
-    let can_expand = text.lines().count() > super::timeline_entry::RESULT_PREVIEW_LINES;
-    if !can_expand || expanded {
-        (text.to_string(), can_expand)
-    } else {
-        (
-            text.lines()
-                .take(super::timeline_entry::RESULT_PREVIEW_LINES)
-                .collect::<Vec<_>>()
-                .join("\n"),
-            true,
-        )
-    }
-}
-
 /// 长回执折叠时的摘要行（RV-05）：首个非空行，截断到固定字符数。
 fn subagent_result_summary(text: &str) -> String {
     let first = text
@@ -884,8 +853,11 @@ impl AppView {
                 if self
                     .expanded_subagent_details
                     .contains(&format!("{event_id}:tool"))
-                    && subagent_detail_preview(&subagent_tool_detail_text(detail.as_deref()), false)
-                        .1
+                    && super::timeline_entry::preview_result_text(
+                        &subagent_tool_detail_text(detail.as_deref()),
+                        false,
+                    )
+                    .1
                 {
                     visible_keys.insert(subagent_tool_result_layout_key(event_id));
                 }
@@ -1294,7 +1266,7 @@ impl AppView {
                 if expanded {
                     let detail_text = subagent_tool_detail_text(detail.as_deref());
                     let (preview, can_expand) =
-                        subagent_detail_preview(&detail_text, result_expanded);
+                        super::timeline_entry::preview_result_text(&detail_text, result_expanded);
                     let mut expanded_area = div()
                         .flex()
                         .flex_col()
@@ -1310,7 +1282,9 @@ impl AppView {
                                 .line_height(font::from_pixels(20.0))
                                 .font_family("monospace")
                                 .text_color(dark().text.secondary)
-                                .child(subagent_arguments_display(arguments.as_deref())),
+                                .child(super::timeline_entry::arguments_secondary(
+                                    arguments.as_deref(),
+                                )),
                         )
                         .child(
                             div()
@@ -1448,20 +1422,7 @@ impl AppView {
 }
 
 fn subagent_placeholder(title: &'static str, description: String) -> gpui::AnyElement {
-    EmptyState::new()
-        .icon(Icon::Subagents)
-        .icon_size(px(metrics::ICON_SIZE))
-        .child(
-            Label::new(title)
-                .size(font::BASE)
-                .color(dark().text.primary),
-        )
-        .child(
-            Label::new(description)
-                .size(font::SM)
-                .color(dark().text.secondary),
-        )
-        .into_any_element()
+    EmptyState::labeled(Icon::Subagents, title, description, dark().text.primary).into_any_element()
 }
 
 /// 「子代理」对话栏 AX：Group 节点携带当前面板状态摘要（被选代理 /
@@ -1670,7 +1631,12 @@ pub(super) fn subagent_ax(view: &AppView, window: &Window, frame: AxRect) -> AxN
                                 super::timeline_entry::tool_result_expand_key(event_id);
                             let result_expanded =
                                 view.expanded_subagent_details.contains(&result_key);
-                            if subagent_detail_preview(&detail_text, result_expanded).1 {
+                            if super::timeline_entry::preview_result_text(
+                                &detail_text,
+                                result_expanded,
+                            )
+                            .1
+                            {
                                 if let Some(toggle_layout) = view
                                     .subagent_item_layouts
                                     .get(&subagent_tool_result_layout_key(event_id))
@@ -2543,7 +2509,7 @@ mod tests {
             super::super::timeline_entry::tool_headline("read_file", stored_arguments.as_deref()),
             "read_file src/lib.rs"
         );
-        let pretty = subagent_arguments_display(stored_arguments.as_deref());
+        let pretty = super::super::timeline_entry::arguments_secondary(stored_arguments.as_deref());
         assert_eq!(
             pretty,
             serde_json::to_string_pretty(&serde_json::json!({"path": "src/lib.rs", "mode": "ro"}))
@@ -2771,12 +2737,12 @@ mod tests {
             "write_file secret.txt"
         );
         assert_eq!(
-            subagent_arguments_display(deny_arguments.as_deref()),
+            super::super::timeline_entry::arguments_secondary(deny_arguments.as_deref()),
             serde_json::to_string_pretty(&serde_json::json!({"path": "secret.txt"})).unwrap()
         );
         assert_eq!(exec_arguments.as_deref(), Some(malformed));
         assert_eq!(
-            subagent_arguments_display(exec_arguments.as_deref()),
+            super::super::timeline_entry::arguments_secondary(exec_arguments.as_deref()),
             malformed
         );
         assert_eq!(
@@ -2800,20 +2766,22 @@ mod tests {
         for state in &states {
             assert_eq!(subagent_run_label(state), (*state).to_string());
         }
-        let (preview, can_expand) = subagent_detail_preview(&execution, false);
+        let (preview, can_expand) =
+            super::super::timeline_entry::preview_result_text(&execution, false);
         assert!(can_expand);
         assert_eq!(preview.lines().count(), 10);
         assert!(preview.contains("exec-line-0"));
         assert!(!preview.contains("exec-line-11"));
-        let (full, can_expand_again) = subagent_detail_preview(&execution, true);
+        let (full, can_expand_again) =
+            super::super::timeline_entry::preview_result_text(&execution, true);
         assert!(can_expand_again);
         assert_eq!(full, execution);
         assert_eq!(
-            subagent_detail_preview(&execution, true),
+            super::super::timeline_entry::preview_result_text(&execution, true),
             (full.clone(), true)
         );
         assert_eq!(
-            subagent_detail_preview(&denial, false),
+            super::super::timeline_entry::preview_result_text(&denial, false),
             (denial.to_string(), false)
         );
     }

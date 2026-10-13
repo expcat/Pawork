@@ -6,7 +6,7 @@ use gpui::{div, prelude::*, px, Context, ScrollHandle};
 
 use crate::controller::McpServerEntry;
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
-use crate::ui::components::empty_state::EmptyState;
+use crate::ui::components::empty_state::{stale_notice, EmptyState};
 use crate::ui::components::icon::{icon_sized, Icon};
 use crate::ui::components::label::Label;
 use crate::ui::components::skeleton::loading_skeleton;
@@ -236,16 +236,7 @@ impl AppView {
             .min_h_0()
             .child(header)
             .when_some(self.resources.stale_reason.clone(), |block, reason| {
-                block.child(
-                    div()
-                        .px_2()
-                        .py_1()
-                        .border_b_1()
-                        .border_color(dark().semantic.warning_text)
-                        .text_size(font::XS)
-                        .text_color(dark().semantic.warning_text)
-                        .child(format!("{} · {reason}", t("common.stale_data"))),
-                )
+                block.child(stale_notice(reason))
             })
             .child(body)
     }
@@ -259,7 +250,8 @@ fn resources_placeholder(key: &'static str) -> EmptyState {
         "resources.empty" => t("resources.empty_desc"),
         _ => t("common.placeholder_no_details"),
     };
-    let mut placeholder = resources_placeholder_content(
+    let mut placeholder = EmptyState::labeled(
+        Icon::Resources,
         t(key).to_string(),
         description.to_string(),
         dark().text.primary,
@@ -272,23 +264,12 @@ fn resources_placeholder(key: &'static str) -> EmptyState {
 
 /// 失败占位：标题本地化；reason 为 wire 数据，不翻译。
 fn resources_placeholder_colored(text: impl Into<String>, color: gpui::Rgba) -> EmptyState {
-    resources_placeholder_content(t("resources.error_title").into(), text.into(), color)
-}
-
-fn resources_placeholder_content(
-    title: String,
-    description: String,
-    color: gpui::Rgba,
-) -> EmptyState {
-    EmptyState::new()
-        .icon(Icon::Resources)
-        .icon_size(px(metrics::ICON_SIZE))
-        .child(Label::new(title).size(font::BASE).color(color))
-        .child(
-            Label::new(description)
-                .size(font::SM)
-                .color(dark().text.secondary),
-        )
+    EmptyState::labeled(
+        Icon::Resources,
+        t("resources.error_title"),
+        text.into(),
+        color,
+    )
 }
 
 #[cfg(test)]

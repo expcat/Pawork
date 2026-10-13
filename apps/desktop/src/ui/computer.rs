@@ -28,15 +28,15 @@ use gpui::{div, prelude::*, px, Context, ScrollHandle, SharedString, Window};
 
 use pawork_client::{
     ComputerActionKind, ComputerAppFamily, ComputerCapabilitySupport, ComputerGrantKind,
-    ComputerTargetCapability, ComputerTargetIdentity, ComputerTargetListData,
-    ComputerTargetState, MAX_OBSERVATION_READ_BYTES, ObservationEvidenceEntry,
-    ObservationImageData, ObservationListData,
+    ComputerTargetCapability, ComputerTargetIdentity, ComputerTargetListData, ComputerTargetState,
+    ObservationEvidenceEntry, ObservationImageData, ObservationListData,
+    MAX_OBSERVATION_READ_BYTES,
 };
 
 use crate::projection::ConnectionState;
 use crate::ui::accessibility::{dynamic_identifier, AxAction, AxNode, AxRect, AxRole};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
-use crate::ui::components::empty_state::EmptyState;
+use crate::ui::components::empty_state::{stale_notice, EmptyState};
 use crate::ui::components::icon::{icon_sized, Icon};
 use crate::ui::components::label::Label;
 use crate::ui::components::skeleton::loading_skeleton;
@@ -738,7 +738,11 @@ impl ComputerPanelState {
                 }
             }
             ComputerStopPhase::Stopped => {
-                if self.targets.iter().any(|state| state.scope.run_id != stop.run_id) {
+                if self
+                    .targets
+                    .iter()
+                    .any(|state| state.scope.run_id != stop.run_id)
+                {
                     self.stop = None;
                 }
             }
@@ -882,8 +886,7 @@ fn validate_observation_image(
     } else {
         let image_format = decode_image_format(format);
         // 先读头部尺寸（不解码），超预算的大尺寸图直接拒绝。
-        let reader =
-            image::ImageReader::with_format(std::io::Cursor::new(&bytes), image_format);
+        let reader = image::ImageReader::with_format(std::io::Cursor::new(&bytes), image_format);
         let decoder = reader
             .into_decoder()
             .map_err(|_| ObservationDecodeError::Decode)?;
@@ -917,8 +920,16 @@ fn observation_meta(entry: &ObservationEvidenceEntry) -> String {
 /// 分块加载进度文案（已收 / 总量）。
 fn observation_progress(received: u64, total: u64) -> String {
     t("computer.observation_loading")
-        .replacen("{}", &super::attachments::format_byte_size(received as usize), 1)
-        .replacen("{}", &super::attachments::format_byte_size(total as usize), 1)
+        .replacen(
+            "{}",
+            &super::attachments::format_byte_size(received as usize),
+            1,
+        )
+        .replacen(
+            "{}",
+            &super::attachments::format_byte_size(total as usize),
+            1,
+        )
 }
 
 /// 停止状态条文案（渲染与 AX 同源）：只描述已确认的事实——派发 /
@@ -1260,9 +1271,9 @@ impl AppView {
             return;
         };
         let action_id = next_computer_action_id();
-        let dispatched =
-            self.controller
-                .computer_target_approve(session_id, action_id, run_id, target, kind);
+        let dispatched = self
+            .controller
+            .computer_target_approve(session_id, action_id, run_id, target, kind);
         self.note_computer_action_dispatched(key, action_id, dispatched, cx);
     }
 
@@ -1283,9 +1294,9 @@ impl AppView {
             return;
         };
         let action_id = next_computer_action_id();
-        let dispatched =
-            self.controller
-                .computer_target_revoke(session_id, action_id, run_id, target);
+        let dispatched = self
+            .controller
+            .computer_target_revoke(session_id, action_id, run_id, target);
         self.note_computer_action_dispatched(key, action_id, dispatched, cx);
     }
 
@@ -1311,8 +1322,8 @@ impl AppView {
             if !identifier.starts_with(prefix) {
                 continue;
             }
-            let Some(key) = find_target_for_action(&self.computer.targets, prefix, identifier)
-                .map(target_key)
+            let Some(key) =
+                find_target_for_action(&self.computer.targets, prefix, identifier).map(target_key)
             else {
                 return;
             };
@@ -1442,18 +1453,21 @@ impl AppView {
         let Some(session_id) = self.computer_bound_session() else {
             return;
         };
-        let dispatchable = matches!(self.projection.connection, ConnectionState::Connected { .. })
-            && self.controller.supports_computer_targets();
+        let dispatchable = matches!(
+            self.projection.connection,
+            ConnectionState::Connected { .. }
+        ) && self.controller.supports_computer_targets();
         let request_id = next_evidence_request_id();
         if dispatchable
             && self.controller.observation_image_read(
-            session_id,
-            request_id,
-            key.0,
-            key.1,
-            0,
-            MAX_OBSERVATION_READ_BYTES,
-        ) {
+                session_id,
+                request_id,
+                key.0,
+                key.1,
+                0,
+                MAX_OBSERVATION_READ_BYTES,
+            )
+        {
             self.computer.evidence_load = Some(EvidenceLoad {
                 key,
                 request_id,
@@ -1520,7 +1534,9 @@ impl AppView {
             }
             Err(kind) => {
                 let reason = match kind {
-                    ObservationDecodeError::Budget => t("computer.observation_too_large").to_string(),
+                    ObservationDecodeError::Budget => {
+                        t("computer.observation_too_large").to_string()
+                    }
                     ObservationDecodeError::Decode => t("computer.observation_corrupt").to_string(),
                 };
                 self.computer
@@ -1588,8 +1604,10 @@ impl AppView {
                 visible.insert("computer-observation-retry".to_string());
             }
         }
-        self.computer_item_focus.retain(|id, _| visible.contains(id));
-        self.computer_item_layouts.retain(|id, _| visible.contains(id));
+        self.computer_item_focus
+            .retain(|id, _| visible.contains(id));
+        self.computer_item_layouts
+            .retain(|id, _| visible.contains(id));
 
         let refresh_layout = self
             .computer_item_layouts
@@ -1666,16 +1684,7 @@ impl AppView {
             .min_h_0()
             .child(header)
             .when_some(self.computer.stale_reason.clone(), |block, reason| {
-                block.child(
-                    div()
-                        .px_2()
-                        .py_1()
-                        .border_b_1()
-                        .border_color(dark().semantic.warning_text)
-                        .text_size(font::XS)
-                        .text_color(dark().semantic.warning_text)
-                        .child(format!("{} · {reason}", t("common.stale_data"))),
-                )
+                block.child(stale_notice(reason))
             })
             .when_some(self.computer.action_error.clone(), |block, reason| {
                 block.child(
@@ -1689,18 +1698,21 @@ impl AppView {
                         .child(format!("{} · {reason}", t("computer.action_failed"))),
                 )
             })
-            .when_some(computer_stop_status(&self.computer.stop), |block, (text, color)| {
-                block.child(
-                    div()
-                        .px_2()
-                        .py_1()
-                        .border_b_1()
-                        .border_color(color)
-                        .text_size(font::XS)
-                        .text_color(color)
-                        .child(text),
-                )
-            })
+            .when_some(
+                computer_stop_status(&self.computer.stop),
+                |block, (text, color)| {
+                    block.child(
+                        div()
+                            .px_2()
+                            .py_1()
+                            .border_b_1()
+                            .border_color(color)
+                            .text_size(font::XS)
+                            .text_color(color)
+                            .child(text),
+                    )
+                },
+            )
             .child(body)
     }
 
@@ -1859,7 +1871,10 @@ impl AppView {
                         div()
                             .text_size(font::XS)
                             .text_color(dark().text.tertiary)
-                            .child(t("computer.observations_hidden").replace("{}", &hidden.to_string())),
+                            .child(
+                                t("computer.observations_hidden")
+                                    .replace("{}", &hidden.to_string()),
+                            ),
                     );
                 }
             }
@@ -1924,12 +1939,13 @@ impl AppView {
                     .child(observation_chip(is_current))
                     .child(div().flex_1())
                     .child(
-                        div().text_size(font::XS).text_color(dark().text.tertiary).child(
-                            super::timeline_entry::display_time(
+                        div()
+                            .text_size(font::XS)
+                            .text_color(dark().text.tertiary)
+                            .child(super::timeline_entry::display_time(
                                 &entry.captured_at_ms.to_string(),
                                 super::now_unix_ms(),
-                            ),
-                        ),
+                            )),
                     ),
             )
             .child(
@@ -1996,18 +2012,14 @@ impl AppView {
                     )),
             );
         } else {
-            card = card.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .justify_end()
-                    .child(self.computer_observation_action_button(
-                        "computer-observation-view",
-                        t("computer.observation_view").to_string(),
-                        key,
-                        cx,
-                    )),
-            );
+            card = card.child(div().flex().flex_row().justify_end().child(
+                self.computer_observation_action_button(
+                    "computer-observation-view",
+                    t("computer.observation_view").to_string(),
+                    key,
+                    cx,
+                ),
+            ));
         }
         card
     }
@@ -2023,7 +2035,11 @@ impl AppView {
         let focus = self
             .computer_item_focus
             .entry(id.to_string())
-            .or_insert_with(|| cx.focus_handle().tab_stop(true).tab_index(INSPECTOR_TAB_INDEX))
+            .or_insert_with(|| {
+                cx.focus_handle()
+                    .tab_stop(true)
+                    .tab_index(INSPECTOR_TAB_INDEX)
+            })
             .clone();
         let layout = self
             .computer_item_layouts
@@ -2086,7 +2102,11 @@ impl AppView {
         let focus = self
             .computer_item_focus
             .entry(id.clone())
-            .or_insert_with(|| cx.focus_handle().tab_stop(true).tab_index(INSPECTOR_TAB_INDEX))
+            .or_insert_with(|| {
+                cx.focus_handle()
+                    .tab_stop(true)
+                    .tab_index(INSPECTOR_TAB_INDEX)
+            })
             .clone();
         let layout = self
             .computer_item_layouts
@@ -2114,8 +2134,8 @@ impl AppView {
         let target_line = observation_target_label(entry);
         let click_key = key;
         let activate_key = key;
-        let can_load =
-            self.computer_observations_visible() && self.computer.obs_fetch != ComputerFetch::Failed;
+        let can_load = self.computer_observations_visible()
+            && self.computer.obs_fetch != ComputerFetch::Failed;
         div()
             .id(SharedString::from(format!("{id}-layout")))
             .track_scroll(&layout)
@@ -2157,9 +2177,7 @@ impl AppView {
                             .items_center()
                             .gap_2()
                             .child(observation_chip(is_current))
-                            .child(
-                                div().flex_1().min_w_0().truncate().child(target_line),
-                            ),
+                            .child(div().flex_1().min_w_0().truncate().child(target_line)),
                     ),
             )
     }
@@ -2324,7 +2342,11 @@ impl AppView {
         let focus = self
             .computer_item_focus
             .entry(id.clone())
-            .or_insert_with(|| cx.focus_handle().tab_stop(true).tab_index(INSPECTOR_TAB_INDEX))
+            .or_insert_with(|| {
+                cx.focus_handle()
+                    .tab_stop(true)
+                    .tab_index(INSPECTOR_TAB_INDEX)
+            })
             .clone();
         let layout = self
             .computer_item_layouts
@@ -2374,7 +2396,8 @@ fn computer_placeholder(key: &'static str) -> EmptyState {
         "computer.loading" => t("computer.loading_desc"),
         _ => t("common.placeholder_no_details"),
     };
-    let mut placeholder = computer_placeholder_content(
+    let mut placeholder = EmptyState::labeled(
+        Icon::Approvals,
         t(key).to_string(),
         description.to_string(),
         dark().text.primary,
@@ -2387,23 +2410,12 @@ fn computer_placeholder(key: &'static str) -> EmptyState {
 
 /// 失败占位：标题本地化；reason 为 wire 数据，不翻译。
 fn computer_placeholder_colored(reason: String) -> EmptyState {
-    computer_placeholder_content(
-        t("computer.error_title").into(),
+    EmptyState::labeled(
+        Icon::Approvals,
+        t("computer.error_title"),
         reason,
         dark().semantic.danger_text,
     )
-}
-
-fn computer_placeholder_content(title: String, description: String, color: gpui::Rgba) -> EmptyState {
-    EmptyState::new()
-        .icon(Icon::Approvals)
-        .icon_size(px(metrics::ICON_SIZE))
-        .child(Label::new(title).size(font::BASE).color(color))
-        .child(
-            Label::new(description)
-                .size(font::SM)
-                .color(dark().text.secondary),
-        )
 }
 
 /// tracked 布局的 AX 矩形（可选按滚动视口裁剪）；未测量 / 零面积不发布
@@ -2456,16 +2468,24 @@ pub(super) fn computer_ax(view: &AppView, window: &Window, frame: AxRect) -> AxN
         " · {} observations",
         view.computer.observations.len()
     ));
-    let mut node = AxNode::new("computer", AxRole::Group, t("inspector.tab_computer"), frame)
-        .description(description);
+    let mut node = AxNode::new(
+        "computer",
+        AxRole::Group,
+        t("inspector.tab_computer"),
+        frame,
+    )
+    .description(description);
     if let Some(rect) = measured_ax_rect(view, "computer-refresh", None) {
         node = node.child(
-            AxNode::new("computer-refresh", AxRole::Button, t("computer.tooltip_refresh"), rect)
-                .enabled(view.computer_can_refresh())
-                .focused(
-                    view.open_menu.is_none() && view.computer_refresh_focus.is_focused(window),
-                )
-                .action(AxAction::Press),
+            AxNode::new(
+                "computer-refresh",
+                AxRole::Button,
+                t("computer.tooltip_refresh"),
+                rect,
+            )
+            .enabled(view.computer_can_refresh())
+            .focused(view.open_menu.is_none() && view.computer_refresh_focus.is_focused(window))
+            .action(AxAction::Press),
         );
     }
     let can_act = view.computer_can_act();
@@ -2615,13 +2635,15 @@ pub(super) fn computer_ax(view: &AppView, window: &Window, frame: AxRect) -> AxN
                 list = list.child(item);
             }
             node = node.child(list);
-            if let Some(rect) = measured_ax_rect(view, "computer-observation-preview", Some(&viewport)) {
-                let mut value = match view.computer.evidence_selected.and_then(|key| view
-                    .computer
-                    .observations
-                    .iter()
-                    .find(|entry| (entry.sequence, entry.part_index) == key))
-                {
+            if let Some(rect) =
+                measured_ax_rect(view, "computer-observation-preview", Some(&viewport))
+            {
+                let mut value = match view.computer.evidence_selected.and_then(|key| {
+                    view.computer
+                        .observations
+                        .iter()
+                        .find(|entry| (entry.sequence, entry.part_index) == key)
+                }) {
                     Some(entry) => observation_meta(entry),
                     None => t("computer.observations_empty").to_string(),
                 };
@@ -2644,7 +2666,10 @@ pub(super) fn computer_ax(view: &AppView, window: &Window, frame: AxRect) -> AxN
             }
             for (id, label) in [
                 ("computer-observation-view", t("computer.observation_view")),
-                ("computer-observation-retry", t("computer.observation_retry")),
+                (
+                    "computer-observation-retry",
+                    t("computer.observation_retry"),
+                ),
             ] {
                 if let Some(rect) = measured_ax_rect(view, id, Some(&viewport)) {
                     let enabled = view.computer.evidence_error.is_some()
@@ -2680,12 +2705,11 @@ mod tests {
     /// 有效 1×1 RGBA PNG（zlib IDAT + CRC 全真）：分块重组与后台解码
     /// 校验共用。
     const VALID_PNG: [u8; 70] = [
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49,
-        0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06,
-        0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44,
-        0x41, 0x54, 0x78, 0x9C, 0x63, 0xF8, 0xCF, 0xC0, 0xF0, 0x1F, 0x00, 0x05, 0x00,
-        0x01, 0xFF, 0x89, 0x99, 0x3D, 0x1D, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
-        0x44, 0xAE, 0x42, 0x60, 0x82,
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0xF8,
+        0xCF, 0xC0, 0xF0, 0x1F, 0x00, 0x05, 0x00, 0x01, 0xFF, 0x89, 0x99, 0x3D, 0x1D, 0x00, 0x00,
+        0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
 
     fn caps(background: ComputerCapabilitySupport) -> Vec<ComputerTargetCapability> {
@@ -2759,7 +2783,11 @@ mod tests {
         .expect("frozen ComputerTargetListData shape")
     }
 
-    fn observation_entry(sequence: u64, part_index: u32, run: Option<&str>) -> ObservationEvidenceEntry {
+    fn observation_entry(
+        sequence: u64,
+        part_index: u32,
+        run: Option<&str>,
+    ) -> ObservationEvidenceEntry {
         serde_json::from_value(serde_json::json!({
             "sequence": sequence,
             "event_id": format!("evt-{sequence}"),
@@ -2927,7 +2955,10 @@ mod tests {
         );
         assert_eq!(
             follow,
-            Some((Some(1000 - OBSERVATION_EVENT_WINDOW), OBSERVATION_EVENT_WINDOW as u32))
+            Some((
+                Some(1000 - OBSERVATION_EVENT_WINDOW),
+                OBSERVATION_EVENT_WINDOW as u32
+            ))
         );
         assert!(state.obs_truncated, "head 超出尾窗即如实标注截断");
         // 尾窗首页被字节预算截断（页内 oldest→newest，游标=最后纳入
@@ -3237,7 +3268,9 @@ mod tests {
                 });
                 view.projection.active_session_id = Some("s1".into());
                 let request = view.computer.begin_loading("s1");
-                assert!(view.computer.apply_loaded("s1", request, list_data("s1", "r1")));
+                assert!(view
+                    .computer
+                    .apply_loaded("s1", request, list_data("s1", "r1")));
                 let mut oversize = observation_entry(2, 0, Some("r1"));
                 oversize.byte_length = OBSERVATION_IMAGE_MAX_BYTES + 1;
                 view.computer.observations = vec![oversize, observation_entry(1, 0, Some("r1"))];
@@ -3269,15 +3302,14 @@ mod tests {
         // 有效 PNG / 双帧 GIF 通过。
         assert!(validate_observation_image(gpui::ImageFormat::Png, VALID_PNG.to_vec()).is_ok());
         let valid_gif: &[u8] = &[
-            0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x81, 0x00, 0x00,
-            0xC8, 0xC8, 0xC8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21,
-            0xFF, 0x0B, 0x4E, 0x45, 0x54, 0x53, 0x43, 0x41, 0x50, 0x45, 0x32, 0x2E, 0x30,
-            0x03, 0x01, 0x00, 0x00, 0x00, 0x21, 0xF9, 0x04, 0x00, 0x01, 0x00, 0x00, 0x00,
-            0x2C, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x08, 0x04, 0x00,
-            0x01, 0x04, 0x04, 0x00, 0x21, 0xF9, 0x04, 0x01, 0x01, 0x00, 0x01, 0x00, 0x2C,
-            0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x81, 0x64, 0x64, 0x64, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x04, 0x00, 0x01, 0x04,
-            0x04, 0x00, 0x3B,
+            0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x81, 0x00, 0x00, 0xC8,
+            0xC8, 0xC8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0xFF, 0x0B,
+            0x4E, 0x45, 0x54, 0x53, 0x43, 0x41, 0x50, 0x45, 0x32, 0x2E, 0x30, 0x03, 0x01, 0x00,
+            0x00, 0x00, 0x21, 0xF9, 0x04, 0x00, 0x01, 0x00, 0x00, 0x00, 0x2C, 0x00, 0x00, 0x00,
+            0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x08, 0x04, 0x00, 0x01, 0x04, 0x04, 0x00, 0x21,
+            0xF9, 0x04, 0x01, 0x01, 0x00, 0x01, 0x00, 0x2C, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
+            0x01, 0x00, 0x81, 0x64, 0x64, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x08, 0x04, 0x00, 0x01, 0x04, 0x04, 0x00, 0x3B,
         ];
         assert!(
             validate_observation_image(gpui::ImageFormat::Gif, valid_gif.to_vec()).is_ok(),
@@ -3308,7 +3340,8 @@ mod tests {
             {
                 let mut encoder = image::codecs::gif::GifEncoder::new(&mut bytes);
                 for i in 0..count {
-                    let buffer = image::RgbaImage::from_pixel(1, 1, image::Rgba([i as u8, 0, 0, 255]));
+                    let buffer =
+                        image::RgbaImage::from_pixel(1, 1, image::Rgba([i as u8, 0, 0, 255]));
                     encoder
                         .encode_frame(image::Frame::from_parts(
                             buffer,
@@ -3321,9 +3354,16 @@ mod tests {
             }
             bytes
         };
-        assert!(validate_observation_image(gpui::ImageFormat::Gif, gif_frames(OBSERVATION_IMAGE_MAX_FRAMES as usize)).is_ok());
+        assert!(validate_observation_image(
+            gpui::ImageFormat::Gif,
+            gif_frames(OBSERVATION_IMAGE_MAX_FRAMES as usize)
+        )
+        .is_ok());
         assert_eq!(
-            validate_observation_image(gpui::ImageFormat::Gif, gif_frames(OBSERVATION_IMAGE_MAX_FRAMES as usize + 1)),
+            validate_observation_image(
+                gpui::ImageFormat::Gif,
+                gif_frames(OBSERVATION_IMAGE_MAX_FRAMES as usize + 1)
+            ),
             Err(ObservationDecodeError::Budget)
         );
         // 静图像素预算：小体积大尺寸（IHDR 声明 100000×100000）先查
@@ -3376,7 +3416,10 @@ mod tests {
         });
         // 代次不匹配的迟到回执不收敛。
         assert!(!state.finish_stop("s1", 6, "r1", Ok(())));
-        assert_eq!(state.stop.as_ref().unwrap().phase, ComputerStopPhase::Dispatching);
+        assert_eq!(
+            state.stop.as_ref().unwrap().phase,
+            ComputerStopPhase::Dispatching
+        );
         // Ok 回执只进入确认；目标仍被本 run 持有 → 不得显示已停止。
         assert!(state.finish_stop("s1", 7, "r1", Ok(())));
         assert_eq!(
@@ -3410,9 +3453,15 @@ mod tests {
         );
         // run 终态事件（唯一确认通道）→ 已停止；随后迟到回执不回退。
         state.confirm_stop_terminal("r1");
-        assert_eq!(state.stop.as_ref().unwrap().phase, ComputerStopPhase::Stopped);
+        assert_eq!(
+            state.stop.as_ref().unwrap().phase,
+            ComputerStopPhase::Stopped
+        );
         assert!(!state.finish_stop("s1", 7, "r1", Ok(())));
-        assert_eq!(state.stop.as_ref().unwrap().phase, ComputerStopPhase::Stopped);
+        assert_eq!(
+            state.stop.as_ref().unwrap().phase,
+            ComputerStopPhase::Stopped
+        );
         // 确认前断线 → 结果未知；run 终态事件到达 → 已停止。
         state.stop = Some(ComputerStop {
             key: "k".into(),
@@ -3421,9 +3470,15 @@ mod tests {
             phase: ComputerStopPhase::Dispatching,
         });
         state.mark_stale("connection lost");
-        assert_eq!(state.stop.as_ref().unwrap().phase, ComputerStopPhase::Unknown);
+        assert_eq!(
+            state.stop.as_ref().unwrap().phase,
+            ComputerStopPhase::Unknown
+        );
         state.confirm_stop_terminal("r2");
-        assert_eq!(state.stop.as_ref().unwrap().phase, ComputerStopPhase::Stopped);
+        assert_eq!(
+            state.stop.as_ref().unwrap().phase,
+            ComputerStopPhase::Stopped
+        );
         // 确认查询失败 → 派发后观测失败；终态事件仍会收敛为已停止。
         state.stop = Some(ComputerStop {
             key: "k".into(),
@@ -3440,7 +3495,10 @@ mod tests {
             }
         );
         state.confirm_stop_terminal("r3");
-        assert_eq!(state.stop.as_ref().unwrap().phase, ComputerStopPhase::Stopped);
+        assert_eq!(
+            state.stop.as_ref().unwrap().phase,
+            ComputerStopPhase::Stopped
+        );
         // 取消被拒且仍被持有 → 回落为操作错误并允许重试（不冒充停止）。
         state.stop = Some(ComputerStop {
             key: "k".into(),
@@ -3484,7 +3542,9 @@ mod tests {
                 view.projection.active_session_id = Some("s1".into());
                 view.projection.active_run_id = Some("r1".into());
                 let request_id = view.computer.begin_loading("s1");
-                assert!(view.computer.apply_loaded("s1", request_id, list_data("s1", "r1")));
+                assert!(view
+                    .computer
+                    .apply_loaded("s1", request_id, list_data("s1", "r1")));
                 view.inspector_open = true;
                 view.inspector_motion.width(
                     true,
@@ -3521,9 +3581,7 @@ mod tests {
                 // 撤销按钮与授权按钮同一 gate（撤销不要求仍存在 grant：
                 // 一次授权消耗后许可与占用可能仍在，revoke 即目标级停止）。
                 let revoke_site_id = action_id(COMPUTER_REVOKE_PREFIX, &site_key);
-                assert!(tree
-                    .find(&revoke_site_id)
-                    .is_some_and(|node| !node.enabled));
+                assert!(tree.find(&revoke_site_id).is_some_and(|node| !node.enabled));
                 // 禁用节点的 Press 被 permits 复核拒绝（
                 // handle_accessibility_request 内部按当前树重核），不产生
                 // 任何在途 / 错误状态。
@@ -3572,9 +3630,7 @@ mod tests {
     /// 测试环境停止按钮禁用、被拒的 Press 不产生停止状态；行 Press 走
     /// 同一选择入口（无 client 时如实记录不可加载，不崩溃）。
     #[gpui::test]
-    fn computer_panel_ax_publishes_observations_and_stop_gating(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    fn computer_panel_ax_publishes_observations_and_stop_gating(cx: &mut gpui::TestAppContext) {
         let platform = std::sync::Arc::new(crate::platform::Platform::new());
         let socket = std::env::temp_dir().join("cu19-computer-panel.sock");
         let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
@@ -3587,7 +3643,9 @@ mod tests {
                 view.projection.active_session_id = Some("s1".into());
                 view.projection.active_run_id = Some("r1".into());
                 let request_id = view.computer.begin_loading("s1");
-                assert!(view.computer.apply_loaded("s1", request_id, list_data("s1", "r1")));
+                assert!(view
+                    .computer
+                    .apply_loaded("s1", request_id, list_data("s1", "r1")));
                 let obs_request = view.computer.begin_observation_loading();
                 view.computer.note_observation_dispatch(false);
                 assert_eq!(

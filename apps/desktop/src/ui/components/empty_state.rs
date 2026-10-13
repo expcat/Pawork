@@ -1,9 +1,14 @@
 //! GUI4：空状态视觉容器。不发布 AX；调用方保留原 identifier 与文案。
 
-use gpui::{div, prelude::*, px, AnyElement, App, IntoElement, Pixels, RenderOnce, Styled, Window};
+use gpui::{
+    div, prelude::*, px, AnyElement, App, IntoElement, Pixels, RenderOnce, Rgba, SharedString,
+    Styled, Window,
+};
 
 use crate::ui::components::icon::{icon_sized, Icon};
-use crate::ui::theme::{metrics, theme};
+use crate::ui::components::label::Label;
+use crate::ui::i18n::t;
+use crate::ui::theme::{dark, font, metrics, theme};
 
 /// 居中空状态：可选图标 + 调用方子节点（标题 / 说明 / 动作 / 骨架）。
 #[derive(IntoElement)]
@@ -26,6 +31,23 @@ impl EmptyState {
             pad_y: px(metrics::SPACE_6),
             children: Vec::new(),
         }
+    }
+
+    pub fn labeled(
+        icon: Icon,
+        title: impl Into<SharedString>,
+        description: impl Into<SharedString>,
+        title_color: Rgba,
+    ) -> Self {
+        Self::new()
+            .icon(icon)
+            .icon_size(px(metrics::ICON_SIZE))
+            .child(Label::new(title).size(font::BASE).color(title_color))
+            .child(
+                Label::new(description)
+                    .size(font::SM)
+                    .color(dark().text.secondary),
+            )
     }
 
     pub fn icon(mut self, icon: Icon) -> Self {
@@ -80,4 +102,16 @@ impl RenderOnce for EmptyState {
         }
         root
     }
+}
+
+pub fn stale_notice(reason: impl AsRef<str>) -> gpui::Div {
+    let reason = reason.as_ref();
+    div()
+        .px_2()
+        .py_1()
+        .border_b_1()
+        .border_color(dark().semantic.warning_text)
+        .text_size(font::XS)
+        .text_color(dark().semantic.warning_text)
+        .child(format!("{} · {reason}", t("common.stale_data")))
 }
