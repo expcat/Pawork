@@ -79,7 +79,10 @@ fn close_plan_for(
     agent: Option<&str>,
     removed: Vec<String>,
 ) -> ClosePlan {
-    let kept: Vec<&TabMeta> = tabs.iter().filter(|tab| !removed.contains(&tab.id)).collect();
+    let kept: Vec<&TabMeta> = tabs
+        .iter()
+        .filter(|tab| !removed.contains(&tab.id))
+        .collect();
     let next_active = match active {
         Some(current) if removed.iter().any(|id| id == current) => {
             let index = tabs.iter().position(|tab| tab.id == current).unwrap_or(0);
@@ -123,7 +126,12 @@ fn plan_agent_close(
                 .into(),
         );
     }
-    Ok(close_plan_for(tabs, active, agent, vec![target.to_string()]))
+    Ok(close_plan_for(
+        tabs,
+        active,
+        agent,
+        vec![target.to_string()],
+    ))
 }
 
 /// Agent 整体清理（close）：只移除本任务拥有的标签，用户标签保留。
@@ -307,7 +315,8 @@ impl BrowserPanel {
             self.tab_focus.remove(&format!("browser-tab-select-{id}"));
             self.tab_focus.remove(&format!("browser-tab-close-{id}"));
         }
-        self.labels.retain(|label| !plan.removed.contains(&label.id));
+        self.labels
+            .retain(|label| !plan.removed.contains(&label.id));
         // 展示随关闭决策换标签时，上一标签的错误随之失效（CU-14
         // 复审②）；地址栏由 sync_browser_state 的 synced_tab 锚点跟进。
         if self.active != plan.active {
@@ -495,7 +504,10 @@ impl AppView {
         if !self.browser.tabs.is_empty() && self.browser.poll.is_none() {
             self.browser.poll = Some(cx.spawn(async move |this, cx| loop {
                 smol::Timer::after(Duration::from_millis(250)).await;
-                if this.update(cx, |view, cx| view.sync_browser_state(cx)).is_err() {
+                if this
+                    .update(cx, |view, cx| view.sync_browser_state(cx))
+                    .is_err()
+                {
                     break;
                 }
             }));
@@ -981,11 +993,7 @@ impl AppView {
                                     .height(px(28.0))
                                     .center()
                                     .child(icon_sized(Icon::Cancel, px(12.0)))
-                                    .tooltip(format!(
-                                        "{} · {}",
-                                        t("browser.tab_close"),
-                                        shown
-                                    ))
+                                    .tooltip(format!("{} · {}", t("browser.tab_close"), shown))
                                     .track_focus(&close_focus)
                                     .on_click(cx.listener(move |view, event, window, cx| {
                                         if !view.consume_button_key_click(&click_close, event) {
@@ -1076,8 +1084,12 @@ impl AppView {
         // CU-14：标签条与工具栏同一 AX 组，逐标签发布选中 / 关闭按钮，
         // 坐标取标签条实测布局并按面板可视范围裁剪。
         if !self.browser.labels.is_empty() {
-            let mut tabs_node =
-                AxNode::new("browser-tabs", AxRole::Group, t("browser.tabs"), rect("browser-tabs"));
+            let mut tabs_node = AxNode::new(
+                "browser-tabs",
+                AxRole::Group,
+                t("browser.tabs"),
+                rect("browser-tabs"),
+            );
             for label in &self.browser.labels {
                 let select_id = format!("browser-tab-select-{}", label.id);
                 let close_id = format!("browser-tab-close-{}", label.id);
@@ -1125,9 +1137,14 @@ impl AppView {
             // 零面积不发布，否则 AX 报告不可见按钮。
             if let Some(rect) = clip(rect("browser-new-tab")) {
                 tabs_node = tabs_node.child(
-                    AxNode::new("browser-new-tab", AxRole::Button, t("browser.new_tab"), rect)
-                        .focused(self.browser.controls["browser-new-tab"].is_focused(window))
-                        .action(AxAction::Press),
+                    AxNode::new(
+                        "browser-new-tab",
+                        AxRole::Button,
+                        t("browser.new_tab"),
+                        rect,
+                    )
+                    .focused(self.browser.controls["browser-new-tab"].is_focused(window))
+                    .action(AxAction::Press),
                 );
             }
             node = node.child(tabs_node);
@@ -1503,9 +1520,7 @@ async fn browser_script_call(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ClosePlan, TabMeta, plan_agent_close, plan_agent_close_all, plan_user_close,
-    };
+    use super::{plan_agent_close, plan_agent_close_all, plan_user_close, ClosePlan, TabMeta};
 
     fn tab(id: &str, agent_owned: bool) -> TabMeta {
         TabMeta {
@@ -1545,7 +1560,10 @@ mod tests {
 
         // 整体清理只移除 Agent 标签，用户标签保留并成为选中。
         let plan = plan_agent_close_all(&tabs, Some("tab-a1"), Some("tab-a1"));
-        assert_eq!(plan.removed, vec!["tab-a1".to_string(), "tab-a2".to_string()]);
+        assert_eq!(
+            plan.removed,
+            vec!["tab-a1".to_string(), "tab-a2".to_string()]
+        );
         assert_eq!(plan.active.as_deref(), Some("tab-user"));
         assert_eq!(plan.agent, None);
 

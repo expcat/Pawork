@@ -42,20 +42,15 @@ pub fn normalize_origin(input: &str) -> Result<String, OriginError> {
     if host.is_empty() {
         return Err(OriginError::Invalid("empty host"));
     }
-    if !host
-        .bytes()
-        .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'.' || byte == b'-')
-        || !host.bytes().any(|byte| byte.is_ascii_alphanumeric())
+    if !host.bytes().all(|byte| {
+        byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'.' || byte == b'-'
+    }) || !host.bytes().any(|byte| byte.is_ascii_alphanumeric())
     {
         return Err(OriginError::Invalid("host characters"));
     }
-    let port = url.port().unwrap_or_else(|| {
-        if scheme == "https" {
-            443
-        } else {
-            80
-        }
-    });
+    let port = url
+        .port()
+        .unwrap_or_else(|| if scheme == "https" { 443 } else { 80 });
     if !(1..=65535).contains(&port) {
         return Err(OriginError::Invalid("port"));
     }

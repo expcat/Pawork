@@ -44,10 +44,10 @@
 
 #[cfg(target_os = "macos")]
 mod imp {
+    use core_foundation::base::TCFType;
     use objc::rc::autoreleasepool;
     use objc::runtime::{Object, BOOL};
     use objc::{class, msg_send, sel, sel_impl};
-    use core_foundation::base::TCFType;
     use pawork_computer_use::approval::{GrantKind, TargetIdentity};
     use pawork_computer_use::macos::{DiscoveredApp, DiscoveredWindow, MacosNative, WindowCapture};
     use pawork_computer_use::target::{
@@ -346,13 +346,12 @@ mod imp {
             .list_applications()
             .into_iter()
             .find(|a| a.identity.bundle_id.eq_ignore_ascii_case(bundle_id));
-        let identity = app
-            .as_ref()
-            .map(|a| a.identity.clone())
-            .unwrap_or(pawork_computer_use::target::AppIdentity {
+        let identity = app.as_ref().map(|a| a.identity.clone()).unwrap_or(
+            pawork_computer_use::target::AppIdentity {
                 bundle_id: bundle_id.to_string(),
                 family: pawork_computer_use::target::AppFamily::Appkit,
-            });
+            },
+        );
         // 未授权启动：必须先于 LaunchServices 拒绝。
         let launch_ungranted = native
             .launch_authorized(registry.authorizer(), &scope(), &identity)
@@ -361,7 +360,13 @@ mod imp {
         // 未授权窗口读取：必须先于任何 AX / 标题读取拒绝。
         let list_ungranted = app.as_ref().map(|a| {
             native
-                .list_windows(registry.authorizer(), &scope(), &a.identity, &a.instance, false)
+                .list_windows(
+                    registry.authorizer(),
+                    &scope(),
+                    &a.identity,
+                    &a.instance,
+                    false,
+                )
                 .err()
                 .map(|e| e.to_string())
                 .unwrap_or_else(|| "unexpectedly listed".to_string())
@@ -424,7 +429,13 @@ mod imp {
                 )
                 .ok()?;
             let windows = native
-                .list_windows(registry.authorizer(), &scope(), &a.identity, &a.instance, false)
+                .list_windows(
+                    registry.authorizer(),
+                    &scope(),
+                    &a.identity,
+                    &a.instance,
+                    false,
+                )
                 .ok()?;
             let window = windows.first()?;
             registry.revoke(&scope(), &TargetIdentity::application(a.identity.clone()));
@@ -521,7 +532,8 @@ mod imp {
                 return Err(format!("no AX application for pid {pid}"));
             }
             let mut windows: CFTypeRef = ptr::null();
-            let err = (axf().copy_attribute)(app, nsstr("AXWindows") as *const c_void, &mut windows);
+            let err =
+                (axf().copy_attribute)(app, nsstr("AXWindows") as *const c_void, &mut windows);
             if err != 0 || windows.is_null() {
                 CFRelease(app as *const c_void);
                 return Err(format!("AXWindows copy failed: {err}"));
@@ -531,11 +543,7 @@ mod imp {
             for i in 0..count {
                 let window = CFArrayGetValueAtIndex(windows, i) as AXEl;
                 let mut raw_title: CFTypeRef = ptr::null();
-                (axf().copy_attribute)(
-                    window,
-                    nsstr("AXTitle") as *const c_void,
-                    &mut raw_title,
-                );
+                (axf().copy_attribute)(window, nsstr("AXTitle") as *const c_void, &mut raw_title);
                 let title = rs_str(raw_title as *mut Object);
                 if !raw_title.is_null() {
                     CFRelease(raw_title);
@@ -590,7 +598,8 @@ mod imp {
                 return Err(format!("no AX application for pid {pid}"));
             }
             let mut windows: CFTypeRef = ptr::null();
-            let err = (axf().copy_attribute)(app, nsstr("AXWindows") as *const c_void, &mut windows);
+            let err =
+                (axf().copy_attribute)(app, nsstr("AXWindows") as *const c_void, &mut windows);
             if err != 0 || windows.is_null() {
                 CFRelease(app as *const c_void);
                 return Err(format!("AXWindows copy failed: {err}"));
@@ -618,11 +627,8 @@ mod imp {
                 let position = CgPoint { x, y };
                 let pos_value =
                     (axf().value_create)(1, &position as *const CgPoint as *const c_void);
-                let pos_err = (axf().set_attribute)(
-                    window,
-                    nsstr("AXPosition") as *const c_void,
-                    pos_value,
-                );
+                let pos_err =
+                    (axf().set_attribute)(window, nsstr("AXPosition") as *const c_void, pos_value);
                 if !pos_value.is_null() {
                     CFRelease(pos_value);
                 }
@@ -656,7 +662,8 @@ mod imp {
                 return Err(format!("no AX application for pid {pid}"));
             }
             let mut windows: CFTypeRef = ptr::null();
-            let err = (axf().copy_attribute)(app, nsstr("AXWindows") as *const c_void, &mut windows);
+            let err =
+                (axf().copy_attribute)(app, nsstr("AXWindows") as *const c_void, &mut windows);
             if err != 0 || windows.is_null() {
                 CFRelease(app as *const c_void);
                 return Err(format!("AXWindows copy failed: {err}"));
@@ -726,7 +733,8 @@ mod imp {
                 return Err(format!("no AX application for pid {pid}"));
             }
             let mut windows: CFTypeRef = ptr::null();
-            let err = (axf().copy_attribute)(app, nsstr("AXWindows") as *const c_void, &mut windows);
+            let err =
+                (axf().copy_attribute)(app, nsstr("AXWindows") as *const c_void, &mut windows);
             if err != 0 || windows.is_null() {
                 CFRelease(app as *const c_void);
                 return Err(format!("AXWindows copy failed: {err}"));
@@ -741,8 +749,11 @@ mod imp {
                 let mut id: u32 = 0;
                 let id_err = (axf().get_window)(window, &mut id);
                 let mut raw_title: CFTypeRef = ptr::null();
-                let title_err =
-                    (axf().copy_attribute)(window, nsstr("AXTitle") as *const c_void, &mut raw_title);
+                let title_err = (axf().copy_attribute)(
+                    window,
+                    nsstr("AXTitle") as *const c_void,
+                    &mut raw_title,
+                );
                 let title = rs_str(raw_title as *mut Object);
                 if !raw_title.is_null() {
                     CFRelease(raw_title);
@@ -887,7 +898,10 @@ mod imp {
             let user = sample_user();
             let user_line = serde_json::to_string(&user).unwrap_or_default();
             if user_line != last_user {
-                println!("{}", json!({ "t": now_ms(), "event": "user", "state": user }));
+                println!(
+                    "{}",
+                    json!({ "t": now_ms(), "event": "user", "state": user })
+                );
                 last_user = user_line;
             }
             let mut alive = Vec::new();
@@ -1924,11 +1938,7 @@ mod imp {
         let window_id = bound.window.window.window_id;
         // 能力矩阵预检（静态族 × 动作；后端派发前另有权威闸，且后端
         // 还复核最小化 / AXMain / 焦点 / 选区）。
-        let pre_check = match require_background(
-            bound.app.identity.family,
-            input.kind(),
-            false,
-        ) {
+        let pre_check = match require_background(bound.app.identity.family, input.kind(), false) {
             Ok(()) => "supported".to_string(),
             Err(e) => e.to_string(),
         };
@@ -1974,7 +1984,12 @@ mod imp {
                 Some(format!("{cause}")),
                 None,
             ),
-            Err(e) => ("rejected".to_string(), Value::Null, None, Some(e.to_string())),
+            Err(e) => (
+                "rejected".to_string(),
+                Value::Null,
+                None,
+                Some(e.to_string()),
+            ),
         };
         // 给目标应用一点生效时间后复核：AXValue / 选区读回（含 AXMain /
         // AXFocused 焦点事实）与窗口标题。
@@ -2052,7 +2067,9 @@ mod imp {
             })
         }
         let action = match action_name {
-            "click" => PointerAction::Click { point: point(coords, 0)? },
+            "click" => PointerAction::Click {
+                point: point(coords, 0)?,
+            },
             "drag" => PointerAction::Drag {
                 from: point(coords, 0)?,
                 to: point(coords, 2)?,
@@ -2069,27 +2086,24 @@ mod imp {
         let mut bound = bind_window(bundle_id, needle)?;
         let window_id = bound.window.window.window_id;
         let (_capture, observation) = observe(&mut bound)?;
-        let pre_check = match require_background(
-            bound.app.identity.family,
-            action.kind(),
-            false,
-        ) {
+        let pre_check = match require_background(bound.app.identity.family, action.kind(), false) {
             Ok(()) => "supported".to_string(),
             Err(e) => e.to_string(),
         };
-        let consumed = match bound
-            .registry
-            .consume_observation(&observation.observation_id, &scope(), &|| false)
-        {
-            Ok(consumed) => consumed,
-            Err(e) => {
-                return Ok(json!({
-                    "outcome": "consume_rejected",
-                    "error": e.to_string(),
-                    "pre_check": pre_check,
-                }))
-            }
-        };
+        let consumed =
+            match bound
+                .registry
+                .consume_observation(&observation.observation_id, &scope(), &|| false)
+            {
+                Ok(consumed) => consumed,
+                Err(e) => {
+                    return Ok(json!({
+                        "outcome": "consume_rejected",
+                        "error": e.to_string(),
+                        "pre_check": pre_check,
+                    }))
+                }
+            };
         let dispatch = bound.native.pointer_action(
             bound.registry.authorizer_mut(),
             &consumed,
@@ -2148,12 +2162,7 @@ mod imp {
 
     /// CU-08 全流程（窗口移动）：绑定 → 读原帧 → 矩阵预检 → 窗口派发
     /// 消费 → 后端 move_window → 读回复核新帧 → 还原原位 → 无干扰采样。
-    fn cmd_axmove(
-        bundle_id: &str,
-        x: f64,
-        y: f64,
-        needle: Option<&str>,
-    ) -> Result<Value, String> {
+    fn cmd_axmove(bundle_id: &str, x: f64, y: f64, needle: Option<&str>) -> Result<Value, String> {
         let before = sample_user_settled();
         let clipboard_before = clipboard_change_count();
         let mut bound = bind_window(bundle_id, needle)?;
@@ -2165,27 +2174,24 @@ mod imp {
             bound.window.bounds.height,
         ];
         let move_to = WindowMove { x, y };
-        let pre_check = match require_background(
-            bound.app.identity.family,
-            move_to.kind(),
-            false,
-        ) {
+        let pre_check = match require_background(bound.app.identity.family, move_to.kind(), false) {
             Ok(()) => "supported".to_string(),
             Err(e) => e.to_string(),
         };
-        let consumed = match bound
-            .registry
-            .consume_window_dispatch(&bound.handle, &scope(), &|| false)
-        {
-            Ok(consumed) => consumed,
-            Err(e) => {
-                return Ok(json!({
-                    "outcome": "consume_rejected",
-                    "error": e.to_string(),
-                    "pre_check": pre_check,
-                }))
-            }
-        };
+        let consumed =
+            match bound
+                .registry
+                .consume_window_dispatch(&bound.handle, &scope(), &|| false)
+            {
+                Ok(consumed) => consumed,
+                Err(e) => {
+                    return Ok(json!({
+                        "outcome": "consume_rejected",
+                        "error": e.to_string(),
+                        "pre_check": pre_check,
+                    }))
+                }
+            };
         let dispatch = bound.native.move_window(
             bound.registry.authorizer_mut(),
             &consumed,
@@ -2337,10 +2343,22 @@ mod imp {
                     .ok_or("axsetframe 需要 pid")?
                     .parse()
                     .map_err(|_| "pid 非法")?,
-                args.get(2).ok_or("axsetframe 需要 x")?.parse().map_err(|_| "x 非法")?,
-                args.get(3).ok_or("axsetframe 需要 y")?.parse().map_err(|_| "y 非法")?,
-                args.get(4).ok_or("axsetframe 需要 w")?.parse().map_err(|_| "w 非法")?,
-                args.get(5).ok_or("axsetframe 需要 h")?.parse().map_err(|_| "h 非法")?,
+                args.get(2)
+                    .ok_or("axsetframe 需要 x")?
+                    .parse()
+                    .map_err(|_| "x 非法")?,
+                args.get(3)
+                    .ok_or("axsetframe 需要 y")?
+                    .parse()
+                    .map_err(|_| "y 非法")?,
+                args.get(4)
+                    .ok_or("axsetframe 需要 w")?
+                    .parse()
+                    .map_err(|_| "w 非法")?,
+                args.get(5)
+                    .ok_or("axsetframe 需要 h")?
+                    .parse()
+                    .map_err(|_| "h 非法")?,
                 args.get(6).map(String::as_str),
             ),
             Some("axminimize") => cmd_axminimize(
@@ -2365,9 +2383,7 @@ mod imp {
             ),
             Some("watch") => cmd_watch(
                 args.get(1).ok_or("watch 需要 bundle_id")?,
-                args.get(2)
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(60),
+                args.get(2).and_then(|s| s.parse().ok()).unwrap_or(60),
             ),
             Some("capture") => cmd_capture(
                 args.get(1).ok_or("capture 需要 bundle_id")?,
@@ -2420,9 +2436,7 @@ mod imp {
             ),
             Some("axpointer") => {
                 let bundle_id = args.get(1).ok_or("axpointer 需要 bundle_id")?;
-                let action_name = args
-                    .get(2)
-                    .ok_or("axpointer 需要动作：click|drag|scroll")?;
+                let action_name = args.get(2).ok_or("axpointer 需要动作：click|drag|scroll")?;
                 let mut coords = Vec::new();
                 let mut needle = None;
                 for arg in &args[3..] {
@@ -2438,8 +2452,14 @@ mod imp {
             }
             Some("axmove") => cmd_axmove(
                 args.get(1).ok_or("axmove 需要 bundle_id")?,
-                args.get(2).ok_or("axmove 需要 x")?.parse().map_err(|_| "x 非法")?,
-                args.get(3).ok_or("axmove 需要 y")?.parse().map_err(|_| "y 非法")?,
+                args.get(2)
+                    .ok_or("axmove 需要 x")?
+                    .parse()
+                    .map_err(|_| "x 非法")?,
+                args.get(3)
+                    .ok_or("axmove 需要 y")?
+                    .parse()
+                    .map_err(|_| "y 非法")?,
                 args.get(4).map(String::as_str),
             ),
             _ => Err("未知命令".to_string()),

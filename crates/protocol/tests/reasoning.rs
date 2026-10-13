@@ -109,7 +109,10 @@ fn run_start_attachment_and_search_are_additive() {
     }))
     .unwrap();
     let value = serde_json::to_value(&with).unwrap();
-    assert_eq!(value["params"]["attachment_ids"], serde_json::json!(["att-1"]));
+    assert_eq!(
+        value["params"]["attachment_ids"],
+        serde_json::json!(["att-1"])
+    );
     assert_eq!(value["params"]["web_search"], true);
     let without: AppCommand = serde_json::from_value(serde_json::json!({
         "method": "run_start",

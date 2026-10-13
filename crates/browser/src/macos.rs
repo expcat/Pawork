@@ -2,10 +2,13 @@
 
 use std::{
     cell::{Cell, RefCell},
-    ffi::{CStr, c_void},
+    ffi::{c_void, CStr},
     marker::PhantomData,
     rc::Rc,
-    sync::{OnceLock, atomic::{AtomicU64, Ordering}},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        OnceLock,
+    },
     time::Instant,
 };
 
@@ -18,12 +21,12 @@ use objc::{
     class,
     declare::ClassDecl,
     msg_send,
-    runtime::{BOOL, Class, NO, Object, Sel, YES},
+    runtime::{Class, Object, Sel, BOOL, NO, YES},
     sel, sel_impl,
 };
 use raw_window_handle::{RawWindowHandle, WindowHandle};
 
-use super::{BrowserState, dom, navigation_allowed, normalize_url, observe};
+use super::{dom, navigation_allowed, normalize_url, observe, BrowserState};
 
 #[link(name = "WebKit", kind = "framework")]
 extern "C" {}
@@ -40,7 +43,11 @@ fn new_observe_key() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    format!("__paworkObs_{:x}{:x}", nanos, NEXT_OBSERVE_KEY.fetch_add(1, Ordering::Relaxed))
+    format!(
+        "__paworkObs_{:x}{:x}",
+        nanos,
+        NEXT_OBSERVE_KEY.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 unsafe fn string(value: id) -> String {
@@ -468,12 +475,16 @@ impl BrowserView {
     /// Click an element by a handle issued by the latest read. The handle is
     /// consumed exactly once when all freshness checks pass; dispatch failures
     /// never return it for reuse.
-    pub fn click_handle(&self, handle: &str, callback: impl FnOnce(Result<String, String>) + 'static) {
-        let entry = match self
-            .handles
-            .borrow_mut()
-            .take_valid(handle, self.generation.get(), Instant::now())
-        {
+    pub fn click_handle(
+        &self,
+        handle: &str,
+        callback: impl FnOnce(Result<String, String>) + 'static,
+    ) {
+        let entry = match self.handles.borrow_mut().take_valid(
+            handle,
+            self.generation.get(),
+            Instant::now(),
+        ) {
             Ok(entry) => entry,
             Err(error) => {
                 callback(Err(error));
@@ -481,7 +492,12 @@ impl BrowserView {
             }
         };
         self.evaluate(
-            dom::click_handle_script(&self.observe_key, &entry.selector, &entry.url, entry.revision),
+            dom::click_handle_script(
+                &self.observe_key,
+                &entry.selector,
+                &entry.url,
+                entry.revision,
+            ),
             |raw| dom::encode_success(dom::decode_envelope(&raw)?),
             callback,
         );
@@ -495,11 +511,11 @@ impl BrowserView {
         text: &str,
         callback: impl FnOnce(Result<String, String>) + 'static,
     ) {
-        let entry = match self
-            .handles
-            .borrow_mut()
-            .take_valid(handle, self.generation.get(), Instant::now())
-        {
+        let entry = match self.handles.borrow_mut().take_valid(
+            handle,
+            self.generation.get(),
+            Instant::now(),
+        ) {
             Ok(entry) => entry,
             Err(error) => {
                 callback(Err(error));
@@ -529,7 +545,9 @@ impl BrowserView {
         let generation_cell = Rc::clone(&self.generation);
         let viewport = self.viewport();
         if viewport.0 <= 0.0 || viewport.1 <= 0.0 {
-            callback(Err("浏览器尚无可见尺寸 / Browser view has no size yet".into()));
+            callback(Err(
+                "浏览器尚无可见尺寸 / Browser view has no size yet".into()
+            ));
             return;
         }
         let done = RefCell::new(Some(callback));
@@ -677,7 +695,8 @@ unsafe fn encode_snapshot_rep(source: id) -> Result<(Vec<u8>, usize, usize), Str
     if target == nil {
         return Err("无法创建位图 / Unable to allocate bitmap".into());
     }
-    let context: id = msg_send![class!(NSGraphicsContext), graphicsContextWithBitmapImageRep: target];
+    let context: id =
+        msg_send![class!(NSGraphicsContext), graphicsContextWithBitmapImageRep: target];
     if context == nil {
         let _: () = msg_send![target, release];
         return Err("无法创建绘图上下文 / Unable to allocate graphics context".into());

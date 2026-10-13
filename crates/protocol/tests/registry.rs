@@ -343,13 +343,12 @@ fn query_samples() -> Vec<(&'static str, Option<Value>)> {
         ),
         ("subagent_settings", None),
         ("subagent_list", Some(json!({"session_id": "session-1"}))),
-        (
-            "observation_list",
-            Some(json!({"session_id": "session-1"})),
-        ),
+        ("observation_list", Some(json!({"session_id": "session-1"}))),
         (
             "observation_image_read",
-            Some(json!({"session_id": "session-1", "sequence": 3, "part_index": 0, "offset": 0, "limit": 1024})),
+            Some(
+                json!({"session_id": "session-1", "sequence": 3, "part_index": 0, "offset": 0, "limit": 1024}),
+            ),
         ),
         (
             "computer_target_list",

@@ -10,7 +10,7 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::Duration;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::discovery::{self, BridgeDiscovery};
 use super::protocol;
@@ -97,10 +97,7 @@ fn connect_selected(data_dir: &Path) -> Result<UnixStream, String> {
             stream,
         });
     }
-    let mut enabled: Vec<LiveBridge> = alive
-        .into_iter()
-        .filter(|bridge| bridge.enabled)
-        .collect();
+    let mut enabled: Vec<LiveBridge> = alive.into_iter().filter(|bridge| bridge.enabled).collect();
     match enabled.len() {
         0 => Err(
             "external browser bridge not enabled: enable Pawork control in the extension toolbar popup".into(),

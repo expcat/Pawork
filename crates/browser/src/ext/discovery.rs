@@ -10,7 +10,7 @@ use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::BrowserKind;
 
@@ -63,7 +63,10 @@ pub fn write_discovery(data_dir: &Path, entry: &BridgeDiscovery) -> io::Result<(
     });
     let body = serde_json::to_vec(&payload)?;
     let target = dir.join(format!("{}-{}.json", entry.browser.name(), entry.pid));
-    let temp = dir.join(format!(".{}.tmp", target.file_name().unwrap().to_string_lossy()));
+    let temp = dir.join(format!(
+        ".{}.tmp",
+        target.file_name().unwrap().to_string_lossy()
+    ));
     fs::write(&temp, &body)?;
     fs::set_permissions(&temp, fs::Permissions::from_mode(0o600))?;
     fs::rename(&temp, &target)?;
@@ -130,11 +133,7 @@ mod tests {
         .permissions()
         .mode();
         assert_eq!(file_mode & 0o777, 0o600);
-        fs::write(
-            bridge_dir(dir.path()).join("garbage.json"),
-            "{not json",
-        )
-        .unwrap();
+        fs::write(bridge_dir(dir.path()).join("garbage.json"), "{not json").unwrap();
         fs::write(
             bridge_dir(dir.path()).join("unknown.json"),
             serde_json::to_string(&serde_json::json!({"browser": "netscape", "pid": 1, "generation": "g", "socket": "/s", "token": "t"})).unwrap(),

@@ -4,10 +4,13 @@
 //! 对未知动作 fail-closed，无需方言探测。站点绑定、句柄代际、归属闸
 //! 与扩展安装/启用提示全部由桥与扩展侧执行，本工具只做形态闸与中继。
 
-use super::{GuiRunRegistry, browser_tool::{screenshot_parts, validate_web_url_field}};
+use super::{
+    browser_tool::{screenshot_parts, validate_web_url_field},
+    GuiRunRegistry,
+};
 use async_trait::async_trait;
 use pawork_domain::*;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::sync::Arc;
 
 pub(super) struct ExternalBrowserTool {
@@ -85,7 +88,9 @@ impl AgentTool for ExternalBrowserTool {
         if result["ok"] != true {
             return Err(error(
                 ToolErrorKind::ExecutionFailed,
-                result["error"].as_str().unwrap_or("external browser action failed"),
+                result["error"]
+                    .as_str()
+                    .unwrap_or("external browser action failed"),
             ));
         }
         if !screenshot {
@@ -116,11 +121,9 @@ fn validate(input: &Value) -> Result<(), ToolError> {
         match input["tab_id"].as_str() {
             Some(id)
                 if id.len() <= 128
-                    && id.strip_prefix("xt-")
-                        .is_some_and(|rest| {
-                            rest.split('-').count() >= 4
-                                && rest.split('-').all(|part| !part.is_empty())
-                        }) =>
+                    && id.strip_prefix("xt-").is_some_and(|rest| {
+                        rest.split('-').count() >= 4 && rest.split('-').all(|part| !part.is_empty())
+                    }) =>
             {
                 Ok(())
             }
@@ -194,15 +197,26 @@ mod tests {
         assert!(validate(&json!({"action":"close"})).is_ok());
         assert!(validate(&json!({"action":"new_tab"})).is_ok());
         assert!(validate(&json!({"action":"new_tab","url":"https://example.com"})).is_ok());
-        assert!(
-            validate(&json!({"action":"attach","tab_id":"xt-1-2-3-11","origin":"https://a.test"}))
-                .is_ok()
-        );
-        assert!(validate(&json!({"action":"attach","tab_id":"xt-1-2-3-11","origin":"http://a.test:8080"})).is_ok());
-        assert!(validate(&json!({"action":"navigate","tab_id":"xt-1-2-3-11","url":"http://localhost:8080/x"})).is_ok());
+        assert!(validate(
+            &json!({"action":"attach","tab_id":"xt-1-2-3-11","origin":"https://a.test"})
+        )
+        .is_ok());
+        assert!(validate(
+            &json!({"action":"attach","tab_id":"xt-1-2-3-11","origin":"http://a.test:8080"})
+        )
+        .is_ok());
+        assert!(validate(
+            &json!({"action":"navigate","tab_id":"xt-1-2-3-11","url":"http://localhost:8080/x"})
+        )
+        .is_ok());
         assert!(validate(&json!({"action":"read","tab_id":"xt-1-2-3-11"})).is_ok());
-        assert!(validate(&json!({"action":"click","tab_id":"xt-1-2-3-11","selector":"#ok"})).is_ok());
-        assert!(validate(&json!({"action":"type","tab_id":"xt-1-2-3-11","selector":"#q","text":"hi"})).is_ok());
+        assert!(
+            validate(&json!({"action":"click","tab_id":"xt-1-2-3-11","selector":"#ok"})).is_ok()
+        );
+        assert!(validate(
+            &json!({"action":"type","tab_id":"xt-1-2-3-11","selector":"#q","text":"hi"})
+        )
+        .is_ok());
         assert!(validate(&json!({"action":"screenshot","tab_id":"xt-1-2-3-11"})).is_ok());
         assert!(validate(&json!({"action":"close_tab","tab_id":"xt-1-2-3-11"})).is_ok());
         // URL 闸与 browser 工具同形。
@@ -223,11 +237,17 @@ mod tests {
             "ftp://a.test",
             "https://",
         ] {
-            assert!(validate(&json!({"action":"attach","tab_id":"xt-1","origin":origin})).is_err(), "{origin}");
+            assert!(
+                validate(&json!({"action":"attach","tab_id":"xt-1","origin":origin})).is_err(),
+                "{origin}"
+            );
         }
         // 句柄形态闸。
         for tab in ["tab-1-2", "xt-", "xt-1", ""] {
-            assert!(validate(&json!({"action":"read","tab_id":tab})).is_err(), "{tab}");
+            assert!(
+                validate(&json!({"action":"read","tab_id":tab})).is_err(),
+                "{tab}"
+            );
         }
         assert!(
             validate(&json!({"action":"read","tab_id":format!("xt-{}","x".repeat(200))})).is_err()

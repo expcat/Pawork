@@ -67,11 +67,7 @@ fn negotiate_major_mismatch_returns_none() {
 fn negotiate_picks_highest_common_minor() {
     assert_eq!(
         negotiate_api_version(
-            &[
-                ApiVersion::new(1, 0),
-                API_VERSION,
-                ApiVersion::new(2, 0)
-            ],
+            &[ApiVersion::new(1, 0), API_VERSION, ApiVersion::new(2, 0)],
             API_VERSION,
         ),
         Some(API_VERSION)
@@ -297,10 +293,7 @@ fn envelope_version_mismatch_produces_incompatible_version() {
     assert!(ensure_compatible_api_version(ApiVersion::new(1, 2), negotiated).is_ok());
     assert!(ensure_compatible_api_version(ApiVersion::new(1, 1), negotiated).is_ok());
     assert!(matches!(
-        ensure_compatible_api_version(
-            ApiVersion::new(1, negotiated.minor + 1),
-            negotiated
-        ),
+        ensure_compatible_api_version(ApiVersion::new(1, negotiated.minor + 1), negotiated),
         Err(ProtocolError {
             code: ProtocolErrorCode::IncompatibleVersion,
             ..

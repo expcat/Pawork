@@ -10,8 +10,8 @@
 use std::{
     collections::{HashMap, VecDeque},
     sync::{
-        OnceLock,
         atomic::{AtomicU64, Ordering},
+        OnceLock,
     },
     time::{Duration, Instant},
 };
@@ -105,10 +105,15 @@ impl HandleTable {
             return Err("元素句柄未知 / Unknown element handle — read the page again".into());
         };
         if entry.consumed {
-            return Err("元素句柄已使用，请重新读取 / Element handle already used — read the page again".into());
+            return Err(
+                "元素句柄已使用，请重新读取 / Element handle already used — read the page again"
+                    .into(),
+            );
         }
         if now.duration_since(entry.issued_at) > HANDLE_TTL {
-            return Err("元素句柄已过期，请重新读取 / Element handle expired — read the page again".into());
+            return Err(
+                "元素句柄已过期，请重新读取 / Element handle expired — read the page again".into(),
+            );
         }
         if entry.generation != current_generation {
             return Err("页面已导航，句柄失效 / Page navigated — read the page again".into());
@@ -219,21 +224,20 @@ mod tests {
         let used = table.take_valid(&handle, 1, now).unwrap_err();
         assert!(used.contains("already used"));
         let fresh = table.issue("#ok", "https://example.com/", 3, 1, now);
-        assert!(table.take_valid(&fresh, 2, now).unwrap_err().contains("navigated"));
+        assert!(table
+            .take_valid(&fresh, 2, now)
+            .unwrap_err()
+            .contains("navigated"));
         let expired = table.issue("#ok", "https://example.com/", 3, 2, now);
         let later = now + HANDLE_TTL + Duration::from_secs(1);
-        assert!(
-            table
-                .take_valid(&expired, 2, later)
-                .unwrap_err()
-                .contains("expired")
-        );
-        assert!(
-            table
-                .take_valid("e-0-0-999", 2, now)
-                .unwrap_err()
-                .contains("Unknown")
-        );
+        assert!(table
+            .take_valid(&expired, 2, later)
+            .unwrap_err()
+            .contains("expired"));
+        assert!(table
+            .take_valid("e-0-0-999", 2, now)
+            .unwrap_err()
+            .contains("Unknown"));
     }
 
     #[test]
@@ -245,7 +249,10 @@ mod tests {
         for index in 0..MAX_HANDLES {
             last = table.issue(&format!("#i{index}"), "https://example.com/", 0, 0, now);
         }
-        assert!(table.take_valid(&first, 0, now).unwrap_err().contains("Unknown"));
+        assert!(table
+            .take_valid(&first, 0, now)
+            .unwrap_err()
+            .contains("Unknown"));
         assert!(table.take_valid(&last, 0, now).is_ok());
     }
 
@@ -286,17 +293,21 @@ mod tests {
         assert_eq!(entry.selector, "#go");
         // 句柄记录脚本侧 location.href，动作脚本按它做同页比较。
         assert_eq!(entry.url, "https://example.com/inpage");
-        assert!(parsed["inputs"][0]["handle"].as_str().unwrap().starts_with("e-"));
-        assert!(parsed["buttons"][0]["handle"].as_str().unwrap().starts_with("e-"));
+        assert!(parsed["inputs"][0]["handle"]
+            .as_str()
+            .unwrap()
+            .starts_with("e-"));
+        assert!(parsed["buttons"][0]["handle"]
+            .as_str()
+            .unwrap()
+            .starts_with("e-"));
     }
 
     #[test]
     fn finalize_observation_drops_elements_until_handles_fit_budget() {
         let mut table = HandleTable::default();
         let now = Instant::now();
-        let link = |index: usize| {
-            serde_json::json!({"selector": format!("#l{index}"), "href": "https://example.com/x", "text": "t".repeat(600)})
-        };
+        let link = |index: usize| serde_json::json!({"selector": format!("#l{index}"), "href": "https://example.com/x", "text": "t".repeat(600)});
         let data = serde_json::json!({
             "url": "https://example.com/",
             "dom_revision": 0,

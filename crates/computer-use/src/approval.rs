@@ -68,7 +68,10 @@ pub enum TargetIdentity {
     /// Every window of this application (bundle id + family).
     Application { app: AppIdentity },
     /// One web origin (`http(s)://host[:port]`) inside a browser app.
-    Website { browser: AppIdentity, origin: String },
+    Website {
+        browser: AppIdentity,
+        origin: String,
+    },
 }
 
 impl TargetIdentity {
@@ -115,7 +118,9 @@ impl TargetIdentity {
     /// re-validate instead of trusting the value.
     pub fn validate(&self) -> Result<(), TargetError> {
         if self.app().bundle_id.trim().is_empty() {
-            return Err(TargetError::Invalid("application bundle id must not be empty"));
+            return Err(TargetError::Invalid(
+                "application bundle id must not be empty",
+            ));
         }
         match self {
             Self::Application { .. } => Ok(()),
@@ -155,9 +160,7 @@ pub(crate) fn normalize_origin(raw: &str) -> Result<String, TargetError> {
             "website origin must start with http:// or https://",
         ))?;
     let rest = rest.strip_suffix('/').unwrap_or(rest);
-    if rest.contains(&['/', '?', '#', '@', '[', ']'][..])
-        || rest.chars().any(char::is_whitespace)
-    {
+    if rest.contains(&['/', '?', '#', '@', '[', ']'][..]) || rest.chars().any(char::is_whitespace) {
         return Err(INVALID);
     }
     let (host, port) = match rest.rfind(':') {
@@ -212,7 +215,11 @@ fn next_permit_token() -> String {
             .unwrap_or(0);
         format!("{}-{}", std::process::id(), nanos)
     });
-    format!("dp-{}-{}", instance, PERMIT_SEQUENCE.fetch_add(1, Ordering::Relaxed))
+    format!(
+        "dp-{}-{}",
+        instance,
+        PERMIT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 /// Single-use dispatch credential minted by
@@ -309,7 +316,8 @@ impl TargetAuthorizer {
     }
 
     pub fn is_protected(&self, bundle_id: &str) -> bool {
-        self.protected.contains(bundle_id.to_ascii_lowercase().as_str())
+        self.protected
+            .contains(bundle_id.to_ascii_lowercase().as_str())
     }
 
     /// CU-17: read-only iteration over recorded grants as
@@ -574,7 +582,10 @@ mod tests {
         .unwrap();
         assert_eq!(with_leading_zero, site("https://example.com:443"));
         assert_eq!(
-            TargetIdentity::website(app("com.example.editor", AppFamily::Appkit), "https://x.com"),
+            TargetIdentity::website(
+                app("com.example.editor", AppFamily::Appkit),
+                "https://x.com"
+            ),
             Err(TargetError::Invalid(
                 "website targets require a browser application"
             ))
@@ -627,7 +638,9 @@ mod tests {
             browser: app("com.example.browser", AppFamily::Browser),
             origin: "https://example.com".into(),
         };
-        assert!(authorizer.grant(&scope(), &manual, GrantKind::ForRun).is_ok());
+        assert!(authorizer
+            .grant(&scope(), &manual, GrantKind::ForRun)
+            .is_ok());
     }
 
     #[test]
@@ -655,7 +668,9 @@ mod tests {
             Err(TargetError::ForbiddenTarget)
         );
         // Ordinary applications remain grantable.
-        assert!(authorizer.grant(&scope(), &editor(), GrantKind::ForRun).is_ok());
+        assert!(authorizer
+            .grant(&scope(), &editor(), GrantKind::ForRun)
+            .is_ok());
     }
 
     #[test]
@@ -674,7 +689,9 @@ mod tests {
     #[test]
     fn grants_cover_only_the_approved_target_in_the_approved_scope() {
         let mut authorizer = TargetAuthorizer::default();
-        authorizer.grant(&scope(), &editor(), GrantKind::ForRun).unwrap();
+        authorizer
+            .grant(&scope(), &editor(), GrantKind::ForRun)
+            .unwrap();
         // Same application in another run or workspace is not covered.
         for other in [Scope::new("ws-1", "run-2"), Scope::new("ws-2", "run-1")] {
             assert_eq!(
@@ -690,7 +707,8 @@ mod tests {
         );
         // An application grant does not cover websites, and a website grant
         // does not cover its browser or a sibling origin.
-        let browser_app = TargetIdentity::application(app("com.example.browser", AppFamily::Browser));
+        let browser_app =
+            TargetIdentity::application(app("com.example.browser", AppFamily::Browser));
         assert_eq!(
             authorizer.check(&scope(), &browser_app),
             Err(TargetError::NotAuthorized)
@@ -706,13 +724,17 @@ mod tests {
             authorizer.check(&scope(), &site("https://other.example.com")),
             Err(TargetError::NotAuthorized)
         );
-        assert!(authorizer.check(&scope(), &site("https://example.com")).is_ok());
+        assert!(authorizer
+            .check(&scope(), &site("https://example.com"))
+            .is_ok());
     }
 
     #[test]
     fn one_shot_grants_spend_exactly_once_and_checks_do_not_spend() {
         let mut authorizer = TargetAuthorizer::default();
-        authorizer.grant(&scope(), &editor(), GrantKind::Once).unwrap();
+        authorizer
+            .grant(&scope(), &editor(), GrantKind::Once)
+            .unwrap();
         // Presence checks never spend.
         assert!(authorizer.check(&scope(), &editor()).is_ok());
         assert!(authorizer.check(&scope(), &editor()).is_ok());
@@ -751,9 +773,7 @@ mod tests {
         // The element consume spends the one-shot grant and mints the
         // permit for the dispatch it released: presence checks and new
         // consumes deny from here on.
-        let permit = authorizer
-            .spend_for_dispatch(&scope(), &editor())
-            .unwrap();
+        let permit = authorizer.spend_for_dispatch(&scope(), &editor()).unwrap();
         assert_eq!(
             authorizer.check(&scope(), &editor()),
             Err(TargetError::NotAuthorized)
@@ -774,11 +794,9 @@ mod tests {
         );
         // The first consume arms the ticket. The one-shot grant is already
         // spent, and a second consume does not retire that ticket.
-        assert!(
-            authorizer
-                .consume_dispatch_permit(&scope(), &editor(), &permit)
-                .is_ok()
-        );
+        assert!(authorizer
+            .consume_dispatch_permit(&scope(), &editor(), &permit)
+            .is_ok());
         assert!(authorizer
             .inflight_current(&scope(), &editor(), &permit)
             .is_ok());
@@ -813,9 +831,7 @@ mod tests {
         authorizer
             .grant(&scope(), &editor(), GrantKind::Once)
             .unwrap();
-        let revoked = authorizer
-            .spend_for_dispatch(&scope(), &editor())
-            .unwrap();
+        let revoked = authorizer.spend_for_dispatch(&scope(), &editor()).unwrap();
         authorizer.revoke(&scope(), &editor());
         assert_eq!(
             authorizer.consume_dispatch_permit(&scope(), &editor(), &revoked),
@@ -825,9 +841,7 @@ mod tests {
         authorizer
             .grant(&scope(), &editor(), GrantKind::Once)
             .unwrap();
-        let torn_down = authorizer
-            .spend_for_dispatch(&scope(), &editor())
-            .unwrap();
+        let torn_down = authorizer.spend_for_dispatch(&scope(), &editor()).unwrap();
         authorizer.revoke_scope(&scope());
         assert_eq!(
             authorizer.consume_dispatch_permit(&scope(), &editor(), &torn_down),
@@ -839,14 +853,10 @@ mod tests {
             .grant(&scope(), &editor(), GrantKind::ForRun)
             .unwrap();
         for _ in 0..2 {
-            let permit = authorizer
-                .spend_for_dispatch(&scope(), &editor())
-                .unwrap();
-            assert!(
-                authorizer
-                    .consume_dispatch_permit(&scope(), &editor(), &permit)
-                    .is_ok()
-            );
+            let permit = authorizer.spend_for_dispatch(&scope(), &editor()).unwrap();
+            assert!(authorizer
+                .consume_dispatch_permit(&scope(), &editor(), &permit)
+                .is_ok());
         }
         assert!(authorizer.check(&scope(), &editor()).is_ok());
         let armed = authorizer.spend_for_dispatch(&scope(), &editor()).unwrap();
@@ -881,7 +891,9 @@ mod tests {
     #[test]
     fn revocation_affects_only_the_revoked() {
         let mut authorizer = TargetAuthorizer::default();
-        authorizer.grant(&scope(), &editor(), GrantKind::ForRun).unwrap();
+        authorizer
+            .grant(&scope(), &editor(), GrantKind::ForRun)
+            .unwrap();
         authorizer
             .grant(&scope(), &site("https://example.com"), GrantKind::ForRun)
             .unwrap();
@@ -890,9 +902,13 @@ mod tests {
             authorizer.check(&scope(), &editor()),
             Err(TargetError::NotAuthorized)
         );
-        assert!(authorizer.check(&scope(), &site("https://example.com")).is_ok());
+        assert!(authorizer
+            .check(&scope(), &site("https://example.com"))
+            .is_ok());
         // Re-granting after revocation works.
-        authorizer.grant(&scope(), &editor(), GrantKind::Once).unwrap();
+        authorizer
+            .grant(&scope(), &editor(), GrantKind::Once)
+            .unwrap();
         assert!(authorizer.check(&scope(), &editor()).is_ok());
         // Run teardown drops the whole scope, other scopes are untouched.
         let other_run = Scope::new("ws-1", "run-2");

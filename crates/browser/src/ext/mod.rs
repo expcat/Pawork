@@ -79,13 +79,11 @@ mod tests {
     /// manifest 权限集，防止无意回退。
     #[test]
     fn extension_manifest_declares_native_messaging() {
-        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("extension/manifest.json");
+        let manifest =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("extension/manifest.json");
         let body = std::fs::read_to_string(manifest).expect("extension manifest exists");
         let value: serde_json::Value = serde_json::from_str(&body).unwrap();
-        let permissions = value["permissions"]
-            .as_array()
-            .expect("permissions array");
+        let permissions = value["permissions"].as_array().expect("permissions array");
         for required in ["tabs", "scripting", "storage", "alarms", "nativeMessaging"] {
             assert!(
                 permissions.iter().any(|item| item == required),

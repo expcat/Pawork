@@ -14,8 +14,8 @@ mod error;
 mod loader;
 mod merge;
 mod paths;
-mod schema;
 mod reasoning;
+mod schema;
 mod subagents;
 mod writer;
 
@@ -29,23 +29,23 @@ pub use merge::{ConfigValue, Merge};
 pub use paths::{
     config_dir_for_app, global_config_path, locate_workspace_config, workspace_config_path,
 };
+pub use reasoning::{ModelReasoningConfig, ReasoningSettings};
 pub use schema::{
     ModelConfig, PaworkConfig, ProfileConfig, ProfileOverrides, ProviderConfig, RunOverrides,
     SessionOverrides, TerminalConfig,
 };
-pub use reasoning::{ModelReasoningConfig, ReasoningSettings};
 pub use subagents::{
     default_subagent_permissions, SubagentConfig, SubagentModelConfig,
     DEFAULT_SUBAGENT_MAX_CONCURRENT, DEFAULT_SUBAGENT_PERMISSIONS, SUBAGENT_MAX_CONCURRENT_MAX,
     SUBAGENT_MAX_CONCURRENT_MIN,
 };
+pub use writer::write_model_reasoning;
 pub use writer::{
     write_approval_mode, write_default_model_pair, write_mcp_server_remove, write_model_pair,
     write_naming_model_pair, write_provider_disabled_models, write_provider_model_preferences,
     write_provider_use_proxy, write_proxy_url, write_subagent_settings, write_terminal_settings,
     write_workspace_trust,
 };
-pub use writer::write_model_reasoning;
 
 /// 配置层级。
 ///

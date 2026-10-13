@@ -1599,9 +1599,8 @@ fn golden_computer_observation_frames() {
     };
     use pawork_protocol::{
         ComputerActionKind, ComputerCapabilitySupport, ComputerTargetCapability,
-        ComputerTargetListData, ComputerTargetScope, ComputerTargetState,
-        ObservationEvidenceEntry, ObservationEvidenceStatus, ObservationImageData,
-        ObservationListData,
+        ComputerTargetListData, ComputerTargetScope, ComputerTargetState, ObservationEvidenceEntry,
+        ObservationEvidenceStatus, ObservationImageData, ObservationListData,
     };
     let entry = ObservationEvidenceEntry {
         sequence: 12,

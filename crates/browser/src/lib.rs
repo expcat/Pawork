@@ -109,7 +109,11 @@ mod unsupported {
                 "浏览器首版仅支持 macOS / Browser is currently available on macOS".into(),
             ));
         }
-        pub fn click_handle(&self, _: &str, callback: impl FnOnce(Result<String, String>) + 'static) {
+        pub fn click_handle(
+            &self,
+            _: &str,
+            callback: impl FnOnce(Result<String, String>) + 'static,
+        ) {
             callback(Err("Unsupported platform".into()));
         }
         pub fn type_handle(

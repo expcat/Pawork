@@ -241,14 +241,8 @@ pub async fn run_session(
             .await?;
 
         let assistant_id = loop_ctx.next_message_id();
-        match collect_stream_round(
-            provider,
-            &current,
-            &emitter,
-            assistant_id,
-            cancel.clone(),
-        )
-        .await?
+        match collect_stream_round(provider, &current, &emitter, assistant_id, cancel.clone())
+            .await?
         {
             StreamRound::Succeeded { assembled, summary } => {
                 let invocations = pending_invocations(&assembled);

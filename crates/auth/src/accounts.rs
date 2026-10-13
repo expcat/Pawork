@@ -982,18 +982,41 @@ mod tests {
             let mutation_backend = backend.clone();
             let mutation_provider = provider.clone();
             let mutation_account = account.clone();
-            Mock::given(method("POST")).respond_with(move |_: &wiremock::Request| {
-                if remove {
-                    remove_provider_account(mutation_backend.as_ref(), &mutation_provider, &mutation_account.credential_id, None).unwrap();
-                } else {
-                    // Same-slot relogin commits while the refresh request is in flight.
-                    mutation_backend.transaction(&mut |transaction| {
-                        store_oauth_at(transaction, mutation_provider.clone(), &mutation_account.credential_id, &tokens("relogin-access"))?;
-                        Ok(())
-                    }).unwrap();
-                }
-                ResponseTemplate::new(200).set_body_json(crate::testsupport::token_success_json("late-access", Some("late-refresh"), None))
-            }).expect(1).mount(&server).await;
+            Mock::given(method("POST"))
+                .respond_with(move |_: &wiremock::Request| {
+                    if remove {
+                        remove_provider_account(
+                            mutation_backend.as_ref(),
+                            &mutation_provider,
+                            &mutation_account.credential_id,
+                            None,
+                        )
+                        .unwrap();
+                    } else {
+                        // Same-slot relogin commits while the refresh request is in flight.
+                        mutation_backend
+                            .transaction(&mut |transaction| {
+                                store_oauth_at(
+                                    transaction,
+                                    mutation_provider.clone(),
+                                    &mutation_account.credential_id,
+                                    &tokens("relogin-access"),
+                                )?;
+                                Ok(())
+                            })
+                            .unwrap();
+                    }
+                    ResponseTemplate::new(200).set_body_json(
+                        crate::testsupport::token_success_json(
+                            "late-access",
+                            Some("late-refresh"),
+                            None,
+                        ),
+                    )
+                })
+                .expect(1)
+                .mount(&server)
+                .await;
             let mut stored = account.stored;
             let config = crate::OAuthRefreshConfig {
                 token_url: server.uri(),
@@ -1039,7 +1062,10 @@ mod tests {
             default_api_key_account_name("sk-abcdEFGHwxyz"),
             "sk-a***wxyz"
         );
-        assert_eq!(default_account_label("user@example.com"), "user@example.com");
+        assert_eq!(
+            default_account_label("user@example.com"),
+            "user@example.com"
+        );
         assert_eq!(
             default_account_label("verylonglocalpart@privaterelay.appleid.com"),
             "v***t@privaterelay.appleid.com"

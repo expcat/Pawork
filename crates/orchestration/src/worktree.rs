@@ -391,9 +391,8 @@ mod tests {
     #[tokio::test]
     async fn git_allocator_isolates_worker_writes_from_parent() {
         let (_dir, repo) = make_repo();
-        let allocator = GitWorktreeAllocator::new(std::sync::Arc::new(
-            pawork_git::GitRunner::new(),
-        ));
+        let allocator =
+            GitWorktreeAllocator::new(std::sync::Arc::new(pawork_git::GitRunner::new()));
         let worktree = allocator
             .allocate(&repo, "feature-x", None)
             .await

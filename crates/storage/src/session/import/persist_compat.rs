@@ -8,12 +8,12 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
 use crate::session::event_store::persist_event_in_transaction;
 use crate::session::import::formats::compat::{
-    content_fingerprint, count_records, derive_compat_session_id, derive_compat_session_id_from_effective,
-    effective_identity_with_fingerprint, find_secret, map_to_events, parse_external,
+    content_fingerprint, count_records, derive_compat_session_id,
+    derive_compat_session_id_from_effective, effective_identity_with_fingerprint, find_secret,
+    is_codex_envelope_line, is_standalone_json_line, map_to_events, parse_external,
     validate_structure, ClaudeLocalJsonlParser, CodexEnvelopeParser, CodexFlatParser,
     CompatImportHistoryEntry, CompatImportHistoryPage, CompatImportReport, CompatLineParser,
-    ExternalSource, ParsedExternalSession, StreamingSecretScan, is_codex_envelope_line,
-    is_standalone_json_line,
+    ExternalSource, ParsedExternalSession, StreamingSecretScan,
 };
 use crate::session::{SessionStore, SessionStoreError, DEFAULT_BRANCH_ID};
 
@@ -241,8 +241,7 @@ async fn import_compat_from_parsed(
     // 3. identity / content fingerprint（与事件同事务持久化，作为去重/冲突唯一权威）。
     //    identity 不随内容漂移：同 (source, original_id) 始终映射同一 SessionId；
     //    无 original_id 时退化为 content fingerprint，使「相同无 id 内容」仍可幂等。
-    let identity =
-        effective_identity_with_fingerprint(parsed.original_id.as_deref(), &fingerprint);
+    let identity = effective_identity_with_fingerprint(parsed.original_id.as_deref(), &fingerprint);
     let session_id = derive_compat_session_id_from_effective(source, &identity);
     let counts = count_records(&parsed.records);
     let imported_at_ms = now_unix_ms();
@@ -370,7 +369,9 @@ async fn import_compat_from_parsed(
 /// 文件流式读取的产物：JSONL 家族的逐行解析结果（含增量指纹与 Secret 扫描），
 /// 或整文档 JSON 的全文（保持既有整串语义）。
 enum StreamedCompat {
-    WholeDocument { content: String },
+    WholeDocument {
+        content: String,
+    },
     Lines {
         // 解析结果延后解包：Secret 拒绝优先级高于解析错误（与整串路径同序）。
         parsed: Result<ParsedExternalSession, SessionStoreError>,
@@ -442,8 +443,7 @@ async fn stream_compat_file(
         && first_nonempty.is_some_and(|idx| is_standalone_json_line(&pending[idx]))
     {
         loop {
-            if read_hashed_line(&mut reader, &mut hasher, &mut secret_scan, &mut line).await? == 0
-            {
+            if read_hashed_line(&mut reader, &mut hasher, &mut secret_scan, &mut line).await? == 0 {
                 break;
             }
             let blank = line.trim().is_empty();
@@ -456,12 +456,11 @@ async fn stream_compat_file(
     }
 
     let parser = match source {
-        ExternalSource::Claude => claude_stream.then(|| {
-            CompatLineParser::ClaudeLocal(ClaudeLocalJsonlParser::new())
-        }),
+        ExternalSource::Claude => {
+            claude_stream.then(|| CompatLineParser::ClaudeLocal(ClaudeLocalJsonlParser::new()))
+        }
         ExternalSource::Codex => {
-            let envelope =
-                first_nonempty.is_some_and(|idx| is_codex_envelope_line(&pending[idx]));
+            let envelope = first_nonempty.is_some_and(|idx| is_codex_envelope_line(&pending[idx]));
             Some(if envelope {
                 CompatLineParser::CodexEnvelope(CodexEnvelopeParser::new())
             } else {

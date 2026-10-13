@@ -238,9 +238,7 @@ where
             ));
         }
         let capacity = declared as usize;
-        let payload = state
-            .payload
-            .get_or_insert_with(|| vec![0u8; capacity]);
+        let payload = state.payload.get_or_insert_with(|| vec![0u8; capacity]);
         while state.payload_filled < payload.len() {
             match reader.read(&mut payload[state.payload_filled..]).await {
                 Ok(0) => {
@@ -349,20 +347,13 @@ mod tests {
         async fn receive_twice(bytes: &[u8]) -> (TransportError, TransportError) {
             let (peer, local) = tokio::io::duplex(64);
             let (reader, writer) = tokio::io::split(local);
-            let conn = StreamConnection::new(
-                reader,
-                writer,
-                connection_info("test".into(), 1024),
-            );
+            let conn = StreamConnection::new(reader, writer, connection_info("test".into(), 1024));
             {
                 let (_peer_reader, mut peer_writer) = tokio::io::split(peer);
                 peer_writer.write_all(bytes).await.expect("write truncated");
                 peer_writer.shutdown().await.expect("shutdown writer");
             }
-            let first = conn
-                .receive()
-                .await
-                .expect_err("truncated frame must fail");
+            let first = conn.receive().await.expect_err("truncated frame must fail");
             let second = conn
                 .receive()
                 .await
@@ -392,7 +383,9 @@ mod tests {
         let (mut peer, local) = tokio::io::duplex(64);
         let (reader, writer) = tokio::io::split(local);
         let conn = StreamConnection::new(reader, writer, connection_info("test".into(), 1024));
-        peer.write_all(&frame[..3]).await.expect("write partial header");
+        peer.write_all(&frame[..3])
+            .await
+            .expect("write partial header");
         let first = tokio::time::timeout(Duration::from_millis(50), conn.receive()).await;
         assert!(first.is_err(), "partial header receive must time out");
         peer.write_all(&frame[3..]).await.expect("write rest");
@@ -406,7 +399,9 @@ mod tests {
         let (mut peer, local) = tokio::io::duplex(64);
         let (reader, writer) = tokio::io::split(local);
         let conn = StreamConnection::new(reader, writer, connection_info("test".into(), 1024));
-        peer.write_all(&frame[..6]).await.expect("write header + partial payload");
+        peer.write_all(&frame[..6])
+            .await
+            .expect("write header + partial payload");
         let first = tokio::time::timeout(Duration::from_millis(50), conn.receive()).await;
         assert!(first.is_err(), "partial payload receive must time out");
         peer.write_all(&frame[6..]).await.expect("write rest");

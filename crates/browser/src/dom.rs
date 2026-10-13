@@ -320,13 +320,11 @@ mod tests {
         let text = parsed["text"].as_str().unwrap();
         assert!(!text.is_empty());
         assert!(text.chars().all(|ch| ch == '测'));
-        assert!(
-            parsed["buttons"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|button| button["text"] == "Apply")
-        );
+        assert!(parsed["buttons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|button| button["text"] == "Apply"));
     }
 
     #[test]
@@ -388,7 +386,12 @@ mod tests {
 
     #[test]
     fn handle_scripts_gate_on_url_and_revision_with_escaping() {
-        let script = click_handle_script("__paworkObs_k", "a[href=\"x\"]", "https://example.com/p?a=\"b\"", 41);
+        let script = click_handle_script(
+            "__paworkObs_k",
+            "a[href=\"x\"]",
+            "https://example.com/p?a=\"b\"",
+            41,
+        );
         assert!(script.contains("if(st.revision!==41)"));
         assert!(script.contains("location.href!==\"https://example.com/p?a=\\\"b\\\"\""));
         assert!(script.contains("uniqueVisible(\"a[href=\\\"x\\\"]\")"));

@@ -88,7 +88,11 @@ mod imp {
             count: usize,
             options: *const c_void,
         ) -> *mut c_void;
-        fn CGImageDestinationAddImage(dest: *mut c_void, image: *const c_void, props: *const c_void);
+        fn CGImageDestinationAddImage(
+            dest: *mut c_void,
+            image: *const c_void,
+            props: *const c_void,
+        );
         fn CGImageDestinationFinalize(dest: *mut c_void) -> bool;
     }
 
@@ -230,7 +234,11 @@ mod imp {
                 if !content.is_null() {
                     let _: *mut Object = msg_send![content, retain];
                 }
-                let err_s = if err.is_null() { None } else { Some(err_desc(err)) };
+                let err_s = if err.is_null() {
+                    None
+                } else {
+                    Some(err_desc(err))
+                };
                 let (lock, cv) = &*pair2;
                 if let Ok(mut g) = lock.lock() {
                     *g = (content as usize, err_s, true);
@@ -365,7 +373,11 @@ mod imp {
             let pair = Arc::new((Mutex::new((0usize, None, false)), Condvar::new()));
             let pair2 = pair.clone();
             let block = ConcreteBlock::new(move |image: *mut c_void, err: *mut Object| {
-                let err_s = if err.is_null() { None } else { Some(err_desc(err)) };
+                let err_s = if err.is_null() {
+                    None
+                } else {
+                    Some(err_desc(err))
+                };
                 let (lock, cv) = &*pair2;
                 if let Ok(mut g) = lock.lock() {
                     if !image.is_null() {
@@ -517,7 +529,11 @@ mod imp {
                 let mut p = CGPoint::new(0.0, 0.0);
                 let ok = (axf().value_get_value)(v, 1, &mut p as *mut CGPoint as *mut c_void);
                 CFRelease(v);
-                if ok { Some(p) } else { None }
+                if ok {
+                    Some(p)
+                } else {
+                    None
+                }
             }
             Err(_) => None,
         };
@@ -526,7 +542,11 @@ mod imp {
                 let mut s = CGSize::new(0.0, 0.0);
                 let ok = (axf().value_get_value)(v, 2, &mut s as *mut CGSize as *mut c_void);
                 CFRelease(v);
-                if ok { Some(s) } else { None }
+                if ok {
+                    Some(s)
+                } else {
+                    None
+                }
             }
             Err(_) => None,
         };
@@ -579,7 +599,10 @@ mod imp {
     unsafe fn pick_window(app: AXEl, needle: Option<&str>) -> Result<AXEl, String> {
         let windows = ax_list(app, "AXWindows");
         match needle {
-            None => windows.first().copied().ok_or_else(|| "no windows".to_string()),
+            None => windows
+                .first()
+                .copied()
+                .ok_or_else(|| "no windows".to_string()),
             Some(n) => {
                 let low = n.to_lowercase();
                 for w in &windows {
@@ -602,8 +625,14 @@ mod imp {
             }
             CFRelease(focused);
         }
-        let roots: Vec<AXEl> = if windows.is_empty() { vec![app] } else { windows.to_vec() };
-        let hit = bfs_find(&roots, 3000, &|el, role| TEXT_ROLES.contains(&role) && !el.is_null());
+        let roots: Vec<AXEl> = if windows.is_empty() {
+            vec![app]
+        } else {
+            windows.to_vec()
+        };
+        let hit = bfs_find(&roots, 3000, &|el, role| {
+            TEXT_ROLES.contains(&role) && !el.is_null()
+        });
         (hit.map(|(el, _)| el), "bfs".into())
     }
 
@@ -756,7 +785,11 @@ mod imp {
                 Err(_) => String::new(),
             };
             let value = CFString::new(text);
-            let e = ax_set(el, "AXSelectedText", value.as_concrete_TypeRef() as CFTypeRef);
+            let e = ax_set(
+                el,
+                "AXSelectedText",
+                value.as_concrete_TypeRef() as CFTypeRef,
+            );
             std::thread::sleep(Duration::from_millis(80));
             let after = match ax_copy(el, "AXValue") {
                 Ok(v) => cf_to_string(v).unwrap_or_default(),
@@ -777,7 +810,11 @@ mod imp {
             let app = ax_app(pid);
             let windows = ax_list(app, "AXWindows");
             // 菜单栏也纳入搜索（AXMenuBar 下是各菜单的 AXMenuItem，如 File/Save）。
-            let mut roots: Vec<AXEl> = if windows.is_empty() { vec![app] } else { windows };
+            let mut roots: Vec<AXEl> = if windows.is_empty() {
+                vec![app]
+            } else {
+                windows
+            };
             if let Ok(mb) = ax_copy(app, "AXMenuBar") {
                 roots.push(mb as AXEl);
             }
@@ -841,8 +878,16 @@ mod imp {
             };
             // Chromium 系开启完整 AX 树的两个入口都试：AXManualAccessibility
             // 与 AXEnhancedUserInterface（VoiceOver 路径），分别回报结果。
-            let e1 = ax_set(app, "AXManualAccessibility", v.as_concrete_TypeRef() as CFTypeRef);
-            let e2 = ax_set(app, "AXEnhancedUserInterface", v.as_concrete_TypeRef() as CFTypeRef);
+            let e1 = ax_set(
+                app,
+                "AXManualAccessibility",
+                v.as_concrete_TypeRef() as CFTypeRef,
+            );
+            let e2 = ax_set(
+                app,
+                "AXEnhancedUserInterface",
+                v.as_concrete_TypeRef() as CFTypeRef,
+            );
             Ok(json!({
                 "manual_err": ax_err(e1), "manual_code": e1,
                 "enhanced_err": ax_err(e2), "enhanced_code": e2,
@@ -879,7 +924,14 @@ mod imp {
     }
 
     /// 场景搭建用：设置首窗口 AXPosition/AXSize（用于制造完全遮挡）。
-    fn cmd_axmove(pid: i32, x: f64, y: f64, w: f64, h: f64, needle: Option<&str>) -> Result<Value, String> {
+    fn cmd_axmove(
+        pid: i32,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        needle: Option<&str>,
+    ) -> Result<Value, String> {
         unsafe {
             let app = ax_app(pid);
             let win = pick_window(app, needle)?;
@@ -969,24 +1021,38 @@ mod imp {
 
     fn cmd_click(pid: i32, x: f64, y: f64) -> Result<Value, String> {
         let point = CGPoint::new(x, y);
-        let mv = CGEvent::new_mouse_event(ev_source()?, CGEventType::MouseMoved, point, CGMouseButton::Left)
-            .map_err(|_| "mouse event create failed".to_string())?;
+        let mv = CGEvent::new_mouse_event(
+            ev_source()?,
+            CGEventType::MouseMoved,
+            point,
+            CGMouseButton::Left,
+        )
+        .map_err(|_| "mouse event create failed".to_string())?;
         mv.post_to_pid(pid);
         std::thread::sleep(Duration::from_millis(25));
-        let dn = CGEvent::new_mouse_event(ev_source()?, CGEventType::LeftMouseDown, point, CGMouseButton::Left)
-            .map_err(|_| "mouse event create failed".to_string())?;
+        let dn = CGEvent::new_mouse_event(
+            ev_source()?,
+            CGEventType::LeftMouseDown,
+            point,
+            CGMouseButton::Left,
+        )
+        .map_err(|_| "mouse event create failed".to_string())?;
         dn.post_to_pid(pid);
         std::thread::sleep(Duration::from_millis(35));
-        let up = CGEvent::new_mouse_event(ev_source()?, CGEventType::LeftMouseUp, point, CGMouseButton::Left)
-            .map_err(|_| "mouse event create failed".to_string())?;
+        let up = CGEvent::new_mouse_event(
+            ev_source()?,
+            CGEventType::LeftMouseUp,
+            point,
+            CGMouseButton::Left,
+        )
+        .map_err(|_| "mouse event create failed".to_string())?;
         up.post_to_pid(pid);
         Ok(json!({"posted": true, "point": [x, y]}))
     }
 
     fn cmd_activate(pid: i32) -> Result<Value, String> {
         unsafe {
-            let app: *mut Object =
-                msg_send![class!(NSRunningApplication), runningApplicationWithProcessIdentifier: pid];
+            let app: *mut Object = msg_send![class!(NSRunningApplication), runningApplicationWithProcessIdentifier: pid];
             if app.is_null() {
                 return Err(format!("no running application for pid {}", pid));
             }
@@ -1135,7 +1201,9 @@ mod imp {
                 })
             }
             "wins" => {
-                let pid: i32 = arg(args, 0)?.parse().map_err(|_| "pid must be int".to_string())?;
+                let pid: i32 = arg(args, 0)?
+                    .parse()
+                    .map_err(|_| "pid must be int".to_string())?;
                 let content = share_content()?;
                 let windows: *mut Object = unsafe { msg_send![content, windows] };
                 let n: usize = unsafe { msg_send![windows, count] };
@@ -1150,34 +1218,70 @@ mod imp {
                 json!({"windows": list})
             }
             "capture" => {
-                let wid: u32 = arg(args, 0)?.parse().map_err(|_| "window id must be int".to_string())?;
+                let wid: u32 = arg(args, 0)?
+                    .parse()
+                    .map_err(|_| "window id must be int".to_string())?;
                 let out = arg(args, 1)?;
                 cmd_capture(wid, out)?
             }
-            "axdump" => cmd_axdump(arg(args, 0)?.parse().map_err(|_| "pid must be int".to_string())?)?,
+            "axdump" => cmd_axdump(
+                arg(args, 0)?
+                    .parse()
+                    .map_err(|_| "pid must be int".to_string())?,
+            )?,
             "axread" => cmd_axread(
-                arg(args, 0)?.parse().map_err(|_| "pid must be int".to_string())?,
+                arg(args, 0)?
+                    .parse()
+                    .map_err(|_| "pid must be int".to_string())?,
                 args.get(1).map(|s| s == "full").unwrap_or(false),
             )?,
-            "axset" => cmd_axset(arg(args, 0)?.parse().map_err(|_| "pid must be int".to_string())?, arg(args, 1)?)?,
-            "axinsert" => cmd_axinsert(arg(args, 0)?.parse().map_err(|_| "pid must be int".to_string())?, arg(args, 1)?)?,
-            "axpress" => cmd_axpress(arg(args, 0)?.parse().map_err(|_| "pid must be int".to_string())?, arg(args, 1)?)?,
-            "axfind" => cmd_axfind(arg(args, 0)?.parse().map_err(|_| "pid must be int".to_string())?, arg(args, 1)?)?,
+            "axset" => cmd_axset(
+                arg(args, 0)?
+                    .parse()
+                    .map_err(|_| "pid must be int".to_string())?,
+                arg(args, 1)?,
+            )?,
+            "axinsert" => cmd_axinsert(
+                arg(args, 0)?
+                    .parse()
+                    .map_err(|_| "pid must be int".to_string())?,
+                arg(args, 1)?,
+            )?,
+            "axpress" => cmd_axpress(
+                arg(args, 0)?
+                    .parse()
+                    .map_err(|_| "pid must be int".to_string())?,
+                arg(args, 1)?,
+            )?,
+            "axfind" => cmd_axfind(
+                arg(args, 0)?
+                    .parse()
+                    .map_err(|_| "pid must be int".to_string())?,
+                arg(args, 1)?,
+            )?,
             "axmanual" => cmd_axmanual(
-                arg(args, 0)?.parse().map_err(|_| "pid must be int".to_string())?,
+                arg(args, 0)?
+                    .parse()
+                    .map_err(|_| "pid must be int".to_string())?,
                 arg(args, 1)? == "1",
             )?,
             "axraise" => cmd_axraise(
-                arg(args, 0)?.parse().map_err(|_| "pid must be int".to_string())?,
+                arg(args, 0)?
+                    .parse()
+                    .map_err(|_| "pid must be int".to_string())?,
                 args.get(1).map(|s| s.as_str()),
             )?,
             "axmain" => cmd_axmain(
-                arg(args, 0)?.parse().map_err(|_| "pid must be int".to_string())?,
+                arg(args, 0)?
+                    .parse()
+                    .map_err(|_| "pid must be int".to_string())?,
                 arg(args, 1)? == "1",
                 args.get(2).map(|s| s.as_str()),
             )?,
             "axmove" => cmd_axmove(
-                arg(args, 0)?.parse().map_err(|_| "pid must be int".to_string())?,
+                arg(args, 0)?
+                    .parse()
+                    .map_err(|_| "pid must be int".to_string())?,
                 arg(args, 1)?.parse().map_err(|_| "x".to_string())?,
                 arg(args, 2)?.parse().map_err(|_| "y".to_string())?,
                 arg(args, 3)?.parse().map_err(|_| "w".to_string())?,
@@ -1185,30 +1289,50 @@ mod imp {
                 args.get(5).map(|s| s.as_str()),
             )?,
             "axmin" => cmd_axmin(
-                arg(args, 0)?.parse().map_err(|_| "pid must be int".to_string())?,
+                arg(args, 0)?
+                    .parse()
+                    .map_err(|_| "pid must be int".to_string())?,
                 arg(args, 1)? == "1",
                 args.get(2).map(|s| s.as_str()),
             )?,
             "keys" => {
-                let pid: i32 = arg(args, 0)?.parse().map_err(|_| "pid must be int".to_string())?;
+                let pid: i32 = arg(args, 0)?
+                    .parse()
+                    .map_err(|_| "pid must be int".to_string())?;
                 let sent = post_text(pid, arg(args, 1)?, false)?;
                 json!({"posted_utf16_units": sent, "mode": "to_pid"})
             }
             "key" => {
-                let pid: i32 = arg(args, 0)?.parse().map_err(|_| "pid must be int".to_string())?;
-                let code: u16 = arg(args, 1)?.parse().map_err(|_| "keycode must be int".to_string())?;
+                let pid: i32 = arg(args, 0)?
+                    .parse()
+                    .map_err(|_| "pid must be int".to_string())?;
+                let code: u16 = arg(args, 1)?
+                    .parse()
+                    .map_err(|_| "keycode must be int".to_string())?;
                 let mods = args.get(2).map(|s| s.as_str()).unwrap_or("");
                 cmd_key(pid, code, mods)?
             }
             "click" => {
-                let pid: i32 = arg(args, 0)?.parse().map_err(|_| "pid must be int".to_string())?;
-                let x: f64 = arg(args, 1)?.parse().map_err(|_| "x must be float".to_string())?;
-                let y: f64 = arg(args, 2)?.parse().map_err(|_| "y must be float".to_string())?;
+                let pid: i32 = arg(args, 0)?
+                    .parse()
+                    .map_err(|_| "pid must be int".to_string())?;
+                let x: f64 = arg(args, 1)?
+                    .parse()
+                    .map_err(|_| "x must be float".to_string())?;
+                let y: f64 = arg(args, 2)?
+                    .parse()
+                    .map_err(|_| "y must be float".to_string())?;
                 cmd_click(pid, x, y)?
             }
-            "activate" => cmd_activate(arg(args, 0)?.parse().map_err(|_| "pid must be int".to_string())?)?,
+            "activate" => cmd_activate(
+                arg(args, 0)?
+                    .parse()
+                    .map_err(|_| "pid must be int".to_string())?,
+            )?,
             "usertype" => {
-                let pid: i32 = arg(args, 0)?.parse().map_err(|_| "pid must be int".to_string())?;
+                let pid: i32 = arg(args, 0)?
+                    .parse()
+                    .map_err(|_| "pid must be int".to_string())?;
                 let act = cmd_activate(pid)?;
                 std::thread::sleep(Duration::from_millis(600));
                 let sent = post_text(pid, arg(args, 1)?, true)?;
@@ -1244,10 +1368,7 @@ mod imp {
         }
         let cmd = args[0].clone();
         if cmd == "watch" {
-            let ms: u64 = args
-                .get(1)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(10_000);
+            let ms: u64 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(10_000);
             run_watch(ms);
             return;
         }

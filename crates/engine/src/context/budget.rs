@@ -35,7 +35,6 @@ impl ContextBudget {
             max_input_tokens,
         }
     }
-
 }
 
 impl Default for ContextBudget {

@@ -17,7 +17,7 @@ use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::discovery::{self, BridgeDiscovery};
 use super::origin::normalize_origin;
@@ -172,9 +172,15 @@ pub fn serve(config: HostConfig, extension_origin: Option<&str>) -> io::Result<(
     Ok(())
 }
 
-fn bridge_socket_path(data_dir: &std::path::Path, browser: BrowserKind) -> io::Result<std::path::PathBuf> {
-    let preferred = discovery::bridge_dir(data_dir)
-        .join(format!("{}-{}.sock", browser.name(), std::process::id()));
+fn bridge_socket_path(
+    data_dir: &std::path::Path,
+    browser: BrowserKind,
+) -> io::Result<std::path::PathBuf> {
+    let preferred = discovery::bridge_dir(data_dir).join(format!(
+        "{}-{}.sock",
+        browser.name(),
+        std::process::id()
+    ));
     if preferred.as_os_str().len() < 100 {
         return Ok(preferred);
     }
@@ -203,20 +209,25 @@ fn handle_extension_message(shared: &Shared, message: &Value) -> Result<(), Stri
             if let Some(version) = message["extension"].as_str() {
                 *shared.extension_version.lock().unwrap() = version.to_string();
             }
-            shared
-                .ext_enabled
-                .store(message["enabled"].as_bool().unwrap_or(false), Ordering::SeqCst);
+            shared.ext_enabled.store(
+                message["enabled"].as_bool().unwrap_or(false),
+                Ordering::SeqCst,
+            );
             shared.ext_ready.store(true, Ordering::SeqCst);
             Ok(())
         }
         Some("status") => {
-            shared
-                .ext_enabled
-                .store(message["enabled"].as_bool().unwrap_or(false), Ordering::SeqCst);
+            shared.ext_enabled.store(
+                message["enabled"].as_bool().unwrap_or(false),
+                Ordering::SeqCst,
+            );
             Ok(())
         }
         Some("response") => {
-            let id = message["id"].as_str().ok_or("response without id")?.to_string();
+            let id = message["id"]
+                .as_str()
+                .ok_or("response without id")?
+                .to_string();
             let pending = shared.pending.lock().unwrap().take();
             if let Some((pending_id, sender)) = pending {
                 if pending_id == id {
@@ -285,7 +296,9 @@ fn serve_client(shared: Arc<Shared>, stream: UnixStream) {
                 };
                 let frame = match result {
                     Ok(data) => json!({"kind": "response", "id": id, "ok": true, "data": data}),
-                    Err(error) => json!({"kind": "response", "id": id, "ok": false, "error": error}),
+                    Err(error) => {
+                        json!({"kind": "response", "id": id, "ok": false, "error": error})
+                    }
                 };
                 if protocol::write_frame(&mut writer, &frame).is_err() {
                     return;
@@ -418,10 +431,8 @@ fn handle_client_request(shared: &Shared, action: &str, params: &Value) -> Resul
         }
         "ext_attach" => {
             let tab = unwrap(shared)?;
-            let requested = normalize_origin(
-                params["origin"].as_str().ok_or("missing origin")?,
-            )
-            .map_err(|error| format!("invalid origin: {error}"))?;
+            let requested = normalize_origin(params["origin"].as_str().ok_or("missing origin")?)
+                .map_err(|error| format!("invalid origin: {error}"))?;
             let state = call_extension(shared, "tab_state", json!({"tab": tab}))?;
             let actual = state["url"]
                 .as_str()
@@ -448,8 +459,7 @@ fn handle_client_request(shared: &Shared, action: &str, params: &Value) -> Resul
                 ),
                 None => None,
             };
-            let mut data =
-                call_extension(shared, "new_tab", json!({ "url": url, "task": task }))?;
+            let mut data = call_extension(shared, "new_tab", json!({ "url": url, "task": task }))?;
             let tab = data["tab"].as_i64().ok_or("extension returned no tab id")?;
             if let Some(origin) = origin {
                 // Bind the declared origin immediately; a redirect escape
@@ -591,7 +601,11 @@ pub fn detect_parent_browser() -> Option<BrowserKind> {
     let mut path = [0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
     let parent = unsafe { libc::getppid() };
     let length = unsafe {
-        libc::proc_pidpath(parent, path.as_mut_ptr().cast::<libc::c_void>(), path.len() as u32)
+        libc::proc_pidpath(
+            parent,
+            path.as_mut_ptr().cast::<libc::c_void>(),
+            path.len() as u32,
+        )
     };
     if length <= 0 {
         return None;

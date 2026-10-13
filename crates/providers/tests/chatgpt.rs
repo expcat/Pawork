@@ -84,7 +84,11 @@ async fn oauth_headers_models_and_responses_path_are_wired() {
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "text/event-stream")
-                .set_body_string(common::responses_text_stream_body("resp_1", &["hello"], (3, 1))),
+                .set_body_string(common::responses_text_stream_body(
+                    "resp_1",
+                    &["hello"],
+                    (3, 1),
+                )),
         )
         .expect(1)
         .mount(&server)

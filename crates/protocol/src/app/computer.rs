@@ -53,7 +53,9 @@ pub struct ComputerAppIdentity {
 #[cfg_attr(feature = "typegen", derive(TS))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ComputerTargetIdentity {
-    Application { app: ComputerAppIdentity },
+    Application {
+        app: ComputerAppIdentity,
+    },
     Website {
         browser: ComputerAppIdentity,
         origin: String,

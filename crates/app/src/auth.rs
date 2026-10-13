@@ -462,7 +462,7 @@ mod tests {
                 None,
             )),
         )
-            .expect(2)
+        .expect(2)
         .mount(&server)
         .await;
         let backend = Arc::new(MemoryBackend::new());
@@ -576,7 +576,8 @@ mod tests {
             .and(path("/oauth2/token"))
             .and(body_string_contains("device_code"))
             .respond_with(ResponseTemplate::new(400).set_body_json(
-                crate::testsupport::token_error_json("authorization_pending", None)))
+                crate::testsupport::token_error_json("authorization_pending", None),
+            ))
             .up_to_n_times(1)
             .expect(1)
             .named("authorization_pending once")
@@ -590,7 +591,7 @@ mod tests {
                 None,
             )),
         )
-            .expect(1)
+        .expect(1)
         .mount(&server)
         .await;
 

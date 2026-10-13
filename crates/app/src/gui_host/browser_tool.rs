@@ -3,12 +3,12 @@ use super::{GuiHostError, GuiRunRegistry};
 use async_trait::async_trait;
 use pawork_domain::*;
 use pawork_protocol::CommandSource;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
     sync::{
-        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
     },
     time::{Duration, Instant},
 };
@@ -162,8 +162,8 @@ pub(super) fn validate_web_url_field(input: &Value) -> Result<(), ToolError> {
             "invalid browser action or arguments",
         )
     };
-    let url = reqwest::Url::parse(input["url"].as_str().ok_or_else(invalid)?)
-        .map_err(|_| invalid())?;
+    let url =
+        reqwest::Url::parse(input["url"].as_str().ok_or_else(invalid)?).map_err(|_| invalid())?;
     if !matches!(url.scheme(), "http" | "https")
         || url.host().is_none()
         || !url.username().is_empty()
@@ -416,12 +416,10 @@ mod tests {
         assert!(broker.respond(id, &owner, json!({"ok":true})).is_err());
         let cancel = CancellationToken::new();
         cancel.cancel();
-        assert!(
-            broker
-                .execute("run".into(), json!({"action":"read"}), cancel)
-                .await
-                .is_err()
-        );
+        assert!(broker
+            .execute("run".into(), json!({"action":"read"}), cancel)
+            .await
+            .is_err());
         assert!(broker.pending.lock().unwrap().is_empty());
     }
     #[tokio::test]
@@ -511,7 +509,10 @@ mod tests {
         assert!(validate(&json!({"action":"close_tab"})).is_err());
         assert!(validate(&json!({"action":"close_tab","tab_id":"other-1"})).is_err());
         assert!(validate(&json!({"action":"close_tab","tab_id":"tab-"})).is_err());
-        assert!(validate(&json!({"action":"select_tab","tab_id":format!("tab-{}","x".repeat(80))})).is_err());
+        assert!(validate(
+            &json!({"action":"select_tab","tab_id":format!("tab-{}","x".repeat(80))})
+        )
+        .is_err());
         assert!(validate(&json!({"action":"list_tabs"})).is_err());
         let tool = BrowserTool {
             broker: Arc::new(BrowserBroker::default()),
@@ -733,14 +734,12 @@ mod tests {
             )
             .unwrap();
         insert("oversize");
-        assert!(
-            broker
-                .respond(
-                    "oversize",
-                    &owner,
-                    json!({"ok":true,"data":{"jpeg_base64":"a".repeat(800 * 1024)}}),
-                )
-                .is_err()
-        );
+        assert!(broker
+            .respond(
+                "oversize",
+                &owner,
+                json!({"ok":true,"data":{"jpeg_base64":"a".repeat(800 * 1024)}}),
+            )
+            .is_err());
     }
 }
