@@ -5,14 +5,9 @@
 //! 语义、schema 与加载路径均不变。
 
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use crate::config::error::{ConfigError, ConfigParseError};
-
-/// 同进程内的临时文件唯一后缀：仅按 pid 区分的临时名会让同进程并发写
-/// 互相覆盖临时文件（GUI 快速双击即可触发）。
-static TEMP_SUFFIX: AtomicU64 = AtomicU64::new(0);
 
 /// 同进程跨键写串行化：四个公开入口都经 [`rmw_global_config`] 持此锁，
 /// 包住 read_table → 改 → atomic_write_table 全程，避免交错读写造成
@@ -44,29 +39,10 @@ fn atomic_write_table(path: &Path, table: &toml::Table) -> Result<(), ConfigErro
         source: Box::new(source),
     })?;
 
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|source| ConfigError::Io {
-            path: parent.to_path_buf(),
-            source: Box::new(source),
-        })?;
-    }
-    let temp = path.with_file_name(format!(
-        "{}.{}.{}.tmp",
-        path.file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "config.toml".into()),
-        std::process::id(),
-        TEMP_SUFFIX.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::write(&temp, serialized).map_err(|source| ConfigError::Io {
-        path: temp.clone(),
-        source: Box::new(source),
-    })?;
-    std::fs::rename(&temp, path).map_err(|source| ConfigError::Io {
+    crate::fs::atomic_write_bytes(path, serialized.as_bytes()).map_err(|source| ConfigError::Io {
         path: path.to_path_buf(),
         source: Box::new(source),
-    })?;
-    Ok(())
+    })
 }
 
 /// Global 配置的唯一 read-modify-write 内核。

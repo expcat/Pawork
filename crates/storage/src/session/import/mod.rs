@@ -9,7 +9,7 @@ mod persist_export;
 mod persist_pi;
 
 pub use formats::{
-    parse_pi_line, CompatImportHistoryEntry, CompatImportHistoryPage, CompatImportReport,
-    ExportedBranch, ExportedEvent, ExternalRecord, ExternalSource, ParsedExternalSession,
-    PiEntryKind, PiImportReport, PiParsedEntry, PiPayload, SessionExport, EXPORT_SCHEMA_VERSION,
+    CompatImportHistoryEntry, CompatImportHistoryPage, CompatImportReport, ExportedBranch,
+    ExportedEvent, ExternalRecord, ExternalSource, ParsedExternalSession, PiEntryKind,
+    PiImportReport, PiParsedEntry, PiPayload, SessionExport, EXPORT_SCHEMA_VERSION,
 };

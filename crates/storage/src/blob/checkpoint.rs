@@ -120,8 +120,9 @@ pub struct CheckpointService {
 }
 
 impl CheckpointService {
-    /// 创建空状态服务。新代码应使用 [`Self::open`]，测试可用此构造器隔离状态。
-    pub fn new(store: ArtifactStore) -> Self {
+    /// 创建空状态服务。生产路径使用 [`Self::open`] 恢复已有状态文件。
+    #[cfg(test)]
+    pub(crate) fn new(store: ArtifactStore) -> Self {
         let state_path = store.root().join(STATE_FILE);
         Self {
             store,

@@ -38,7 +38,7 @@ Workspace 为 **29 成员（27 库 + 2 应用）**：27 个库平铺 `crates/<�
 | `pawork-exec` | `crates/exec` | → policy（仅路径 helper） | process/sandbox/pty；不直接依赖 domain；CancellationToken 仍为本包类型 |
 | `pawork-tools` | `crates/tools` | → domain、exec、policy、workspace、computer-use | 九个内置工具 + registry/scheduler；不依赖 MCP SDK 或认证客户端 |
 | `pawork-workspace` | `crates/workspace` | → domain、policy | `service/`+`path/`+`file_index/`、`resources/`、`config/`（六层矩阵）、`import/`（五来源导入 + session_scan） |
-| `pawork-storage` | `crates/storage` | → domain | `sqlite/`（Actor+migration 框架）、`session/`（DDL/迁移/export）、`blob/`（artifact + 共用 `atomic_write_bytes` + PWB1/checkpoint/protected）；`default = ["session","blob"]`，compaction/checkpoint/protected opt-in |
+| `pawork-storage` | `crates/storage` | → domain | `sqlite/`（Actor+migration 框架）、`session/`（DDL/迁移/export）、`blob/`（artifact + blob 内共用 `atomic_write_bytes` + PWB1/checkpoint/protected）；`default = ["session","blob"]`，compaction/checkpoint/protected opt-in |
 | `pawork-models` | `crates/models` | → domain | registry/能力证据与默认表、negotiate、pricing；无具体 Provider、HTTP、存储或 GUI 依赖 |
 | `pawork-providers` | `crates/providers` | → domain、models | HTTP/SSE + Chat/Responses/Messages wire、八通道适配、usage/error 归一、reasoning 保护端口；通道静态注册单源 |
 | `pawork-auth` | `crates/auth` | → domain | Secret 后端/OAuth/脱敏/解析链 + `locator` 单一事实源（Secret 审计边界） |
@@ -169,6 +169,6 @@ Workspace 为 **29 成员（27 库 + 2 应用）**：27 个库平铺 `crates/<�
 - **Desktop AX**：GPUI 锁定 `=0.2.2`；显式语义树 + AppKit 虚拟 AX 元素；AX action 回到既有 AppView handler 与 enable gate。
 - **CancellationToken**：exec 与其它包仍双轨，不借路径依赖合并类型。
 - **配置写盘**：Global 层入口共用单一 RMW 内核（`CONFIG_WRITE_LOCK` + tmp/rename）；auth 的 OAuth 测试与可注入默认 HTTP 客户端 `http_client()` 均为 `redirect(Policy::none())`。MCP 不再构造 OAuth HTTP 客户端。
-- **原子写**：blob / auth / config 共用「同目录临时文件 + rename」；storage 以 `atomic_write_bytes` 为单源。
+- **原子写**：统一「同目录独占临时文件 + fsync + rename」，各包私有实现（依赖方向不允许跨包共用）。storage 的 `atomic_write_bytes` 只服务 blob 三区（`.tmp-` 前缀绑定 artifact GC）；workspace 内配置写盘与 compat 导出共用私有 `fs::atomic_write_bytes`，compat 另加目标 symlink 拒绝。
 
 - **手动文件编辑（2026-09-16 用户要求）**：Desktop Files 经 GUI 1.19 → Host 操作项目文件，输入仍为 workspace_id + relative_path；目录 / 读取不写库，保存只接受读取时的内容版本，冲突不覆盖。文件正文不进入命令账本或日志。只扩展手动 GUI 操作，不改变 Agent 工具 Policy、审批或事件重放语义。

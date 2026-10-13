@@ -41,12 +41,12 @@
 | `src/session/compaction/snapshot.rs` | ~150 | `CompactionSnapshot` v1（serde 形状冻结）与 `SnapshotVersion` |
 | `src/session/import/mod.rs` | ~15 | 导入门面：re-export formats 解析层，声明 persist_* 持久化层 |
 | `src/session/import/formats/mod.rs` | ~15 | formats 门面 re-export |
-| `src/session/import/formats/pi.rs` | ~270 | Pi JSONL 纯函数解析 `parse_pi_line`（Header/Message/ToolCall/ModelSwitch/Compaction/Branch/Custom/Unknown）与 `PiImportReport` |
-| `src/session/import/formats/compat.rs` | ~2180 | 外部会话解析：`ExternalSource`（Claude/Codex/Grok/Cursor）各自解析器与 Claude/Codex 双形态嗅探、`find_secret` Secret 扫描、`derive_compat_session_id`/`content_fingerprint`/`effective_identity`、事件映射与 `validate_structure`；JSONL 家族行级解析器与流式 Secret 聚合供文件导入复用 |
+| `src/session/import/formats/pi.rs` | ~270 | Pi JSONL 纯函数解析 `parse_pi_line`（`pub(crate)`；Header/Message/ToolCall/ModelSwitch/Compaction/Branch/Custom/Unknown）与公开 `PiImportReport` |
+| `src/session/import/formats/compat.rs` | ~2180 | 外部会话解析：`ExternalSource`（Claude/Codex/Grok/Cursor）各自解析器与 Claude/Codex 双形态嗅探、公开 `find_secret` Secret 扫描、crate 内 `derive_compat_session_id`/`content_fingerprint`/`effective_identity`、事件映射与 `validate_structure`；JSONL 家族行级解析器与流式 Secret 聚合供文件导入复用 |
 | `src/session/import/formats/export.rs` | ~290 | `SessionExport` v3 JSON 形状（v1/v2 兼容读、身份回填）与 `validate` |
 | `src/session/import/persist_pi.rs` | ~450 | `import_pi_jsonl(_lines)`：Secret 预扫 → header 必需 → 单 `Immediate` 事务落 main 分支（Branch marker 折叠为 Diagnostic） |
 | `src/session/import/persist_compat.rs` | ~1160 | `import_compat(_from_file/_dry_run)` 与 `compat_import_history`：指纹幂等、`compat_import_identity` 冲突检测、键集分页；文件导入 JSONL 家族 BufReader 逐行流式 |
-| `src/session/import/persist_export.rs` | ~920 | `export_session`/`import_session`/`add_tags`/`get_session_identity`：v3 全量往返，导入侧身份匹配 + 顺序/parent 预检 |
+| `src/session/import/persist_export.rs` | ~900 | `export_session`/`import_session`/`get_session_identity`：v3 全量往返（含 `session_tags` 读写），导入侧身份匹配 + 顺序/parent 预检 |
 | `src/blob/mod.rs` | ~30 | blob 门面：`atomic` 私有；artifact 常开 re-export；`protected`/`checkpoint` 随 feature |
 | `src/blob/atomic.rs` | ~50 | crate 私有 `atomic_write_bytes`：同目录 `.tmp-{pid}-{counter}`、`create_new`、`write_all`+`sync_all`+`rename`，失败删临时文件；artifact / protected / checkpoint 共用 |
 | `src/blob/artifact.rs` | ~1220 | `ArtifactStore`：`<root>/blobs/ab/cd/<hash>` 分片目录 + `artifacts.sqlite3` 元数据；put 去重/预算、get 重验哈希、`read_range`、refcount、gc、`integrity_check` |
@@ -114,8 +114,7 @@
 
 - `list_sessions()`（固定过滤 `archived=0`、按 `updated_at_ms` 降序，无参数）/ `list_sessions_including_archived()`（R-20 维护查询，同序不过滤）/ `get_session(&SessionId)`（缺失报 `SessionNotFound`）：`SessionRecord { session_id, title, created_at_ms, updated_at_ms, archived, active_branch }`。`rename_session(&SessionId, title, now_ms)` / `archive_session(&SessionId, archived, now_ms)`（ADR-054）：UPDATE 单行走 `updated_at_ms` 刷新，缺失报 `SessionNotFound`；归档不删事件与投影，`get_session` 仍可读。
 - `rename_session_if_title(&SessionId, expected_title, title, now_ms) -> bool`：单条条件 UPDATE 原子校验旧标题并更新；不匹配返回 false，标题与时间戳保持不变；缺失报 `SessionNotFound`。自动命名使用此口，多个命名结果仅首个匹配者写回，已改名会话不被旧结果覆盖；不改 schema。
-- `add_tags(session, &[&str])`：幂等插入 `session_tags`。
-- `get_session_identity(session) -> Option<(TenantId, PrincipalId)>`（不存在返回 `None`）。
+- `get_session_identity(session) -> Option<(TenantId, PrincipalId)>`（不存在返回 `None`）。`session_tags` 由 `import_session` 写入、`export_session` 读出，没有单独的公开打标签入口。
 
 ### 3.8 导出 / 导入
 
@@ -124,7 +123,7 @@
 - `import_pi_jsonl(path)` / `import_pi_jsonl_lines(lines)`：Pi JSONL → 单分支导入（原文件只读不改）。逐行 `parse_pi_line` 得 `PiPayload::{Header, Message, ToolCall, ModelSwitch, Compaction, Branch, Raw}`：Message → `MessageCommitted`、ToolCall → `ToolCallStarted`、ModelSwitch → `pi.model_switched` Diagnostic、Compaction → 摘要 `MessageCommitted` + `CompactionCompleted`（`compacted_through` 为已落盘事件水位）、Branch marker → `pi.branch_collapsed` Diagnostic（R6 起收编单分支语义，不再建零事件分支行）；`PiEntryKind::{Custom, Unknown}` 行载荷为 Raw，原文进 `unknown_entries`。返回 `PiImportReport`（`header_found`、imported_messages/tool_calls/model_switches/compactions/branches 计数、`unknown_entries: BTreeMap<行号, 原文>`）；无 header fail-closed 拒绝导入。
 - `import_compat(source, content)` / `import_compat_from_file(source, path)` / `import_compat_dry_run(source, content)`：外部导入（§4.5），来源由调用方指定（`ExternalSource::{Claude, Codex, Grok, Cursor}`）。返回 `CompatImportReport { source, session_id, original_id, imported_events/messages/tool_calls/tool_results/usages/reviews, raw_records, deduplicated, unknown_fields }`——`deduplicated = true` 表示命中既有导入（幂等去重，`imported_events == 0`）。
 - `compat_import_history(limit, cursor) -> CompatImportHistoryPage { entries, cursor }`：键集分页（limit 夹到 1..=500，默认 50，cursor 为不透明令牌 `"{updated_at_ms}:{session_id}"`，坏令牌报 `InvalidHistoryCursor`）；每条 `(source, original_id)` identity 只留一条历史，重复导入不新增。
-- 纯解析层（不落库，可独立调用）：`parse_pi_line`；`parse_external`（按来源分派 `parse_claude`/`parse_codex`/`parse_grok`/`parse_cursor`）；`find_secret`；`derive_compat_session_id`/`content_fingerprint`/`effective_identity`；`validate_structure`。
+- 包外可调用的解析入口只有 `find_secret`（`pawork-app` 技能录制拒绝走 `session::import::formats::find_secret`）。`parse_pi_line`、`parse_external`（按来源分派 `parse_claude`/`parse_codex`/`parse_grok`/`parse_cursor`）、`derive_compat_session_id`/`content_fingerprint`/`effective_identity`、`validate_structure` 均为 `pub(crate)`，只服务本包导入事务。`ExternalSource`、compat / Pi 报告类型与 export 类型仍公开。`formats` 模块保持 `pub`。
 
 ### 3.9 compaction（feature `compaction`）
 
@@ -135,8 +134,8 @@
 ### 3.10 blob 三区
 
 - **artifact（feature `blob`）**：`ArtifactStore::open(root)`，公开打开入口不限制磁盘预算。`put(&[u8]) -> PutOutcome { id: BlobId, created, ref_count }`（BLAKE3 寻址，重复 put 命中去重仅引用 +1；经 `atomic_write_bytes` tmp+fsync+rename 原子落盘；私有选项下的预算拒绝路径与 `DiskBudgetExceeded` 保留，由定向回归验证）；`get`/`read_range(id, offset, limit)` 读时重验哈希，不符报 `BlobCorrupted`（另有 `EmptyRange`/`RangeOffsetOutOfBounds`/`UnknownBlob`/`BlobMissing`）；`release`（下溢报 `RefCountUnderflow`；归零不立即删文件）；`gc()`（删 0 引用 blob + 回收 >24h 的 `.tmp-` 与无元数据孤儿文件）；`integrity_check()`、`disk_usage()`、`metadata`、`byte_length`、`blob_path`、`database`、`shutdown`。
-- **protected（feature `protected`）**：`ProtectedBlobStore::open(root, resolver: Arc<dyn ProtectedKeyResolver>)`，公开打开入口不限制磁盘预算，保留期固定为 7 天。scope = `BlobScope::new(provider_id, session_id)`；内置 `InMemoryKeyResolver`（`insert`/`set_current`/`remove` 管理各 scope 的 `KeyVersion → AeadKey`）可作宿主实现。`put(scope, plaintext) -> PutOutcome { blob_ref, key_version, .. }`：取 scope 当前 `KeyVersion` → PWB1 AEAD 密封 → 三态写入（§4.7）。`get(scope, ref)` 解密返回 `ProtectedBlob`（`expose()` 取明文，Drop 时 `zeroize`）；跨 scope 访问、密钥缺失、文件缺失统一 fail-closed 为 `ProtectedBlobUnavailable`，格式/摘要/AEAD 失败为 `ProtectedBlobCorrupted`（`is_unavailable()`/`is_corrupted()` 判别）。`release`（归零后进入延迟回收窗）、`gc()`、`metadata`、`shutdown`。纯函数 `parse_pwb1_envelope`/`open_pwb1_envelope`/`pwb1_aad` 供离线校验；预算/保留期选项与 `open_with_options` 为私有实现。
-- **checkpoint（feature `checkpoint`）**：`CheckpointService::open(ArtifactStore)`（恢复 `checkpoint-state-v1.json`，版本不符 fail-closed）。`snapshot_before_write(run_id, tool_call_id, roots, relative_path) -> FileSnapshot`：在 roots 内 canonicalize 解析（拒绝绝对路径与 `..` 穿越），读旧内容存 Blob（同 key 去重，并发多余引用自动 release），自动建立 run 条目；`rollback_tool_call`/`rollback_run` 逆序恢复（同一 `atomic_write_bytes`、删新增文件、还原 unix mode）；缺 recorded path 报 `NotFound`，不跳过；`list_changes(run_id)` 同步快照。
+- **protected（feature `protected`）**：`ProtectedBlobStore::open(root, resolver: Arc<dyn ProtectedKeyResolver>)`，公开打开入口不限制磁盘预算，保留期固定为 7 天。scope = `BlobScope::new(provider_id, session_id)`。宿主自备 `ProtectedKeyResolver`；`InMemoryKeyResolver` 是 `#[cfg(test)] pub(crate)` 测试替身，不是宿主 API。`put(scope, plaintext) -> PutOutcome { blob_ref, key_version, .. }`：取 scope 当前 `KeyVersion` → PWB1 AEAD 密封 → 三态写入（§4.7）。`get(scope, ref)` 解密返回 `ProtectedBlob`（`expose()` 取明文，Drop 时 `zeroize`）；跨 scope 访问、密钥缺失、文件缺失统一 fail-closed 为 `ProtectedBlobUnavailable`，格式/摘要/AEAD 失败为 `ProtectedBlobCorrupted`（`is_unavailable()`/`is_corrupted()` 判别）。`release`（归零后进入延迟回收窗）、`gc()`、`metadata`、`shutdown`。纯函数 `parse_pwb1_envelope`/`open_pwb1_envelope`/`pwb1_aad` 保持 `pub`，供离线校验与 `tests/pwb1_golden.rs`；预算/保留期选项与 `open_with_options` 为私有实现。
+- **checkpoint（feature `checkpoint`）**：`CheckpointService::open(ArtifactStore)`（恢复 `checkpoint-state-v1.json`，版本不符 fail-closed）。`CheckpointService::new` 为 `#[cfg(test)] pub(crate)`，只给同 crate 测试隔离空状态，生产构建不含该构造器，不得绕过 `open`。`snapshot_before_write(run_id, tool_call_id, roots, relative_path) -> FileSnapshot`：在 roots 内 canonicalize 解析（拒绝绝对路径与 `..` 穿越），读旧内容存 Blob（同 key 去重，并发多余引用自动 release），自动建立 run 条目；`rollback_tool_call`/`rollback_run` 逆序恢复（同一 `atomic_write_bytes`、删新增文件、还原 unix mode）；缺 recorded path 报 `NotFound`，不跳过；`list_changes(run_id)` 同步快照。
 
 ### 3.11 client_adapter
 
@@ -218,9 +217,9 @@
 - **blob 原子写单源**：`blob/atomic.rs` 的 `atomic_write_bytes` 是 artifact / protected / checkpoint 唯一落盘路径；临时文件 `.tmp-` 前缀，与 artifact `gc` 的 24h 孤儿回收约定对齐。
 - **export v3 形状冻结**：字段见 §3.8；读兼容 v1/v2（身份回填 `local/default`、`local/user`，v1 事件归 `main`），写只出 v3。`command_ledger`、`compat_import_identity` 等运维表**不进** export。
 - **CompactionSnapshot v1 serde 形状冻结**（`snapshot.rs` 注释明示），`SnapshotVersion` 单值 `V1`。
-- **Secret 红线**：明文 Token 不落库不落日志——写前 `redact_sensitive_json` + `sanitize_reasoning_metadata`（provider_hints 白名单命名空间）+ 导入前 `find_secret` fail-closed；legacy hint 键只读映射、不回写。protected 区明文只存在于内存 `ProtectedBlob`（Drop zeroize），错误信息与 Debug 输出不含密钥/明文。
+- **Secret 红线**：明文 Token 不落库不落日志——写前 `redact_sensitive_json` + `sanitize_reasoning_metadata`（provider_hints 白名单命名空间）+ 导入前 `find_secret` fail-closed；legacy hint 键只读映射、不回写。protected 区明文只存在于内存 `ProtectedBlob`（Drop zeroize），错误信息与 Debug 输出不含密钥/明文。`find_secret` 与 workspace profile 的 `contains_plaintext_secret` 阈值不同（本包 `sk-` 尾长 ≥ 28，并覆盖 `sk-ant-` / `github_pat_` / `AIza` 等；workspace 另认 PEM 与 JWT 形），两套扫描器不应合并。
 - **导入身份规则**：Pi 与 compat 导入固定落 `local/default` + `local/user`；export/import 要求身份显式匹配，不做静默改写或提权。
-- **fork 边界**：只能从四类闭合事件分叉（§3.4）；`create_branch`/`fork_from_event`/`create_session`/`add_tags`/compat 导入均幂等可重试。
+- **fork 边界**：只能从四类闭合事件分叉（§3.4）；`create_branch`/`fork_from_event`/`create_session`/compat 导入均幂等可重试。`session_tags` 只在 `import_session` 里 `INSERT OR IGNORE` 写入。
 - **blob 完整性**：artifact 与 protected 均在**读路径**重算 BLAKE3 与元数据比对，篡改/位腐一律报 corrupted 而非返回坏数据；artifact 引用计数只增于 `put`、只减于 `release`，物理删除只发生在 `gc`。
 - **checkpoint 状态冻结**：`checkpoint-state-v1.json` 的 `schema_version = 1` 与 `FileSnapshot.pre_blob` 的 64 字符 hex serde 形状固定（与 V1 磁盘 JSON 兼容）。
 - **读写隔离**：`open_read_only` 的 Actor 拒绝 `restore_from`；所有多步写（append、导入、rebuild、迁移）都在单事务内，无部分可见状态。

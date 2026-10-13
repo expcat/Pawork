@@ -7,7 +7,7 @@
 //! 装配在 host（CLI / app-service），不在本 crate 内实现 Server 或 Transport。
 //!
 //! 模块划分：
-//! - [`app`]：应用层协议词汇（command / event / limits / query / quota /
+//! - [`app`]：应用层协议词汇（command / event / query / quota /
 //!   registry / settings / subagents / version）；
 //! - [`codec`]：有界 JSON 编解码与 u32 LE 长度前缀分帧读写；
 //! - [`handshake`]：版本协商、握手服务端逻辑与信封版本校验；

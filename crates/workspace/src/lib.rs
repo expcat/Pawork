@@ -8,11 +8,11 @@ pub mod import;
 pub mod resources;
 
 mod file_index;
+mod fs;
 mod path;
 
 use std::{
     collections::{BTreeMap, HashSet},
-    fs,
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
 };
@@ -115,7 +115,7 @@ fn normalize_root(path: PathBuf) -> Result<PathBuf, WorkspaceError> {
 
 /// Canonicalize 工作区 root，并去掉 Windows verbatim 前缀 `\\?\`。
 fn canonicalize_simplified(path: &Path) -> std::io::Result<PathBuf> {
-    fs::canonicalize(path).map(|canonical| dunce::simplified(&canonical).to_path_buf())
+    std::fs::canonicalize(path).map(|canonical| dunce::simplified(&canonical).to_path_buf())
 }
 
 fn path_key(path: &Path) -> String {
@@ -152,7 +152,7 @@ mod tests {
     use super::*;
 
     fn simplified_canonical(path: &Path) -> PathBuf {
-        let canonical = fs::canonicalize(path).expect("canonicalize test path");
+        let canonical = std::fs::canonicalize(path).expect("canonicalize test path");
         dunce::simplified(&canonical).to_path_buf()
     }
 

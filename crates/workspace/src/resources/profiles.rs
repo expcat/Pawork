@@ -1,13 +1,12 @@
 //! Agent Profile v1/v2 加载、校验与运行期 instructions。
 //!
-//! v1（P8-5）：`name / instructions / default_provider / default_model`。
-//! v2：`pawork_domain::AgentProfileV2` 全维度（prompt / model /
-//! canonical effort / tools(denied) / skills / mcp / permissions / hooks /
-//! memory / max-turns / background / isolation）。加载时自动迁移 v1→v2，
-//! deny-first 校验工具规则、校验引用格式与跨类解析（本波只解析 skills，
-//! fail-closed；hooks 引用跳过不解析；mcp / permissions 只做格式校验）、
-//! 拒绝明文 secret。memory 默认 off；生产记忆不可用时显式标注 `Unavailable`，
-//! 绝不虚假可用。
+//! 磁盘 v1（`name / instructions / default_provider / default_model`）自动迁为
+//! `pawork_domain::AgentProfileV2`。v2 覆盖 prompt / model / canonical effort /
+//! tools(denied) / skills / mcp / permissions / hooks / memory / max-turns /
+//! background / isolation。加载时 deny-first 校验工具规则、校验引用格式与跨类
+//! 解析（本波只解析 skills，fail-closed；hooks 引用跳过不解析；mcp / permissions
+//! 只做格式校验）、拒绝明文 secret。memory 默认 off；`enabled = true` 且文件未
+//! 自标不可用时一律标注 `Unavailable`。
 
 use std::{
     collections::BTreeMap,
@@ -32,42 +31,15 @@ use super::{
     ResourceKind, ResourceLimits, ResourceOrigin, ResourceProvenance, ResourceSelection,
 };
 
-/// Phase 8 的 Agent Profile v1 兼容视图。v2 完整维度见 [`LoadedAgentProfileV2`]。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentProfile {
-    pub name: String,
-    pub instructions: String,
-    pub default_provider: Option<String>,
-    pub default_model: Option<String>,
-    pub provenance: ResourceProvenance,
-}
-
 /// 已加载并校验的 Profile v2：领域类型 + 来源 provenance。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LoadedAgentProfileV2 {
+pub(crate) struct LoadedAgentProfileV2 {
     pub profile: AgentProfileV2,
     pub provenance: ResourceProvenance,
 }
 
-impl LoadedAgentProfileV2 {
-    fn compat_view(&self) -> AgentProfile {
-        let mut instructions = self.profile.prompt.system.clone();
-        if let Some(extra) = &self.profile.prompt.instructions {
-            instructions.push_str("\n\n");
-            instructions.push_str(extra);
-        }
-        AgentProfile {
-            name: self.profile.name.clone(),
-            instructions,
-            default_provider: self.profile.model.provider.clone(),
-            default_model: self.profile.model.name.clone(),
-            provenance: self.provenance.clone(),
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InstructionLayer {
+pub(crate) struct InstructionLayer {
     pub tier: ConfigTier,
     pub source_key: String,
     pub instructions: String,
@@ -76,23 +48,18 @@ pub struct InstructionLayer {
 
 /// 已按 profile < session < run 固定顺序解析的指令层。
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ResolvedInstructions {
-    pub profile: Option<AgentProfile>,
+pub(crate) struct ResolvedInstructions {
+    pub profile: Option<InstructionLayer>,
     pub session: Option<InstructionLayer>,
     pub run: Option<InstructionLayer>,
     pub issues: Vec<ResourceIssue>,
 }
 
 impl ResolvedInstructions {
-    pub fn ordered_layers(&self) -> Vec<InstructionLayer> {
+    pub(crate) fn ordered_layers(&self) -> Vec<InstructionLayer> {
         let mut layers = Vec::with_capacity(3);
         if let Some(profile) = &self.profile {
-            layers.push(InstructionLayer {
-                tier: ConfigTier::Profile,
-                source_key: profile.provenance.source_key.clone(),
-                instructions: profile.instructions.clone(),
-                provenance: profile.provenance.clone(),
-            });
+            layers.push(profile.clone());
         }
         if let Some(session) = &self.session {
             layers.push(session.clone());
@@ -104,9 +71,17 @@ impl ResolvedInstructions {
     }
 }
 
+fn profile_prompt_text(profile: &AgentProfileV2) -> String {
+    let mut instructions = profile.prompt.system.clone();
+    if let Some(extra) = &profile.prompt.instructions {
+        instructions.push_str("\n\n");
+        instructions.push_str(extra);
+    }
+    instructions
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ProfileResolution {
-    pub profiles: Vec<AgentProfile>,
     pub profiles_v2: Vec<LoadedAgentProfileV2>,
     pub instructions: ResolvedInstructions,
     pub diagnostics: ResourceDiagnostics,
@@ -335,7 +310,6 @@ pub(crate) fn load_profiles(
     workspace_resource_dir: &str,
     selection: &ResourceSelection,
     limits: ResourceLimits,
-    memory_available: bool,
 ) -> ProfileResolution {
     let mut resolution = ProfileResolution {
         selection: selection.clone(),
@@ -348,7 +322,6 @@ pub(crate) fn load_profiles(
             ConfigTier::Global,
             None,
             limits,
-            memory_available,
             &mut resolution,
         );
     }
@@ -363,7 +336,6 @@ pub(crate) fn load_profiles(
             ConfigTier::Workspace,
             Some(root_index),
             limits,
-            memory_available,
             &mut resolution,
         );
     }
@@ -431,14 +403,9 @@ fn version_matches(reference: &ProfileRef, available: &Version) -> bool {
     }
 }
 
-/// 由 effective 集合重建：v1 兼容视图、指令分层、诊断条目。
+/// 由 effective 集合重建指令分层与诊断条目。
 fn finalize(resolution: &mut ProfileResolution) {
     let mut entries = resolution.overridden.clone();
-    resolution.profiles = resolution
-        .effective
-        .values()
-        .map(LoadedAgentProfileV2::compat_view)
-        .collect();
     resolution.profiles_v2 = resolution.effective.values().cloned().collect();
 
     let selected_name = resolution
@@ -477,7 +444,12 @@ fn finalize(resolution: &mut ProfileResolution) {
     }
     let selected_profile = selected_name.and_then(|name| resolution.effective.get(name));
     resolution.instructions = ResolvedInstructions {
-        profile: selected_profile.map(LoadedAgentProfileV2::compat_view),
+        profile: selected_profile.map(|loaded| InstructionLayer {
+            tier: ConfigTier::Profile,
+            source_key: loaded.provenance.source_key.clone(),
+            instructions: profile_prompt_text(&loaded.profile),
+            provenance: loaded.provenance.clone(),
+        }),
         session: resolution
             .selection
             .session_instructions
@@ -547,7 +519,6 @@ fn load_directory(
     tier: ConfigTier,
     root_index: Option<usize>,
     limits: ResourceLimits,
-    memory_available: bool,
     resolution: &mut ProfileResolution,
 ) {
     let paths = match sorted_children_within(directory, source_root, limits.max_resources_per_kind)
@@ -585,12 +556,7 @@ fn load_directory(
         );
         match parse_profile(&path, source_root, provenance, limits.max_file_bytes) {
             Ok((mut loaded, mut warnings)) => {
-                apply_memory_availability(
-                    &mut loaded.profile,
-                    memory_available,
-                    &source_key,
-                    &mut warnings,
-                );
+                apply_memory_availability(&mut loaded.profile, &source_key, &mut warnings);
                 resolution.diagnostics.issues.append(&mut warnings);
                 if let Some(overridden) = resolution
                     .effective
@@ -1064,16 +1030,15 @@ fn file_stem(path: &Path) -> String {
         .unwrap_or_else(|| path_key(path))
 }
 
-/// memory 显式可用性标注：default-off 已由类型默认保证；显式启用但生产记忆
-/// 不可用时，把 `unavailable` 显式写入 profile 并产生 warning 诊断——绝不把
-/// 不可用的记忆标记为可用。文件作者显式声明的 `unavailable` 保持原样。
+/// memory 显式可用性标注：default-off 已由类型默认保证。`enabled = true` 且
+/// 文件未自标不可用时，一律把 `unavailable` 写入 profile 并产生 warning——
+/// 生产记忆没有可用接线。文件作者显式声明的 `unavailable` 保持原样。
 fn apply_memory_availability(
     profile: &mut AgentProfileV2,
-    memory_available: bool,
     source_key: &str,
     warnings: &mut Vec<ResourceIssue>,
 ) {
-    if !profile.memory.enabled || profile.memory.unavailable.is_some() || memory_available {
+    if !profile.memory.enabled || profile.memory.unavailable.is_some() {
         return;
     }
     profile.memory.unavailable = Some(
@@ -1117,7 +1082,6 @@ mod tests {
             ".pawork",
             &selection,
             ResourceLimits::default(),
-            false,
         );
         resolve_profile_references(&mut resolution, &SkillResolution::default());
         resolution
@@ -1134,7 +1098,6 @@ mod tests {
             ".pawork",
             &selection,
             ResourceLimits::default(),
-            false,
         )
     }
 
@@ -1168,11 +1131,7 @@ mod tests {
             vec!["workspace", "session", "run"]
         );
         assert_eq!(
-            resolution
-                .instructions
-                .profile
-                .as_ref()
-                .and_then(|profile| profile.default_model.as_deref()),
+            resolution.profiles_v2[0].profile.model.name.as_deref(),
             Some("m")
         );
     }
@@ -1298,10 +1257,27 @@ mod tests {
         assert!(loaded.profile.background);
         assert_eq!(loaded.profile.isolation, ProfileIsolation::Restricted);
 
-        // v1 兼容视图与指令分层仍可用（system + instructions 拼接）。
-        let compat = &resolution.profiles[0];
-        assert!(compat.instructions.contains("You are a careful reviewer."));
-        assert!(compat.instructions.contains("Prefer minimal diffs."));
+        assert_eq!(
+            loaded.profile.prompt.instructions.as_deref(),
+            Some("Prefer minimal diffs.")
+        );
+        let selected = load_raw(
+            workspace.path(),
+            ResourceSelection {
+                profile: Some("reviewer".into()),
+                ..ResourceSelection::default()
+            },
+        );
+        let injected = selected
+            .instructions
+            .ordered_layers()
+            .into_iter()
+            .find(|layer| layer.tier == ConfigTier::Profile)
+            .expect("selected profile injects a layer");
+        assert!(injected
+            .instructions
+            .contains("You are a careful reviewer."));
+        assert!(injected.instructions.contains("Prefer minimal diffs."));
     }
 
     #[test]
@@ -1452,7 +1428,6 @@ mod tests {
             ".pawork",
             &ResourceSelection::default(),
             ResourceLimits::default(),
-            false,
         );
         resolve_profile_references(&mut resolution, &SkillResolution::default());
         assert!(resolution
@@ -1549,7 +1524,6 @@ mod tests {
             ".pawork",
             &ResourceSelection::default(),
             ResourceLimits::default(),
-            false,
         );
         resolve_profile_references(&mut resolution, &skills);
         assert!(
@@ -1579,7 +1553,6 @@ mod tests {
             ".pawork",
             &ResourceSelection::default(),
             ResourceLimits::default(),
-            false,
         );
         resolve_profile_references(&mut resolution, &skills);
         assert!(resolution
@@ -1654,7 +1627,6 @@ mod tests {
             ".pawork",
             &ResourceSelection::default(),
             ResourceLimits::default(),
-            false,
         );
         resolve_profile_references(&mut resolution, &SkillResolution::default());
         assert!(resolution
@@ -1666,26 +1638,6 @@ mod tests {
         assert_eq!(
             profile.memory.availability(),
             pawork_domain::ProfileMemoryAvailability::Unavailable
-        );
-
-        // 生产记忆可用 → Enabled。
-        let mut resolution = load_profiles(
-            None,
-            &[workspace.path().to_path_buf()],
-            ".pawork",
-            &ResourceSelection::default(),
-            ResourceLimits::default(),
-            true,
-        );
-        resolve_profile_references(&mut resolution, &SkillResolution::default());
-        assert!(
-            resolution.diagnostics.issues.is_empty(),
-            "{:?}",
-            resolution.diagnostics.issues
-        );
-        assert_eq!(
-            resolution.profiles_v2[0].profile.memory.availability(),
-            pawork_domain::ProfileMemoryAvailability::Enabled
         );
 
         // 文件显式标注 unavailable 被保留（诚实的显式不可用）。

@@ -15,32 +15,6 @@ use crate::session::import::formats::export::{
 use crate::session::{SessionStore, SessionStoreError, DEFAULT_BRANCH_ID};
 
 impl SessionStore {
-    /// 为 session 添加标签（去重、小写归一）。重复标签静默忽略。
-    pub async fn add_tags(
-        &self,
-        session_id: &SessionId,
-        tags: &[&str],
-    ) -> Result<(), SessionStoreError> {
-        let session_id = session_id.to_string();
-        let normalized: Vec<String> = tags
-            .iter()
-            .map(|tag| tag.trim().to_ascii_lowercase())
-            .filter(|tag| !tag.is_empty())
-            .collect();
-        self.database()
-            .call(move |connection| -> Result<(), SessionStoreError> {
-                for tag in normalized {
-                    connection.execute(
-                        "INSERT OR IGNORE INTO session_tags(session_id, tag) VALUES (?1, ?2)",
-                        params![session_id, tag],
-                    )?;
-                }
-                Ok(())
-            })
-            .await??;
-        Ok(())
-    }
-
     /// 读取 session 的身份归属；不存在返回 `None`。
     pub async fn get_session_identity(
         &self,
@@ -466,8 +440,21 @@ mod tests {
             .await
             .expect("append 2");
         store
-            .add_tags(&session, &["rust", "demo"])
+            .database()
+            .call({
+                let session_id = session.to_string();
+                move |connection| -> Result<(), SessionStoreError> {
+                    for tag in ["rust", "demo"] {
+                        connection.execute(
+                            "INSERT OR IGNORE INTO session_tags(session_id, tag) VALUES (?1, ?2)",
+                            params![session_id, tag],
+                        )?;
+                    }
+                    Ok(())
+                }
+            })
             .await
+            .expect("tags db")
             .expect("tags");
         session
     }

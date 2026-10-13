@@ -15,12 +15,13 @@
 
 ## 2. 模块与文件地图
 
-**根服务与路径（3 文件）**
+**根服务与路径（4 文件）**
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
 | `src/lib.rs` | ~200 | `Workspace{id,name,roots}` / `WorkspaceService::add/get`（roots `fs::canonicalize` + `dunce::simplified` + 平台感知去重，Windows 大小写不敏感）；`canonicalize_root` 公开同一规范化规则（ADR-044 持久登记前的去重键）；`WorkspaceError` 六个 variant；子模块声明与 re-export |
 | `src/path.rs` | ~250 | `resolve_relative_path(roots, relative) -> ResolvedPath{absolute, root, relative}`；本层拦截空路径 / 绝对路径 / Windows 盘符 / UNC（`\\`、`//`）/ 保留设备名（CON、PRN、AUX、NUL、COM1-9、LPT1-9，含尾随 `.`/空格变体），其余委托 `pawork_policy::resolve_workspace_path`；`WorkspacePathError` 与 `PathSafetyError` 的一一映射 |
+| `src/fs.rs` | ~120 | crate 私有 `atomic_write_bytes`：需要时 `create_dir_all` 父目录，同目录临时文件 `create_new` + `write_all` + `sync_all` + `rename`，失败删除本次创建的临时文件；临时名含 pid、进程级计数与纳秒，不以 `.tmp-` 开头。配置写盘直接调用；compat 导出在其上保留目标 symlink 的写前 / rename 前拒绝。不检查配置目标本身是否为 symlink |
 | `src/file_index.rs` | ~1110 | `FileIndex`：`scan_workspace`（`spawn_blocking` 全量扫描 + generation CAS 替换：扫描前采样代次，写回时已变则丢弃，`generation` 递增）、`snapshot` / `search`（子序列模糊匹配）、`apply_changes` 增量、`start_debounced_updates`（有界通道去抖）、`watch_workspace`（`notify` watcher）；`IndexOptions` / `FileKey` / `IndexedFile` / `IndexSnapshot` / `PathChange` / `ChangeKind` / `DebouncedUpdateHandle` / `WorkspaceWatcher` / `FileIndexError` |
 
 **config/（9 文件）**
@@ -35,7 +36,7 @@
 | `src/config/merge.rs` | ~160 | `ConfigValue` 包装与 `Merge` trait；`merge_json`（对象按键递归、标量与数组整体替换） |
 | `src/config/error.rs` | ~70 | `ConfigParseError` / `ConfigError`：TOML 语法、schema 不匹配、IO 错误、写回序列化（`Write`）全部携带文件路径，`path()` 访问器 |
 | `src/config/loader.rs` | ~1560 | `Loader` 构建器与 `resolve()` 全流程：来源装配、`strip_untrusted_layer` 安全剥离（十种 `ConfigWarning`：ADR-053 增 `PermissionsIgnored`（`approval_mode` / `workspace_trust`）；ADR-055 起增 `ProviderDisabledModelsIgnored`（`providers[].disabled_models`）与 `GlobalRoleModelIgnored`（顶层 vision/search 四键，逐键告警），ADR-050 起非 Global 层 `web_search` 剥离 + `WebSearchIgnored` 告警；非 Global 层顶层 `terminal` 整段剥离 + `TerminalIgnored` 告警，防仓库投毒默认 shell；同规则剥离 `subagents` 并复用 `PermissionsIgnored{key:"subagents"}` 告警；ADR-063 起同规则剥离顶层 `reasoning` 并复用 `PermissionsIgnored{key:"reasoning"}` 告警）、profile 层派生、`api_key` 双点剥除（单文件解析后 + 终值合并后）、确定性排序；`ConfigSource` / `LoadedSource` / `LoadedSourceSpan`；`ResolvedConfig{config, active_profile, sources, warnings}` |
-| `src/config/writer.rs` | ~1070 | 十三个公开入口（`write_approval_mode` / `write_workspace_trust`（ADR-053）/ `write_default_model_pair` / `write_naming_model_pair`（ADR-054，两者自 ADR-055 起为 `write_model_pair` 薄包装）/ `write_model_pair`（ADR-055 D5：通用角色键对写/清）/ `write_provider_disabled_models` / `write_provider_model_preferences`（ADR-055 D1/D3，禁用集与角色清除一次原子提交）/ `write_proxy_url` / `write_provider_use_proxy` / `write_mcp_server_remove` / `write_terminal_settings` / `write_subagent_settings`（Global-only 全态写，原子替换已知键并保留未知字段）/ `write_model_reasoning`（ADR-063 Global-only 模型级推理强度偏好写，原子替换 `[[reasoning.models]]` 并保留未知字段））只表达键语义；共用 `rmw_global_config`（锁 + `read_table` + 可选 `atomic_write_table`）。`write_mcp_server_remove` 键缺失时不写盘返回 `Ok(false)`。未知字段保留；不触碰六层合并。 |
+| `src/config/writer.rs` | ~1070 | 十三个公开入口（`write_approval_mode` / `write_workspace_trust`（ADR-053）/ `write_default_model_pair` / `write_naming_model_pair`（ADR-054，两者自 ADR-055 起为 `write_model_pair` 薄包装）/ `write_model_pair`（ADR-055 D5：通用角色键对写/清）/ `write_provider_disabled_models` / `write_provider_model_preferences`（ADR-055 D1/D3，禁用集与角色清除一次原子提交）/ `write_proxy_url` / `write_provider_use_proxy` / `write_mcp_server_remove` / `write_terminal_settings` / `write_subagent_settings`（Global-only 全态写，原子替换已知键并保留未知字段）/ `write_model_reasoning`（ADR-063 Global-only 模型级推理强度偏好写，原子替换 `[[reasoning.models]]` 并保留未知字段））只表达键语义；共用 `rmw_global_config`（锁 + `read_table` + 可选 `atomic_write_table`）。`write_mcp_server_remove` 键缺失时不写盘返回 `Ok(false)`。未知字段保留；不触碰六层合并。写盘走 `fs::atomic_write_bytes`（`create_new` + fsync），不拒绝目标 `config.toml` 本身是 symlink。 |
 
 **resources/（10 文件）**
 
@@ -47,9 +48,9 @@
 | `src/resources/source.rs` | ~200 | 溯源与诊断：`ResourceKind` 四类（Instructions / AgentsFile / Skill / AgentProfile）；`ResourceOrigin`（Global / Workspace / Session / Run，不暴露宿主绝对路径）；`ResourceProvenance{tier, source_key, origin}`；`ResourceDiagnostics`（`sort_deterministically`）、`ResourceIssue`（warning/error 构造器 + `for_resource`）、`ResourceDiagnosticStatus` / `ResourceDiagnosticEntry` |
 | `src/resources/io.rs` | ~260 | 安全 IO：`join_under_root`、crate-private `canonical_within`（两侧先 `pawork_policy::canonicalize_platform`，再 `path_within_root`）、`read_utf8_bounded` / `read_utf8_bounded_within`、`workspace_relative_key`（`relative_to_root`）、`is_safe_relative_reference`。不再自写 canonicalize / within-root。 |
 | `src/resources/agents.rs` | ~490 | `AGENTS.md` 层级发现：root → `current_path` 每层目录收集，按深度排序；`AgentsDocument`（`relative_path()`）/ `AgentsHierarchy`（`from_documents` / `documents` / `len` / `nearest`）；symlink 逃逸与损坏文件隔离为诊断 |
-| `src/resources/skills.rs` | ~1560 | Skill 装载：`manifest.toml` + 同目录 `SKILL.md` body；`SkillManifest`（id / version / description / parameters / dependencies / conflicts / scripts / assets / permissions）；`SkillParameter` / `SkillScript` / `SkillDependency`；激活集解析：BFS 依赖遍历、semver 兼容检查、循环与显式冲突检测；`LoadedSkill` / `SkillResolution` |
-| `src/resources/profiles.rs` | ~1970 | Agent Profile 装载：v1（instructions + 默认 provider/model）与 v2（`pawork_domain::AgentProfileV2` 全维度）双 schema、v1 自动迁 v2、同名冲突与明文 Secret 检测、tool 规则一致性校验、`memory_available=false` 时显式标 `Unavailable`；`resolve_profile_references` 在 bundle 内解析 profile→skill 引用（`agent_profile_ref_id_invalid` / `ref_version_invalid` / `ref_duplicate` 三类诊断）；`AgentProfile` / `LoadedAgentProfileV2` / `InstructionLayer` / `ResolvedInstructions::ordered_layers` |
-| `src/resources/loader.rs` | ~630 | `ResourceLoader::load` 聚合入口与 `workspace_resource_dir` 校验；`ResourceInstructionKind` 八类注入指令及 `priority()`；`ResourceInstruction`（中性 DTO，`byte_len()` 供 context 预算）；`ResourceBundle` |
+| `src/resources/skills.rs` | ~1560 | Skill 装载：`manifest.toml` + 同目录 `SKILL.md` body；`SkillManifest`（id / version / description / parameters / dependencies / conflicts / scripts / assets / permissions）；`SkillParameter` / `SkillScript` / `SkillDependency`；激活集解析：BFS 依赖遍历、semver 兼容检查、循环与显式冲突检测；`LoadedSkill` / `SkillResolution`。运行时只把 `SKILL.md` 正文注入指令 |
+| `src/resources/profiles.rs` | ~1900 | Agent Profile 装载：磁盘 v1（instructions + 默认 provider/model）自动迁 v2（`pawork_domain::AgentProfileV2`）、同名冲突与明文 Secret 检测、tool 规则一致性校验；`enabled = true` 且文件未自标不可用的 memory 一律标 `Unavailable`；`resolve_profile_references` 在 bundle 内解析 profile→skill 引用（`agent_profile_ref_id_invalid` / `ref_version_invalid` / `ref_duplicate` 三类诊断）。`LoadedAgentProfileV2` / `InstructionLayer` / `ResolvedInstructions` 为 `pub(crate)`，供注入与测试断言；无对外 v1 视图 |
+| `src/resources/loader.rs` | ~580 | `ResourceLoader::load` 聚合入口与 `workspace_resource_dir` 校验；`ResourceInstructionKind` 八类注入指令及 `priority()`；`ResourceInstruction` 中性 DTO；`ResourceBundle`（agents / skills / instructions / diagnostics） |
 | `src/resources/recording.rs` | ~105 | `write_skill_recording` 技能录制安全写入（详见 §3「技能录制写入」） |
 
 **import/（14 文件）**
@@ -62,7 +63,7 @@
 | `src/import/limits.rs` | ~30 | `CompatLimits` 硬上限：`max_file_bytes`（1 MiB）/ `max_files_per_kind`（256）/ `max_total_files`（2048）/ `max_scan_depth`（32）/ `max_dir_entries`（4096） |
 | `src/import/error.rs` | ~40 | `CompatError`（IO 带路径 / Invalid / UnsafeTarget 等硬错误；与条目级 `CompatIssue` 明确区分） |
 | `src/import/detect.rs` | ~590 | 只读探测：静态候选清单 + glob（`CLAUDE.md`、`.claude/settings.json`、`.claude/skills/*/SKILL.md`、`.codex/config.toml`、`.codex/agents.json`、`.cursor/rules/*.mdc`、`.cursor/mcp.json`、`.grok/config.toml`、`.pi/settings.json`、`.mcp.json`…）+ `AGENTS.md` 层级扫描；限额截断记 `CompatIssue`；产出 `DetectedFile{kind, tier, relative_path, sources}` |
-| `src/import/io.rs` | ~380 | 导入专用安全 IO：`read_utf8_bounded`（no-follow symlink 检查 + 越界拒绝 + 大小上限）、`atomic_write`（tmp + rename，目标 symlink 拒绝）、`is_symlink`、`fnv64` |
+| `src/import/io.rs` | ~360 | 导入专用安全 IO：`read_utf8_bounded`（no-follow symlink 检查 + 越界拒绝 + 大小上限）、`atomic_write`（共用 `fs::atomic_write_bytes` 的临时文件创建 / 写入 / fsync / 清理，写前与 rename 前各拒绝一次目标 symlink，错误仍映射 `CompatError`）、`is_symlink`、`fnv64` |
 | `src/import/frontmatter.rs` | ~140 | 极简 YAML frontmatter 解析：只取顶层标量键值对，复杂键（嵌套 / 列表）记入 `complex_keys` 供诊断，绝不求值 |
 | `src/import/parse.rs` | ~1390 | 八类文件 → canonical 条目（详见 §4.5）：instructions / SKILL.md / agent markdown / agents.json / mcp json / Codex-Grok config.toml / Claude settings.json（permissions + hooks）/ Pi settings.json；`${VAR}` 与 `$VAR` 插值 → `SecretRef`，字面量 Secret 丢弃只留 `PendingCredential` 占位；hook 事件名 snake_case 化后映射 17 种 `TriggerPoint`，不可映射标 Unsupported |
 | `src/import/map.rs` | ~70 | 同 `(category, id)` 冲突裁决：`ConfigTier.priority()` 高者胜 → 平手比 `ExternalSource.rank()` → 再平手比相对路径字典序；败者标 `Conflict`、payload 清空、挂 `conflict_loser` issue |
@@ -108,12 +109,12 @@ ADR-053（OPT-1）：schema 新增 `approval_mode: Option<pawork_policy::Approva
 - `PaworkConfig` 字段语义：`default_provider` / `default_model`（缺省选择）、`web_search`（SEARCH-1：Provider 服务端搜索开关，仅 Builtin/Global 层可设，缺省 false；消费方为 `pawork-app` RunService，未声明能力的模型 fail-closed）、`profile`（激活 profile 名）、`trust_workspaces`（安全开关，仅 Builtin/Global 可设）、`proxy_url`（全局出站代理，仅 Builtin/Global 可设；GUI Network 与手工编辑共用 workspace 外的 Global `config.toml`）、`providers: Vec<ProviderConfig>`（id / base_url / default / `use_proxy`：`None`/`true` 跟随全局代理，显式 `false` 绕过 / `disabled_models`：ADR-055 模型禁用 denylist）、`profiles: Vec<ProfileConfig>`（name + `ProfileOverrides`）、`extra`（未知键透传，供上层扩展段消费）。
 - `ConfigWarning` 十种：`PermissionsIgnored` / `TrustWorkspacesIgnored` / `ProxyUrlIgnored` / `ProviderBaseUrlIgnored` / `ProviderDisabledModelsIgnored` / `GlobalRoleModelIgnored` / `WebSearchIgnored` / `McpTrustedIgnored` / `McpAutoStartIgnored` / `TerminalIgnored`，均带 tier + source_key + path。
 - 错误语义：TOML 语法错、schema 不匹配、IO 错均带文件路径；缺失文件不致命（不加该来源）。
-- 写盘入口：`write_default_model_pair(path, provider_id, model_id)`（SET-2）只改目标文件（宿主传 Global 层路径）的 `default_provider`/`default_model` 两键；`write_naming_model_pair(path, provider_id, model_id)`（ADR-054 D4）同形写 `naming_provider`/`naming_model` 两键；`write_proxy_url(path, proxy_url: Option<&str>)`（SET-6a / ADR-047 D2）`Some` 覆盖 `proxy_url`、`None` 移除该键；`write_mcp_server_remove(path, name)`（SET-6c / ADR-049 D2）只移除 Global 层 `mcp.servers.<name>` 键，键不存在返回 `Ok(false)` 不写盘。各入口均保留其余未知字段；缺失文件视为空文档；同目录 tmp + rename 原子写回，序列化失败返回 `ConfigError::Write`（带路径）；同进程内各入口共用 `CONFIG_WRITE_LOCK` 包住 read-modify-write，避免交错写丢更新。`write_provider_use_proxy(path, provider_id, use_proxy)`（ADR-052 SET-6h）按 id 定位 `[[providers]]` 数组条目写入 `use_proxy`（条目缺失时新增仅含 `id` + `use_proxy` 的最小条目；`providers` 非数组返回错误），其余条目与未知字段原样保留。`write_model_pair(path, provider_key, model_key, pair)`（ADR-055 D5）`Some` 写两键、`None` 移除已存在的键（两键均缺时不写盘）；`write_provider_disabled_models(path, provider_id, disabled)`（ADR-055 D1）同 id 条目设置/空切片移除 `disabled_models` 键，无条目非空则追加 `id` + `disabled_models` 最小条目、无条目且空不写盘。`write_provider_model_preferences(path, provider_id, disabled, clear_pairs)` 同一次 RMW 更新禁用集并移除指定角色键对；校验/写盘失败全部保旧，原 `write_provider_disabled_models` 委托该入口（不清角色）。六层合并语义不变；资源录制另使用下述显式新建入口。
+- 写盘入口：`write_default_model_pair(path, provider_id, model_id)`（SET-2）只改目标文件（宿主传 Global 层路径）的 `default_provider`/`default_model` 两键；`write_naming_model_pair(path, provider_id, model_id)`（ADR-054 D4）同形写 `naming_provider`/`naming_model` 两键；`write_proxy_url(path, proxy_url: Option<&str>)`（SET-6a / ADR-047 D2）`Some` 覆盖 `proxy_url`、`None` 移除该键；`write_mcp_server_remove(path, name)`（SET-6c / ADR-049 D2）只移除 Global 层 `mcp.servers.<name>` 键，键不存在返回 `Ok(false)` 不写盘。各入口均保留其余未知字段；缺失文件视为空文档；经 `fs::atomic_write_bytes` 同目录 `create_new` + fsync + rename 原子写回（不拒绝目标路径本身是 symlink），序列化失败返回 `ConfigError::Write`（带路径）；同进程内各入口共用 `CONFIG_WRITE_LOCK` 包住 read-modify-write，避免交错写丢更新。`write_provider_use_proxy(path, provider_id, use_proxy)`（ADR-052 SET-6h）按 id 定位 `[[providers]]` 数组条目写入 `use_proxy`（条目缺失时新增仅含 `id` + `use_proxy` 的最小条目；`providers` 非数组返回错误），其余条目与未知字段原样保留。`write_model_pair(path, provider_key, model_key, pair)`（ADR-055 D5）`Some` 写两键、`None` 移除已存在的键（两键均缺时不写盘）；`write_provider_disabled_models(path, provider_id, disabled)`（ADR-055 D1）同 id 条目设置/空切片移除 `disabled_models` 键，无条目非空则追加 `id` + `disabled_models` 最小条目、无条目且空不写盘。`write_provider_model_preferences(path, provider_id, disabled, clear_pairs)` 同一次 RMW 更新禁用集并移除指定角色键对；校验/写盘失败全部保旧，原 `write_provider_disabled_models` 委托该入口（不清角色）。六层合并语义不变；资源录制另使用下述显式新建入口。
 - `paths` 函数无 IO 副作用（`locate_workspace_config` 除外，只读存在性检查）；`config_dir_for_app` 用 `directories` 三元组 `dev/pawork/pawork`。
 
 **resources**
 - `ResourceLoader::new(WorkspaceService, ResourceLoaderOptions)`；`load(&ResourceRequest) -> Result<ResourceBundle, ResourceLoadError>`（同步、只读）。
-- `ResourceLoaderOptions`：`global_resource_dir`（宿主解析，**不得来自模型输入**）、`workspace_resource_dir`（默认 `.pawork`，拒绝绝对路径与 `..`）、`limits`、`memory_available`（默认 false）。
+- `ResourceLoaderOptions`：`global_resource_dir`（宿主解析，**不得来自模型输入**）、`workspace_resource_dir`（默认 `.pawork`，拒绝绝对路径与 `..`）、`limits`。
 - `ResourceLimits` 默认：单文件 1 MiB、每类 1024 个；不声明尚无执行路径的模板预算。
 - `ResourceRequest.current_path` 是 `WorkspaceRelativePath`——构造与 serde 反序列化两个边界都校验；`selection` 控制 skill 激活/禁用集、profile 选择与 session/run 附加指令。
 - `ResourceBundle` 字段：
@@ -122,9 +123,6 @@ ADR-053（OPT-1）：schema 新增 `approval_mode: Option<pawork_policy::Approva
   | --- | --- | --- |
   | `agents` | `AgentsHierarchy` | root→current_path 的 `AGENTS.md` 文档序列，`nearest()` 取最深 |
   | `skills` | `SkillResolution` | 激活 skill 清单 + 依赖解析诊断 |
-  | `profiles` | `Vec<AgentProfile>` | v1 兼容视图（name / instructions / 默认 provider-model） |
-  | `profiles_v2` | `Vec<LoadedAgentProfileV2>` | 全维度档案（校验与 memory 标注后） |
-  | `resolved_instructions` | `ResolvedInstructions` | 分层指令视图，`ordered_layers()` 输出 |
   | `instructions` | `Vec<ResourceInstruction>` | 按 kind 优先级排序的最终注入序列 |
   | `diagnostics` | `ResourceDiagnostics` | 全部资源诊断，确定性排序 |
 
@@ -172,8 +170,8 @@ ADR-053（OPT-1）：schema 新增 `approval_mode: Option<pawork_policy::Approva
    | `ActiveSkill` | 8 | 激活 skill 的 `SKILL.md` body |
    | `SessionInstructions` | 13 | `selection.session_instructions` |
    | `RunInstructions` | 14 | `selection.run_instructions` |
-4. **skills 激活与依赖解析**：发现所有 `manifest.toml`（含 `SKILL.md` body）→ 以 `selection.active_skills` 为种子 BFS 遍历 `dependencies`（semver 兼容检查，不满足记诊断并跳过）→ `disabled_skills` 强制排除 → 检测循环依赖与 manifest 声明的 `conflicts` → 产出 `SkillResolution`（激活清单 + 诊断）。scripts / assets 路径必须是安全相对引用（`is_safe_relative_reference`）。
-5. **profiles 装载与 v1→v2 迁移**：全局目录与 workspace 资源目录发现 profile 文件 → 按 schema 判定 v1（instructions + 默认 provider/model）或 v2（`AgentProfileV2` 全维度）→ v1 自动迁移为 v2（v1 视图仍保留在 `profiles` 字段）→ 校验：同名冲突、明文 Secret 检测（含 token 形字面量）、tool 规则一致性（allowed 与 denied 交集）、`memory_available=false` 时把声明 memory 的 profile 标 `Unavailable` 并 warning → `resolve_profile_references` 对 profile 声明的 skill 引用做 id / semver / 重复三类校验并挂诊断。
+4. **skills 激活与依赖解析**：发现所有 `manifest.toml`（含 `SKILL.md` body）→ 以 `selection.active_skills` 为种子 BFS 遍历 `dependencies`（semver 兼容检查，不满足记诊断并跳过）→ `disabled_skills` 强制排除 → 检测循环依赖与 manifest 声明的 `conflicts` → 产出 `SkillResolution`（激活清单 + 诊断）。运行时只注入 `SKILL.md` 正文；`parameters` / `scripts` / `permissions` 不进入工具策略。`scripts` / `assets` 路径必须通过 `is_safe_relative_reference`，失败则整份 skill 不注入（fail-closed）。compat 导入会把 Claude `allowed-tools` 写入 `permissions` 并落到 manifest，但不执行。
+5. **profiles 装载与 v1→v2 迁移**：全局目录与 workspace 资源目录发现 profile 文件 → 按 schema 判定 v1（instructions + 默认 provider/model）或 v2（`AgentProfileV2` 全维度）→ v1 自动迁移为 v2 → 校验：同名冲突、明文 Secret 检测（含 token 形字面量）、tool 规则一致性（allowed 与 denied 交集）、`memory.enabled = true` 且文件未自标不可用时标 `Unavailable` 并 warning → 按 `selection.profile` 注入 prompt（system 与 instructions 拼接）→ `resolve_profile_references` 对 profile 声明的 skill 引用做 id / semver / 重复三类校验并挂诊断。磁盘 TOML 仍是 `deny_unknown_fields`。profile 明文扫描阈值与 storage `find_secret` 不同（本包 `sk-` 尾长 ≥ 8，另认 PEM `PRIVATE KEY` 与 `eyJ` JWT 形），两套扫描器服务不同拒绝面，不应合并。
 6. **session_scan 发现规则**：根目录 Claude=`~/.claude/projects`、Codex=`~/.codex/sessions`（`from_home` 可注入测试根）；递归受 `max_scan_depth` / `max_total_files` / `max_dir_entries` 限制；symlink 一律跳过；Claude 匹配 `*.jsonl` 但**排除 `agent-*.jsonl`**（subagent sidecar，避免把子代理会话当独立会话导入）；Codex 匹配 `rollout-*.jsonl`。只返回路径与元数据，不读内容。
 7. **import scan → dry-run → export_plan**：
    1. `detect_files` 对 workspace 根与显式 `GlobalSource`（按 source→root 排序保证确定性）做静态候选 + glob 探测，限额截断记 `CompatIssue`；
@@ -209,7 +207,8 @@ ADR-053（OPT-1）：schema 新增 `approval_mode: Option<pawork_policy::Approva
 - **路径输入契约**：一切工作区文件访问基于 `workspace_id + root_index + relative_path`；绝对路径、盘符、UNC、保留设备名、`.git` 内部、symlink 逃逸、非普通文件一律拒绝。`WorkspaceRelativePath` 在 serde 反序列化边界即拒绝 `..` 与绝对路径（协议入口防线）。
 - **resources 确定性与隔离**：同输入必同输出（条目与诊断确定性排序）；单资源损坏降级为诊断不崩批；`global_resource_dir` 只能由宿主注入。
 - **resources 序列化消费面**：`ResourceRequest` / `ResourceSelection` 是宿主内部加载输入，不进入 `PaworkConfig`、数据库、事件或生成的 GUI / core-api / headless schema。`ResourceKind` 与诊断的 serde 不构成独立磁盘 / wire 格式；`ResourceInstructionKind` 另被 `CompatPayload::Instructions` 用于 `compat-import.json`，现行扫描只产出 `user_global_instructions` / `workspace_instructions`。B4 收窄未激活模板 / LSP / hook 预留，不改这些已有字符串、其它注入优先级或 compatibility 计划版本；裁决见 [B4](../../plan/b4-prompt-template.md)。
-- **memory 不虚假可用**：`memory_available=false` 时 profile 声明的 memory 显式标 `Unavailable` 并 warning，绝不静默假装可用。
+- **memory 不虚假可用**：profile 声明 `memory.enabled = true` 且文件未自标 `unavailable` 时，一律显式标 `Unavailable` 并 warning，绝不静默假装可用。
+- **skill 运行时只注入正文**：`SKILL.md` 进入 `ResourceInstruction`；`parameters` / `scripts` / `permissions` 不进入工具策略。`scripts` / `assets` 的路径校验是 fail-closed 安全拒绝。compat 导入写入的 `permissions`（含 Claude `allowed-tools`）只留在 manifest 文件里，加载后不执行。
 - **import 安全边界**（冻结）：只读扫描；绝不执行任何外部内容；明文 Secret 一律丢弃（计划序列化全文不得出现 Secret 字面量，定向回归断言）；导入 hook 恒 `enabled=false` + `requires_review=true`；MCP 条目恒 `trusted=false` + `auto_start=false` + `requires_review`；`bypassPermissions` / approval `never` 拒绝导入（Unsupported）；`on-failure` / `acceptEdits` 降级映射为 Ask 并告警，绝不映射为 Allow。
 - **MCP 导入前缀副本（B8，2026-10-08）**：`MCP_SECRET_SERVICE_PREFIX` 只构造并筛选导入计划里的 service，形状是 `pawork.mcp.<server>`。它不解析 Secret，也不代替 `is_mcp_secret_service`。值必须与 auth locator 的 `pawork.mcp.` 逐字节相同，含末尾点；没有末尾点的 `pawork.mcp` 不属于该命名空间。不改依赖，不改导入 JSON 字节。详见 [B8](../../plan/b8-mcp-secret-prefix.md)。
 - **export_plan 幂等**：相同输入（含 `select` 子集）指纹相同→`Noop`；指纹命中但磁盘内容不符仍重写；输出目录 / 目标文件为 symlink 一律 `UnsafeTarget` 拒绝；只用 tmp + rename 原子写。

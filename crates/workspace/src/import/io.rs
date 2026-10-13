@@ -314,66 +314,53 @@ pub(crate) fn is_symlink(path: &Path) -> bool {
         .is_some_and(|meta| meta.file_type().is_symlink())
 }
 
-/// 原子写：先写同目录临时文件再 rename，期间拒绝目标被替换为 symlink。
-/// 临时文件名带进程 id + 计数 + 随机后缀，避免并发 apply 互相覆盖。
+/// 原子写：先写同目录临时文件再 rename，写前与 rename 前各拒绝一次目标 symlink。
 pub(crate) fn atomic_write(target: &Path, data: &[u8]) -> Result<(), CompatError> {
-    use std::io::Write;
     if is_symlink(target) {
         return Err(CompatError::UnsafeTarget(rel_key(target)));
     }
-    let directory = target
-        .parent()
-        .ok_or_else(|| CompatError::UnsafeTarget(rel_key(target)))?;
-    let stem = target
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "compat".to_string());
-    let tmp = unique_tmp_path(directory, &stem);
-    {
-        let mut handle = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)
-            .map_err(|error| CompatError::io(&tmp, error))?;
-        handle
-            .write_all(data)
-            .map_err(|error| CompatError::io(&tmp, error))?;
-        handle
-            .sync_all()
-            .map_err(|error| CompatError::io(&tmp, error))?;
+    if target.parent().is_none() {
+        return Err(CompatError::UnsafeTarget(rel_key(target)));
     }
+    let tmp = crate::fs::stage_exclusive_temp(target, data)
+        .map_err(|error| CompatError::io(target, error))?;
     // rename 前再次确认目标未被替换为 symlink（缩小窗口）。
     if is_symlink(target) {
-        let _ = std::fs::remove_file(&tmp);
+        crate::fs::discard_exclusive_temp(&tmp);
         return Err(CompatError::UnsafeTarget(rel_key(target)));
     }
-    match std::fs::rename(&tmp, target) {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            let _ = std::fs::remove_file(&tmp);
-            Err(CompatError::io(target, error))
-        }
-    }
+    crate::fs::commit_exclusive_temp(&tmp, target).map_err(|error| CompatError::io(target, error))
 }
 
-static ATOMIC_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn unique_tmp_path(directory: &Path, stem: &str) -> PathBuf {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.subsec_nanos() as u64)
-        .unwrap_or(0);
-    loop {
-        let attempt = ATOMIC_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let candidate = directory.join(format!(
-            ".{stem}.{}.{:x}{:x}.tmp",
-            std::process::id(),
-            attempt,
-            nanos
-        ));
-        if !candidate.exists() {
-            return candidate;
-        }
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_rejects_symlink_target_without_leaving_a_temp() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let real = dir.path().join("real.txt");
+        std::fs::write(&real, b"keep").expect("seed");
+        let link = dir.path().join("link.txt");
+        symlink(&real, &link).expect("symlink");
+
+        let error = atomic_write(&link, b"overwrite").expect_err("symlink target");
+        assert!(matches!(error, CompatError::UnsafeTarget(_)));
+        assert_eq!(std::fs::read(&real).expect("real"), b"keep");
+        let temps: Vec<_> = std::fs::read_dir(dir.path())
+            .expect("read dir")
+            .map(|entry| {
+                entry
+                    .expect("entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .filter(|name| name.ends_with(".tmp"))
+            .collect();
+        assert!(temps.is_empty(), "{temps:?}");
     }
 }

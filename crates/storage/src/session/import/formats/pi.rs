@@ -101,7 +101,7 @@ impl PiImportReport {
 /// - 含 `compaction` / `summary` 视为 compaction；
 /// - 含 `branch` 视为 branch；
 /// - 其余归为 unknown，并保留原始字段。
-pub fn parse_pi_line(raw: &str) -> Option<PiParsedEntry> {
+pub(crate) fn parse_pi_line(raw: &str) -> Option<PiParsedEntry> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return None;

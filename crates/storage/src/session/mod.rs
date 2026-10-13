@@ -33,9 +33,9 @@ pub use command_ledger::{
 pub use compaction::*;
 pub use event_store::{AppendReceipt, DEFAULT_BRANCH_ID};
 pub use import::{
-    parse_pi_line, CompatImportHistoryEntry, CompatImportHistoryPage, CompatImportReport,
-    ExportedBranch, ExportedEvent, ExternalRecord, ExternalSource, ParsedExternalSession,
-    PiEntryKind, PiImportReport, PiParsedEntry, PiPayload, SessionExport, EXPORT_SCHEMA_VERSION,
+    CompatImportHistoryEntry, CompatImportHistoryPage, CompatImportReport, ExportedBranch,
+    ExportedEvent, ExternalRecord, ExternalSource, ParsedExternalSession, PiEntryKind,
+    PiImportReport, PiParsedEntry, PiPayload, SessionExport, EXPORT_SCHEMA_VERSION,
 };
 pub use migration::CURRENT_SCHEMA_VERSION;
 pub use projection::{

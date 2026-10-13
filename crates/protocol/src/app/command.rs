@@ -399,10 +399,8 @@ pub enum AppCommand {
         model: Option<ModelId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         provider: Option<ProviderId>,
-        /// P17-5：可选 Agent Profile v2 名称。命中生产 `ResourceBundle.profiles_v2`
-        /// 时其不可变配置（prompt / canonical effort / tools / max_turns /
-        /// background / isolation / memory）成为该 run 的权威来源；未知 /
-        /// 跨 workspace / 引用不可用为结构化 fail-closed RunStart 错误。
+        /// 冻结 wire 字段：可选 Agent Profile 名称。当前 GUI Host handler 丢弃它；
+        /// profile 选择走 workspace 资源加载。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         profile: Option<String>,
         /// ADR-063：可选 canonical reasoning effort 名（low/medium/high/

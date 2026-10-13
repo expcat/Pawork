@@ -17,10 +17,10 @@ pub mod protected;
 pub use pawork_domain::{ProtectedBlobRef, ProviderId, SessionId};
 #[cfg(feature = "protected")]
 pub use protected::{
-    open_pwb1_envelope, parse_pwb1_envelope, pwb1_aad, AeadKey, BlobScope, InMemoryKeyResolver,
-    KeyResolutionError, KeyVersion, ProtectedBlob, ProtectedBlobError, ProtectedBlobMetadata,
-    ProtectedBlobStore, ProtectedKeyResolver, PWB1_ALGORITHM, PWB1_HEADER_LEN, PWB1_MAGIC,
-    PWB1_NONCE_LEN, PWB1_VERSION,
+    open_pwb1_envelope, parse_pwb1_envelope, pwb1_aad, AeadKey, BlobScope, KeyResolutionError,
+    KeyVersion, ProtectedBlob, ProtectedBlobError, ProtectedBlobMetadata, ProtectedBlobStore,
+    ProtectedKeyResolver, PWB1_ALGORITHM, PWB1_HEADER_LEN, PWB1_MAGIC, PWB1_NONCE_LEN,
+    PWB1_VERSION,
 };
 
 #[cfg(feature = "checkpoint")]

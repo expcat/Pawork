@@ -212,7 +212,7 @@ fn secret_signature_rank(label: &str) -> usize {
 // =========================================================================
 
 /// 按来源派发解析。
-pub fn parse_external(
+pub(crate) fn parse_external(
     source: ExternalSource,
     content: &str,
 ) -> Result<ParsedExternalSession, SessionStoreError> {
@@ -261,7 +261,7 @@ const CONV_KNOWN: &[&str] = &[
 
 /// Claude 解析:优先按 claude.ai 导出 JSON(顶层 `chat_messages`/`messages` 数组),
 /// 否则回落到 Claude Code 本地 JSONL 逐行解析。
-pub fn parse_claude(content: &str) -> Result<ParsedExternalSession, SessionStoreError> {
+pub(crate) fn parse_claude(content: &str) -> Result<ParsedExternalSession, SessionStoreError> {
     if let Ok(value) = serde_json::from_str::<Value>(content) {
         if let Some(obj) = value.as_object() {
             let is_export = ["chat_messages", "messages"].iter().any(|key| {
@@ -399,13 +399,7 @@ impl ClaudeLocalJsonlParser {
                     *skipped.entry("skipped_sidechain".into()).or_default() += 1;
                     return;
                 }
-                claude_local_message_records(
-                    obj,
-                    line_type,
-                    idx,
-                    &mut parsed.records,
-                    skipped,
-                );
+                claude_local_message_records(obj, line_type, idx, &mut parsed.records, skipped);
             }
             "ai-title" | "custom-title" => {
                 // 真实本地格式的标题键是 aiTitle / customTitle(2026-08-23 本机
@@ -455,7 +449,10 @@ impl ClaudeLocalJsonlParser {
         if self.parsed.records.is_empty() && self.unparseable_lines > 0 {
             return Err(unparseable_msg(
                 "claude",
-                &format!("no records parsed; {} unparseable line(s)", self.unparseable_lines),
+                &format!(
+                    "no records parsed; {} unparseable line(s)",
+                    self.unparseable_lines
+                ),
             ));
         }
         Ok(self.parsed)
@@ -602,12 +599,12 @@ fn claude_tool_result_text(part_obj: &serde_json::Map<String, Value>) -> String 
 }
 
 /// Grok 导出 JSON 解析。
-pub fn parse_grok(content: &str) -> Result<ParsedExternalSession, SessionStoreError> {
+pub(crate) fn parse_grok(content: &str) -> Result<ParsedExternalSession, SessionStoreError> {
     parse_json_conversation(content, ExternalSource::Grok, "grok")
 }
 
 /// Cursor 导出 JSON 解析。
-pub fn parse_cursor(content: &str) -> Result<ParsedExternalSession, SessionStoreError> {
+pub(crate) fn parse_cursor(content: &str) -> Result<ParsedExternalSession, SessionStoreError> {
     parse_json_conversation(content, ExternalSource::Cursor, "cursor")
 }
 
@@ -663,7 +660,7 @@ fn parse_json_conversation(
 
 /// Codex rollout 解析:首非空行同时含 `timestamp`+`type`+`payload` 时走信封模式,
 /// 否则维持旧的平铺 typed entry JSONL 路径(逐字节不变)。
-pub fn parse_codex(content: &str) -> Result<ParsedExternalSession, SessionStoreError> {
+pub(crate) fn parse_codex(content: &str) -> Result<ParsedExternalSession, SessionStoreError> {
     if is_codex_envelope(content) {
         return parse_codex_envelope(content);
     }
@@ -726,7 +723,10 @@ impl CodexFlatParser {
 
     /// 处理一行（含行尾符）。行内语义与整串循环逐行完全一致。
     pub(crate) fn feed_line(&mut self, idx: usize, raw: &str) {
-        let Self { parsed, original_id } = self;
+        let Self {
+            parsed,
+            original_id,
+        } = self;
         let trimmed = raw.trim();
         if trimmed.is_empty() {
             return;
@@ -1361,7 +1361,7 @@ fn unparseable_msg(source: &'static str, detail: &str) -> SessionStoreError {
 ///
 /// 这样 identity 不随内容变化漂移（修正了把 content 纳入 SessionId 导致去重失效的问题），
 /// 同时仍能识别「无 original_id 的相同内容」为同一会话。
-pub fn derive_compat_session_id(
+pub(crate) fn derive_compat_session_id(
     source: ExternalSource,
     original_id: Option<&str>,
     content: &str,
@@ -1388,7 +1388,7 @@ pub(crate) fn derive_compat_session_id_from_effective(
 }
 
 /// 导入 identity 的 effective key：有 `original_id` 用之，否则用 content fingerprint。
-pub fn effective_identity(original_id: Option<&str>, content: &str) -> String {
+pub(crate) fn effective_identity(original_id: Option<&str>, content: &str) -> String {
     effective_identity_with_fingerprint(original_id, &content_fingerprint(content))
 }
 
@@ -1405,7 +1405,7 @@ pub(crate) fn effective_identity_with_fingerprint(
 }
 
 /// content 的 blake3 指纹（64 hex 字符）。
-pub fn content_fingerprint(content: &str) -> String {
+pub(crate) fn content_fingerprint(content: &str) -> String {
     blake3::hash(content.as_bytes()).to_hex().to_string()
 }
 
@@ -1699,7 +1699,7 @@ fn envelope(
 /// `ToolExecutionCompleted` 引用的 `tool_call_id` 在其之前出现过
 /// `ToolCallStarted`，以及 `parent_event_id` 在本批次内可解析。它不调用 Run 状态机
 /// 或任何 Phase 16 reducer——「状态机可推进」由持久化后 projection 重建承担。
-pub fn validate_structure(events: &[AgentEventEnvelope]) -> Result<(), SessionStoreError> {
+pub(crate) fn validate_structure(events: &[AgentEventEnvelope]) -> Result<(), SessionStoreError> {
     if events.is_empty() {
         return Err(SessionStoreError::CompatValidationFailed(
             "empty batch".into(),

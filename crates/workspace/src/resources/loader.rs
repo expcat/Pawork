@@ -11,10 +11,9 @@ use super::{
     agents::load_agents_hierarchy,
     io::{join_under_root, read_utf8_bounded_within},
     profiles::{load_profiles, resolve_profile_references, ProfileResolution},
-    AgentProfile, AgentsHierarchy, LoadedAgentProfileV2, ResolvedInstructions,
-    ResourceDiagnosticEntry, ResourceDiagnosticStatus, ResourceDiagnostics, ResourceIssue,
-    ResourceKind, ResourceLimits, ResourceLoadError, ResourceLoaderOptions, ResourceOrigin,
-    ResourceProvenance, ResourceRequest, SkillResolution,
+    AgentsHierarchy, ResourceDiagnosticEntry, ResourceDiagnosticStatus, ResourceDiagnostics,
+    ResourceIssue, ResourceKind, ResourceLimits, ResourceLoadError, ResourceLoaderOptions,
+    ResourceOrigin, ResourceProvenance, ResourceRequest, SkillResolution,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -54,24 +53,12 @@ pub struct ResourceInstruction {
     pub provenance: ResourceProvenance,
 }
 
-impl ResourceInstruction {
-    /// `content` 的字节长度，供主循环计入 context 预算。
-    pub fn byte_len(&self) -> usize {
-        self.content.len()
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResourceBundle {
     pub workspace_id: WorkspaceId,
     pub root_index: usize,
     pub agents: AgentsHierarchy,
     pub skills: SkillResolution,
-    /// v1 兼容视图（name/instructions/default provider-model）。
-    pub profiles: Vec<AgentProfile>,
-    /// Profile v2：全维度档案（加载校验后）。
-    pub profiles_v2: Vec<LoadedAgentProfileV2>,
-    pub resolved_instructions: ResolvedInstructions,
     pub instructions: Vec<ResourceInstruction>,
     pub diagnostics: ResourceDiagnostics,
 }
@@ -143,7 +130,6 @@ impl ResourceLoader {
             &self.options.workspace_resource_dir,
             &request.selection,
             limits,
-            self.options.memory_available,
         );
         resolve_profile_references(&mut profiles, &skills);
 
@@ -177,9 +163,6 @@ impl ResourceLoader {
             root_index: request.root_index,
             agents,
             skills,
-            profiles: profiles.profiles,
-            profiles_v2: profiles.profiles_v2,
-            resolved_instructions: profiles.instructions,
             instructions,
             diagnostics,
         })
@@ -478,18 +461,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["path agents 1", "path agents 2"]
         );
-        let summed: usize = bundle
-            .instructions
-            .iter()
-            .map(ResourceInstruction::byte_len)
-            .sum();
-        let expected: usize = bundle
-            .instructions
-            .iter()
-            .map(|instruction| instruction.content.len())
-            .sum();
-        assert_eq!(summed, expected);
-        assert!(summed > 0);
     }
 
     #[test]
@@ -574,7 +545,6 @@ mod tests {
         let serialized = serde_json::to_string(&bundle.diagnostics).expect("diagnostics");
         assert!(bundle.instructions.is_empty());
         assert!(bundle.skills.skills.is_empty());
-        assert!(bundle.profiles.is_empty());
         assert!(
             bundle
                 .diagnostics

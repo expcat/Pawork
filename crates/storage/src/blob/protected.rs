@@ -5,11 +5,13 @@
 //! version)` through AEAD AAD. The logical ref is stable across key rotation while
 //! the physical file is addressed by a digest of randomized ciphertext.
 
+#[cfg(test)]
+use std::{collections::HashMap, sync::RwLock};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     fmt, fs, io,
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -130,13 +132,15 @@ pub trait ProtectedKeyResolver: Send + Sync {
     ) -> Result<AeadKey, KeyResolutionError>;
 }
 
-/// Scope-aware in-memory resolver for tests and composition-layer development.
+/// Scope-aware in-memory resolver used by this crate's tests.
+#[cfg(test)]
 #[derive(Default)]
-pub struct InMemoryKeyResolver {
+pub(crate) struct InMemoryKeyResolver {
     keys: RwLock<HashMap<(BlobScope, KeyVersion), AeadKey>>,
     current: RwLock<HashMap<BlobScope, KeyVersion>>,
 }
 
+#[cfg(test)]
 impl InMemoryKeyResolver {
     pub fn new() -> Self {
         Self::default()
@@ -164,6 +168,7 @@ impl InMemoryKeyResolver {
     }
 }
 
+#[cfg(test)]
 impl fmt::Debug for InMemoryKeyResolver {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -173,6 +178,7 @@ impl fmt::Debug for InMemoryKeyResolver {
     }
 }
 
+#[cfg(test)]
 impl ProtectedKeyResolver for InMemoryKeyResolver {
     fn current_version(&self, scope: &BlobScope) -> Result<KeyVersion, KeyResolutionError> {
         self.current

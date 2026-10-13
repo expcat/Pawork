@@ -21,10 +21,8 @@ import type { JsonValue } from "./serde_json/JsonValue";
 
 export type AppCommand = { "method": "core_initialize" } | { "method": "workspace_file_write", "params": { workspace_id: WorkspaceId, path: WorkspaceRelativePath, content: string, expected_revision: string, } } | { "method": "workspace_add", "params": { root_path: string, } } | { "method": "workspace_trust", "params": { workspace_id: WorkspaceId, trusted: boolean, } } | { "method": "session_create", "params": { workspace_id?: WorkspaceId | null, title?: string | null, } } | { "method": "session_rename", "params": { session_id: SessionId, title: string, } } | { "method": "session_archive", "params": { session_id: SessionId, archived: boolean, } } | { "method": "session_open", "params": { session_id: SessionId, } } | { "method": "session_fork", "params": { session_id: SessionId, parent_event_id: EventId, } } | { "method": "session_compact", "params": { session_id: SessionId, } } | { "method": "session_client_context_replace", "params": { session_id: SessionId, snapshot: ClientContextSnapshot, } } | { "method": "run_start", "params": { session_id: SessionId, user_message: string, model?: ModelId | null, provider?: ProviderId | null,
 /**
- * P17-5：可选 Agent Profile v2 名称。命中生产 `ResourceBundle.profiles_v2`
- * 时其不可变配置（prompt / canonical effort / tools / max_turns /
- * background / isolation / memory）成为该 run 的权威来源；未知 /
- * 跨 workspace / 引用不可用为结构化 fail-closed RunStart 错误。
+ * 冻结 wire 字段：可选 Agent Profile 名称。当前 GUI Host handler 丢弃它；
+ * profile 选择走 workspace 资源加载。
  */
 profile?: string | null,
 /**
