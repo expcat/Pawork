@@ -128,7 +128,7 @@
 
 ## 6. 依赖关系
 
-- **依赖**：`pawork-domain`（仅 `ToolCapability`）；外部 `serde` / `serde_json` / `thiserror` / `dunce`。无 cargo feature，无平台差异依赖。dev 依赖 `tempfile`。
+- **依赖**：`pawork-domain`（仅 `ToolCapability`）；外部 `serde` / `serde_json` / `thiserror` / `dunce`。无 cargo feature，无平台差异依赖，无 dev-dependencies。
 - **被依赖**：`pawork-tools`（common 路径解析 + scheduler 闸门）、`pawork-workspace`、`pawork-orchestration`（merge 路径安全）、`pawork-app`、`pawork-exec`（ADR-052：sandbox / bwrap 复用 `canonicalize_platform` / `path_within_root`）。
 
 ## 7. 测试与验证资产

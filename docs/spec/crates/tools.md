@@ -13,7 +13,7 @@
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~30 | 门面：12 个模块声明 + re-export（十工具、`NoopToolEventSink`、registry/scheduler 全家）。 |
+| `src/lib.rs` | ~30 | 门面：12 个私有模块 + re-export（十工具、`NoopToolEventSink`、registry/scheduler 全家）。包外只使用这些 re-export；`common`（含 `atomic_write`）不在公开面。 |
 | `src/computer.rs` | — | `ComputerTool`：进程共享隔离桌面会话、按动作必填的 JSON 参数、跨 run 观察隔离、阻塞工作取消、JPEG → canonical Image、动作+新观测同调用闭环（CU-10，20s 预算覆盖输入+捕获串行）、Run 终态 `release_shared` 释放占用；复用 Policy / 审批。 |
 | `src/computer_native.rs` | — | `NativeComputerTool`：注入当前 Core 共享的 NativePerform，模型回传 Host 句柄 / bundle id；native 一次动作 + 新观测、终态与后置失败、JPEG → canonical Image，不持授权副本。 |
 | `src/common.rs` | ~230 | 公共层：`BuiltinToolError` 与 → `ToolError` 集中映射；取参 `require_str`/`opt_str`/`opt_u64`/`opt_bool`（opt_* 缺省或 `null` → None，类型不符报 InvalidField）；`workspace_roots`；`resolve_write_rel`（包 `resolve_workspace_path`）；`atomic_write`（同目录临时文件经 `create_new` **独占创建**——同名路径已存在（含预置 symlink）即换名重试、不跟随——+ rename，覆盖保留既有 Unix mode）。 |
@@ -77,6 +77,8 @@
 2026-10-09 新授权后，显式 CLI `--gui-host` 模式借用已有 Host，`computer_native bind/launch` 的目标等批由 app 在 scheduler 前完成，不计入原工具 25s 工作预算；request/discover 不等待。本工具仍只消费实际 grant，不自批、不续授权。历史 R4～R7 的未实施方案记录保留在任务文档，不代表本轮代码状态。
 
 ### 3.3 公共层（common）
+
+模块 `common` 为私有，下列符号不经门面 re-export，包外不可命名。`atomic_write` 仍是写三工具的落盘实现，并保留预置 symlink 回归。
 
 - `BuiltinToolError` 变体：`MissingField(&'static str)` / `InvalidField{field, detail}` / `Path(WorkspacePathError)` / `PolicyPath(PathSafetyError)` / `Io(std::io::Error)` / `Workspace(WorkspaceError)` / `Process(String)` / `Other(String)`。
 - 映射规则（`From<BuiltinToolError> for ToolError`）：
@@ -158,7 +160,7 @@ CU-21：`NativeComputerTool` 仍只接收选定的共享 `NativePerform`，不�
 ## 6. 依赖关系
 
 - **workspace 内**：`pawork-domain`（AgentTool/ToolResult/CancellationToken 等 canonical 类型）、`pawork-policy`（路径内核 + PolicyEngine）、`pawork-exec`（Process/Sandbox Runtime）、`pawork-workspace`（WorkspaceService、ResolvedConfig）、`pawork-computer-use`（隔离桌面与 native 共享 Host 操作）。
-- **外部**：`tokio`、`async-trait`、`serde/serde_json`、`thiserror`、`tracing`、`ignore`、`globset`、`regex`、`chardetng`、`encoding_rs`、`base64`（截图编码）。dev：`tempfile`、`proptest`、`image`（jpeg-only，CU-04 替身 JPEG 编解码验收）。无 cargo feature。
+- **外部**：`tokio`、`async-trait`、`serde/serde_json`、`thiserror`、`ignore`、`globset`、`regex`、`chardetng`、`encoding_rs`、`base64`（截图编码）。`encoding_rs` 是 `read_file` 对 `chardetng::EncodingDetector::guess` 返回值调用 `decode` 的方法解析依赖，必须作为直接依赖保留（源码未写出 crate 名；去掉直接依赖会 E0599）。dev：`tempfile`、`proptest`、`image`（jpeg-only，CU-04 替身 JPEG 编解码验收）。无 cargo feature。
 - **被依赖**：`pawork-mcp`（注册外部工具）、`pawork-app`（注册与调度装配；engine 经 LoopContext 回调消费，不依赖本包）。
 
 ## 7. 测试与验证资产

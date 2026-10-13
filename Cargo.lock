@@ -4605,7 +4605,6 @@ dependencies = [
  "pawork-exec",
  "proptest",
  "serde",
- "serde_json",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
@@ -4684,7 +4683,6 @@ dependencies = [
  "pawork-domain",
  "serde",
  "serde_json",
- "tempfile",
  "thiserror 2.0.20",
 ]
 
@@ -4781,7 +4779,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
- "tracing",
 ]
 
 [[package]]

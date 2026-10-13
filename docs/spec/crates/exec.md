@@ -13,7 +13,7 @@
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~50 | 门面：模块全部私有 + 全量 re-export（2026-10-04 收敛 `pub mod cancel` 双路径）；平台函数（Seatbelt profile / bwrap argv / Landlock 探测 / AppContainer 映射）以 `pub(crate) use` 引入（R0 D21 包外零消费，R7 再评估是否公开）。 |
+| `src/lib.rs` | ~30 | 门面：模块全部私有 + 公开类型 re-export（2026-10-04 收敛 `pub mod cancel` 双路径）。平台实现留在 `os`，不经门面转出。 |
 | `src/cancel.rs` | ~165（含测试） | 协作取消原语 `CancellationToken` / `CancellationFuture`：`Arc<{AtomicBool, Mutex<Vec<Waker>>}>`，克隆共享，`cancelled().await` 挂起至取消，`cancel()` 幂等唤醒全部 waiter。 |
 | `src/process.rs` | ~1110（逻辑 ~600 + 测试） | `CommandSpec`（含 Linux 专属 `landlock` 字段）/ `ProcessLimits` / `ProcessRuntime` / `ProcessEvent` / `ProcessOutput` / `ProcessInput` / `ProcessHandle` / `ProcessError` / `LinuxLandlockPolicy`（pub(crate)）；Unix `pre_exec`（setpgid + setrlimit + Linux PDEATHSIG + Landlock restrict）；Windows `CREATE_SUSPENDED` → Job attach → `NtResumeProcess`；监督循环与 `kill_child_tree`。 |
 | `src/sandbox.rs` | ~1210（逻辑 ~700 + 测试） | `SandboxPolicy` / `FilesystemPolicy` / `NetworkMode` / `ResourceLimits` / `IsolationLevel` / `SandboxBackend` trait / `SandboxProcessSpec` / `SandboxProcess` / `SandboxInteractiveProcess` / `SandboxError` / `ProbeOutcome` / `BackendSelection`；软沙箱 `NativeRestricted` 与全后端共用第一层 `apply_soft_restrictions`；`SandboxSelector`；`default_secret_paths` / `default_env_allowlist`。 |
@@ -21,7 +21,7 @@
 | `src/os/mod.rs` | ~8 | 平台模块声明（linux / macos / windows，cfg 门控）。 |
 | `src/os/linux.rs` | ~1150（逻辑 ~700 + 测试） | `generate_bwrap_argv`（系统 ro-bind + `--dev/--proc` + roots 绑定 + deny tmpfs 覆盖 + `--unshare-net/pid/ipc/uts` + `--die-with-parent --new-session`）；`BwrapBackend` / `LandlockBackend`；`compile_policy`（Landlock 读写集合编译）；`probe_landlock_support`（OnceLock 缓存，真实 ruleset 创建探测）；`prepare_linux_landlock` / `restrict_linux_landlock`（父进程编 ruleset FD、子进程 `pre_exec` 只做 no_new_privs + restrict_self）；`linux_process_tree`（`/proc` 快照冻结-倒序杀）。 |
 | `src/os/macos.rs` | ~995（逻辑 ~500 + 测试） | `SANDBOX_EXEC_PATH = /usr/bin/sandbox-exec`；`escape_seatbelt_string`；`generate_seatbelt_profile`（全平台编译便于单测）；`SandboxExecBackend`（OnceLock 缓存 smoke 探测：真实跑 `sandbox-exec -p <默认 profile> /usr/bin/true`；实现 `spawn` 与 `spawn_interactive`）；`macos_process_tree`（`proc_listpids`/`proc_pidinfo` 快照，语义与 Linux 版一致）。 |
-| `src/os/windows.rs` | ~585（逻辑 ~400 + 测试） | `job` 模块：Job Object 创建（`KILL_ON_JOB_CLOSE`）、`attach`/`attach_pid`、限额映射（active process / job memory / CPU time）、收养既有后代（Toolhelp32 快照，≤16 轮）；`resume`（`NtResumeProcess`）；`probe_appcontainer_job`（**冻结为 available:false**）与 `AppContainerCapability` / `AppContainerConfig` / `policy_to_appcontainer_config`（R7 预留，未启用）；`WindowsJobBackend`。 |
+| `src/os/windows.rs` | ~485（逻辑 ~400 + 测试） | `job` 模块：Job Object 创建（`KILL_ON_JOB_CLOSE`）、`attach`/`attach_pid`、限额映射（active process / job memory / CPU time）、收养既有后代（Toolhelp32 快照，≤16 轮）；`resume`（`NtResumeProcess`）；`probe_appcontainer_job`（**冻结为 available:false**；AppContainer 映射不在树内）；`WindowsJobBackend`。 |
 | `src/pty/mod.rs` | ~1480（逻辑 ~850 + 测试） | `PtyService` 与全部 PTY 公开类型；portable-pty 之上的会话管理：`PTY_SPAWN_LOCK` 短临界区 spawn、reader/waiter 专用 OS 线程、broadcast（容量 256）+ 丢弃计数、owner 归属校验、幂等清理（`CLEANUP_GRACE = 5s`）。 |
 | `src/pty/buffer.rs` | ~70（含测试） | PTY 内部 `RingBuffer`（`pub(super)`）：有界字节环，单调 `OutputCursor`（`start`/`end`）与完整快照；不对外暴露可传入游标的读取接口。 |
 
@@ -170,7 +170,7 @@
 | `tree.rs` | `attach_external_rejects_non_group_leader`（Unix）经真实普通子进程验证 `InvalidInput` 拒绝；组长 attach/terminate 继续由 process.rs 与 pty/mod.rs 的真实进程路径覆盖。 |
 | `os/linux.rs` | bwrap argv 生成（bind 顺序 / unshare / die-with-parent / deny tmpfs 覆盖）、Landlock 策略编译（读写集合、deny 重叠拒绝、executable 单文件授权）、探测降级 reason、进程树冻结-快照-倒序杀、setsid 逃逸捕获、start_time 防复用；Linux 上 `bwrap_allows_workspace_and_hides_unmounted_sibling` / `landlock_allows_workspace_and_denies_sibling_file` 走真实 spawn，缺 bwrap/userns 或 Landlock ABI 时按平台前提失败，不 skip。 |
 | `os/macos.rs` | **`profile_full_output_golden`** 及结构断言（`profile_denies_network_when_enforce` / `profile_allows_network_when_hint` / `profile_emits_deny_for_secret_paths` / `profile_emits_deny_for_default_secret_paths` / `profile_emits_canonical_deny_for_existing_path` / `profile_emits_write_roots_as_file_write` / `profile_notes_max_procs_unenforced` / `profile_includes_version_header`）、字符串转义、进程树冻结与逃逸回收。 |
-| `os/windows.rs` | AppContainer 网络开关与文件系统路径映射、`probe_appcontainer_job` 冻结输出（available:false）；Windows 专属 `job_limits_are_installed_in_kernel` 通过真实 Job + `QueryInformationJobObject` 验证进程数、内存、CPU 100ns 单位与 KILL_ON_JOB_CLOSE 标志，交叉类型检查通过、原生执行待验；后代收养仍无专属定向测试。 |
+| `os/windows.rs` | `probe_appcontainer_job` 冻结输出（available:false）；Windows 专属 `job_limits_are_installed_in_kernel` 通过真实 Job + `QueryInformationJobObject` 验证进程数、内存、CPU 100ns 单位与 KILL_ON_JOB_CLOSE 标志，交叉类型检查通过、原生执行待验；后代收养仍无专属定向测试。 |
 | `pty/mod.rs` | 输出捕获、owner 强制、`reconnect_snapshot_retains_output_and_exit_state` 保留退出后缓冲与状态、broadcast 覆写丢弃计数、kill 整树（后代收割）、多会话 cleanup_owner / shutdown、resize、退出状态与 signal 传播。 |
 | `pty/buffer.rs` | 环形丢最老、输出区间与内容一致；被删除的 `read_since` 回归不再有接受外部游标的入口，容量与快照回归仍保留。 |
 
@@ -180,7 +180,7 @@ B1（2026-10-08）逐项处置：spawn 禁止硬门新增 `native_restricted_rej
 
 - `NativeRestricted` 是**非对抗性**软沙箱：env 清洗 + cwd/资源约束，挡不住已授权命令内部的越权读（如无硬后端时 `sh -c "cat ~/.ssh/id_rsa"`）；仅作纵深防御第一层与最低回退。
 - `NetworkMode::Enforce` 真正断网仅 Seatbelt（`deny network*`）与 bwrap（`--unshare-net`）；Landlock / Windows Job / NativeRestricted 下降级为告警注记，不拒跑。K-09 全平台闭合属 R7。
-- Windows：AppContainer 类型与映射已备但探测冻结 `available:false`，选择器实际落 `WindowsJobBackend`（`Degraded`）；`attach_external` 收养既有后代非原子（Toolhelp32 快照竞态窗口，≤16 轮尽力收养）。
+- Windows：AppContainer 映射不在树内；`probe_appcontainer_job` 仍冻结为不可用（`available: false`），选择器实际落 `WindowsJobBackend`（`Degraded`）；`attach_external` 收养既有后代非原子（Toolhelp32 快照竞态窗口，≤16 轮尽力收养）。
 - macOS：`RLIMIT_AS` 的 EINVAL 容忍与 `RLIMIT_NPROC` 跳过是刻意行为；Seatbelt 无进程数原语，`max_procs` 仅 profile 注释。
 - Landlock 是纯 allow 模型：deny 路径与 allow 根重叠时后端直接拒绝该次执行（`Denied`），不会静默放行。
 - `max_output_bytes` 为 stdout+stderr 合计预算、8 KiB 块推送，截断点可能落在 UTF-8 字符中间（消费方需容忍半字符字节流）。

@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use crate::sandbox::{NetworkMode, SandboxPolicy};
 
 /// sandbox-exec 二进制路径（macOS 固定位置）。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const SANDBOX_EXEC_PATH: &str = "/usr/bin/sandbox-exec";
 
 /// 转义 Seatbelt profile 字符串字面量：双引号包裹，转义 `\` 与 `"`。
@@ -293,6 +294,7 @@ mod seatbelt {
 pub use seatbelt::{probe_reason, SandboxExecBackend};
 
 #[cfg(not(target_os = "macos"))]
+#[allow(dead_code)]
 pub fn probe_reason() -> String {
     "sandbox-exec only available on macOS".to_string()
 }

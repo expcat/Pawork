@@ -33,7 +33,7 @@
   - `allowed_tools` 双重生效：注册期过滤（不在名单的工具不进 registry）+ 调用期复核。
   - `allowed_workspaces` 调用期按 `context.workspace_id` 校验，违规返回 Authorization 失败结果。
   - `max_output_bytes` 是 codec 输出预算（`apply_tool_result_budget` 的上限来源）。
-- **边界类型**：`McpServerCapabilities { tools, resources, prompts: bool }`（服务器 initialize 广播；未广播 tools 的服务器跳过工具注册）；`McpToolInfo { name, description, input_schema, read_only }`；`McpToolCall { name, arguments }`；`McpPeer` trait（`server_capabilities` / `list_tools` / `call_tool`）是 manager 与 capabilities 之间的抽象缝，测试用 in-process peer 替换。
+- **边界类型**：`McpServerCapabilities { tools: bool }`（服务器 initialize 是否广播 tools；未广播则不 `list_tools`、跳过工具注册）。`Default` 把 `tools` 设为 true，只给本 crate 测试 peer 用。`McpToolInfo { name, description, input_schema, read_only }`；`McpToolCall { name, arguments }`；`McpPeer` trait（`server_capabilities` / `list_tools` / `call_tool`）是 manager 与 capabilities 之间的抽象缝，测试用 in-process peer 替换。HTTP 运行时凭证只走 `headers`（生产路径由 SecretRef 解析填入）。
 - **受管客户端**：`ManagedMcpClient` 实现 `McpPeer`；另有 `ping()`、`health() -> HealthSnapshot{state: ConnectionState, transport, last_error, last_connected_at, restart_attempts, max_restart_attempts}`、`shutdown()`（5s 优雅关闭）。
 - **能力桥**：`register_server_tools(registry, server, peer, permissions, trusted, host_trusted)` → `McpCapabilities::discover`（握手能力 + list_tools）+ 白名单过滤 + 注册，返回 descriptors；`register_discovered_tools` 为 crate 内部同步复用入口（不对外）。`McpToolAdapter` descriptor 规则：
   - 注册名 = `namespaced_name(server, tool)`：`{server}.{tool}` 拼接后把 `[A-Za-z0-9_-]` 之外的字符全部折叠为 `_`（上游 Provider 拒绝带 `.` 等字符的工具名，HTTP 400，2026-09-16 `echo.echo` 实证）。

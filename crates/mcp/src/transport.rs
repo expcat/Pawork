@@ -93,14 +93,12 @@ impl fmt::Debug for StdioTransportConfig {
 
 /// Streamable HTTP transport configuration.
 ///
-/// `auth_token` is sent as `Authorization: Bearer <token>` and `headers` may carry
-/// additional secrets (e.g. `X-API-Key`). Both are redacted in [`Debug`](Self::fmt).
+/// `headers` may carry secrets (for example `Authorization` or `X-API-Key`).
+/// Header values are redacted in [`Debug`](Self::fmt).
 #[derive(Clone)]
 pub struct HttpTransportConfig {
     /// Endpoint URL, e.g. `https://host/mcp`.
     pub url: String,
-    /// Optional bearer token forwarded as `Authorization: Bearer <token>`.
-    pub auth_token: Option<String>,
     /// Extra request headers, applied to every HTTP request.
     pub headers: HashMap<String, String>,
 }
@@ -109,14 +107,8 @@ impl HttpTransportConfig {
     pub fn new(url: impl Into<String>) -> Self {
         Self {
             url: url.into(),
-            auth_token: None,
             headers: HashMap::new(),
         }
-    }
-
-    pub fn with_auth_token(mut self, token: impl Into<String>) -> Self {
-        self.auth_token = Some(token.into());
-        self
     }
 
     pub fn with_headers(mut self, headers: HashMap<String, String>) -> Self {
@@ -129,7 +121,6 @@ impl fmt::Debug for HttpTransportConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HttpTransportConfig")
             .field("url", &safe_url_for_debug(&self.url))
-            .field("auth_token", &RedactedOpt(self.auth_token.as_deref()))
             .field("headers", &RedactedMap(&self.headers))
             .finish()
     }
@@ -229,8 +220,10 @@ async fn connect_http(cfg: &HttpTransportConfig) -> Result<RunningClient, McpErr
     tracing::info!(
         target: "pawork::mcp::transport",
         transport = "streamable-http",
-        has_auth = cfg.auth_token.is_some()
-            || cfg.headers.keys().any(|name| name.eq_ignore_ascii_case("authorization")),
+        has_auth = cfg
+            .headers
+            .keys()
+            .any(|name| name.eq_ignore_ascii_case("authorization")),
         header_count = cfg.headers.len(),
         "connecting mcp http server"
     );
@@ -262,17 +255,6 @@ impl<'a> fmt::Debug for RedactedMap<'a> {
             map.entry(&key, &REDACTED);
         }
         map.finish()
-    }
-}
-
-struct RedactedOpt<'a>(Option<&'a str>);
-
-impl<'a> fmt::Debug for RedactedOpt<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.0 {
-            None => write!(f, "None"),
-            Some(_) => write!(f, "Some({REDACTED:?})"),
-        }
     }
 }
 
@@ -308,9 +290,11 @@ mod tests {
     fn http_debug_redacts_token_and_headers() {
         let mut headers = HashMap::new();
         headers.insert("X-API-Key".to_string(), "header-secret-123".to_string());
-        let cfg = HttpTransportConfig::new("https://example.test/mcp")
-            .with_auth_token("bearer-token-secret")
-            .with_headers(headers);
+        headers.insert(
+            "Authorization".to_string(),
+            "Bearer bearer-token-secret".to_string(),
+        );
+        let cfg = HttpTransportConfig::new("https://example.test/mcp").with_headers(headers);
 
         let rendered = format!("{cfg:?}");
         assert!(rendered.contains("HttpTransportConfig"));
@@ -339,9 +323,10 @@ mod tests {
     fn transport_config_enum_debug_is_redacted() {
         let stdio =
             TransportConfig::Stdio(StdioTransportConfig::new("cmd").with_env(env_with_secret()));
-        let http = TransportConfig::Http(
-            HttpTransportConfig::new("https://h/mcp").with_auth_token("secret"),
-        );
+        let mut headers = HashMap::new();
+        headers.insert("Authorization".into(), "Bearer secret".into());
+        let http =
+            TransportConfig::Http(HttpTransportConfig::new("https://h/mcp").with_headers(headers));
 
         assert!(!format!("{stdio:?}").contains("sk-super-secret-value"));
         assert!(!format!("{http:?}").contains("secret"));

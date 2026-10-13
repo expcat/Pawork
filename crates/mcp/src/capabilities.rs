@@ -49,7 +49,7 @@ pub struct McpCapabilities {
 }
 
 impl McpCapabilities {
-    /// Discover tools from `peer`. Resources / prompts stay internal to the codec.
+    /// Discover tools from `peer`. Servers that do not advertise tools skip `list_tools`.
     pub async fn discover(peer: &dyn McpPeer) -> Result<Self, McpError> {
         let advertised = peer.server_capabilities().await?;
         let tools = if advertised.tools {
@@ -727,14 +727,10 @@ mod tests {
     #[tokio::test]
     async fn discovery_skips_unadvertised_capability_methods() {
         let mut peer = make_peer(true, "ok");
-        peer.advertised = crate::McpServerCapabilities {
-            tools: true,
-            resources: false,
-            prompts: false,
-        };
+        peer.advertised = crate::McpServerCapabilities { tools: false };
         let caps = McpCapabilities::discover(&peer)
             .await
-            .expect("tools-only discovery");
-        assert_eq!(caps.tools.len(), 1);
+            .expect("unadvertised tools are skipped");
+        assert!(caps.tools.is_empty());
     }
 }

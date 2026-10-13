@@ -52,11 +52,7 @@ struct RegistryPeer;
 #[async_trait]
 impl McpPeer for RegistryPeer {
     async fn server_capabilities(&self) -> Result<McpServerCapabilities, McpError> {
-        Ok(McpServerCapabilities {
-            tools: true,
-            resources: false,
-            prompts: false,
-        })
+        Ok(McpServerCapabilities { tools: true })
     }
 
     async fn list_tools(&self) -> Result<Vec<McpToolInfo>, McpError> {

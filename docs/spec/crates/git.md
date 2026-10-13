@@ -13,11 +13,11 @@
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~40 | crate 门面：6 个模块声明与全部公开 re-export；`FileStatus` 唯一定义在 `status`，`diff::FileStatus` 为同一类型 re-export |
+| `src/lib.rs` | ~40 | crate 门面：6 个模块声明与公开 re-export（`GitRunner` / `GitService` / `Head` / status 与 diff / worktree 类型）；`validate_position_arg` 不在门面。`FileStatus` 唯一定义在 `status`，`diff::FileStatus` 为同一类型 re-export |
 | `src/error.rs` | ~50 | `GitError` 统一错误枚举（8 个 variant。2026-10 R-05 删除 V2 归档服务的 8 个零构造点遗留；B12 再删除仅由 Stage 构造的 `PatchDoesNotApply`）；`From<pawork_exec::ProcessError>` 归一：Spawn 且 `NotFound`→`GitNotFound`、`KillTimeout`→`Timeout`、其余 Spawn/ProcessTree/Isolation→`Other`、IO 透传 |
-| `src/process.rs` | ~200 | `GitRunner`（默认 `git` 路径、30s 超时、16MB 输出上限）；`validate_position_arg` 注入防护；domain→exec 取消令牌桥接（已取消立即 cancel，否则后台任务等待）；Windows `\\?\` verbatim cwd 经 `dunce` 简化 |
-| `src/repo.rs` | ~410 | `GitService`：`open`（`rev-parse --show-toplevel` 定位 work tree，失败→`NotARepository`）、`git_dir` / `is_bare` / `current_branch` / `current_head` / `repo_info`（合并 rev-parse，固定两次 spawn，unborn 回退路径）；`Head::{Branch(name), Detached(sha), Unborn}` / `RepoInfo` |
-| `src/status.rs` | ~370 | `StatusService` 与自由函数 `read_status`：`git status --porcelain=v1 -z --untracked-files=all` 解析为 `FileChange`（X 列 index / Y 列 worktree 双状态 + `untracked` 标记 + rename/copy 原路径）；`FileStatus` 九态状态码映射；`changed_files` 过滤未跟踪与全未修改条目 |
+| `src/process.rs` | ~170 | `GitRunner`（默认 `git` 路径、30s 超时、16MB 输出上限）；`pub(crate) validate_position_arg` 注入防护；domain→exec 取消令牌桥接（已取消立即 cancel，否则后台任务等待）；Windows `\\?\` verbatim cwd 经 `dunce` 简化 |
+| `src/repo.rs` | ~220 | `GitService`：`open`（`rev-parse --show-toplevel` 定位 work tree，失败→`NotARepository`）、`current_head`；`Head::{Branch(name), Detached(sha), Unborn}` |
+| `src/status.rs` | ~320 | `StatusService`：`git status --porcelain=v1 -z --untracked-files=all` 解析为 `FileChange`（X 列 index / Y 列 worktree 双状态 + `untracked` 标记 + rename/copy 原路径）；`FileStatus` 九态状态码映射 |
 | `src/worktree.rs` | ~360 | `WorktreeService`：`list`（`worktree list --porcelain` 解析）/ `add` / `remove` / `prune`；`remove` 先经 `list()` 校验目标为 git 受管 worktree，绝不调用 `std::fs` 递归删除用户数据 |
 | `src/diff/mod.rs` | ~20 | diff 子模块声明与 re-export（`model` / `parser` / `service`）；`FileStatus` 来自 `status` |
 | `src/diff/model.rs` | ~70 | 结构化 diff 数据模型：`DiffFile`（path / previous_path / status:`FileStatus` / staged / binary / additions / deletions / hunks，`changed_lines()`）、`DiffHunk`、`DiffLine`、`HunkId`（全局自增 u64）、`LineKind`（Context / Addition / Deletion） |
@@ -28,20 +28,17 @@
 ## 3. 对外 API 面
 
 **命令执行（process）**
-- `GitRunner::new()`：`git` 路径 + 30s 默认超时 + 新建 `ProcessRuntime`；`with_runtime(runtime, git_path, timeout)` 供测试与定制注入；`Clone` 廉价共享；`with_call_count`（测试钩子，供 `repo_info` 固定两次 spawn 断言）。
+- `GitRunner::new()`：`git` 路径 + 30s 默认超时 + 新建 `ProcessRuntime`；`Clone` 廉价共享。
 - `run(cwd, args, cancel) -> Result<String, GitError>` / `run_with_stderr -> (stdout, stderr)`：输出 lossy UTF-8；非零退出→`GitFailed{code, stderr}`、超时→`Timeout`、取消→`Cancelled`。**不清空环境**（保留用户 git config 与 credential helper）。
-- `validate_position_arg(name, value)`：值以 `-` 开头即 `InvalidPositionArgument{name, value}`。适用于 revision / range / branch 等会被 git 当位置参数解析的值；路径参数不走此校验，改用 `--` 分隔。
+- `validate_position_arg(name, value)` 为 `pub(crate)`，不经门面 re-export：值以 `-` 开头即 `InvalidPositionArgument{name, value}`。适用于 revision / range / branch 等会被 git 当位置参数解析的值；路径参数不走此校验，改用 `--` 分隔。worktree 与 diff 在包内调用。
 
 **仓库（repo）**
 - `GitService::open(path, cancel)`：从任意子目录向上定位 work tree；非仓库→`NotARepository`。
 - 访问器 `work_dir()` / `runner()`（借出 `GitRunner` 供其它 Service 复用同一 runtime）。
-- `git_dir` / `is_bare`（各一次 rev-parse）；`current_branch -> Option<String>`（detached/unborn 为 `None`）；`current_head -> Head`：`symbolic-ref --short HEAD` 成功→`Branch`，stderr 含 `detached`→`Detached(rev-parse HEAD)`，其余失败（如 unborn 的 ref 不存在）→`Unborn`。
-- `repo_info -> RepoInfo`：一次合并 rev-parse（toplevel + git-dir + bare + HEAD SHA）+ 一次 symbolic-ref，固定两次 spawn；unborn HEAD 走无 HEAD 的回退查询。
+- `current_head -> Head`：`symbolic-ref --short HEAD` 取分支名，`rev-parse --verify HEAD` 判断提交是否存在。有名且可解析→`Branch`；有名但 HEAD 不存在→`Unborn`；无名且可解析→`Detached(sha)`；两者都失败→`Unborn`。不依赖 stderr 是否含 `detached`。
 
 **状态（status）**
 - `StatusService::new(&runner, work_dir)`；`status(cancel) -> StatusSnapshot{changes}`：`FileChange{path, previous_path, index_status, worktree_status, untracked}`，porcelain v1 `-z` + `--untracked-files=all`，NUL 分隔保证含空格/非 ASCII 文件名安全，rename/copy 附原路径。
-- `changed_files(cancel)`：剔除未跟踪与两列均 `Unmodified` 的条目，供 diff / UI。
-- 自由函数 `read_status(work_dir, cancel)`：内部临时构造 `GitRunner` 的一次性入口。
 - `FileStatus` 九态：`' '`/M/A/D/R/C/U/T/`?` → Unmodified/Modified/Added/Deleted/Renamed/Copied/Unmerged/TypeChanged/Untracked；未识别字符保守映射 Unmodified。
 
 **Worktree**
@@ -74,7 +71,7 @@
 1. **一次 git 调用**：domain `CancellationToken` 桥接为 exec 令牌（已取消立即 cancel，否则 spawn 后台等待任务、调用结束 abort）→ 构造 `CommandSpec`（cwd 经 `dunce::simplified` 去 Windows verbatim 前缀、timeout=30s、max_output_bytes=16MB、`env_clear=false`）→ `ProcessRuntime::run` → 归一：`timed_out`→`Timeout`；`killed` 且无退出码→`Cancelled`；退出码 0→Ok；其余→`GitFailed{code, stderr}`。
 2. **一次结构化 diff**：`base_args`（`diff` + 可选 range / `--cached` / `-M`）→ `--raw -z` 解析文件清单（`:<oldmode> <newmode> <sha> <sha> <STATUS>\0<path>\0[<origpath>\0]`；R/C 带相似度尾数、mode 160000 标 gitlink）→ `--numstat -z` 按 NUL 记录合并行数与 binary 标记（普通记录内联 path；R/C 空 path 后消费 old/new 两字段并匹配 new path）→ 非 staged 视角追加 `ls-files --others --exclude-standard -z` 未跟踪文件 → （`diff` 入口）逐文件 `git diff -U<n> --no-color -- <path>`，`parse_unified_with_start` 解析 hunks 并延续全局 `HunkId`。binary / gitlink / untracked 不跑文本 hunk（避免把 submodule 工作树当内容解析）。
 3. **status 解析**：`--porcelain=v1 -z` 按 `\0` 分段；每条 `XY PATH`，X→`index_status`、Y→`worktree_status`；`??` 置 `untracked=true`；X 为 R/C 时下一段为原路径存入 `previous_path`。
-4. **HEAD 判定**：`symbolic-ref --short HEAD` 三分支——成功且非空→`Branch`；`GitFailed` 且 stderr 含 `detached`→`rev-parse HEAD` 取 SHA→`Detached`；其余失败→`Unborn`（新仓库无提交）。
+4. **HEAD 判定**：`symbolic-ref --short HEAD` 与 `rev-parse --verify HEAD`。有分支名且 HEAD 可解析→`Branch`；有分支名但 HEAD 不可解析（新仓库无提交）→`Unborn`；symbolic-ref 失败且 HEAD 可解析→`Detached`。
 5. **worktree 生命周期**：`add` 校验 branch / base / 路径 → `git worktree add [--] <path> …` → 重新 `list()` 定位新条目（找不到→`Other`）；`remove` 先 `list()` 确认路径在受管清单内 → `git worktree remove [--force] <path>`；脏 worktree 无 force 删除失败且数据保留。
 
 ## 5. 契约与不变量
@@ -87,7 +84,7 @@
 
 ## 6. 依赖关系
 
-- **依赖**：`pawork-domain`（`CancellationToken`）、`pawork-exec`（`ProcessRuntime` / `CommandSpec` / `ProcessError` / exec 侧 `CancellationToken`）、`tokio`（sync / macros / rt / time / fs）、`serde` / `serde_json`、`thiserror`、`dunce`（Windows 路径简化）。`tempfile` 只在 dev-dependencies，供测试临时仓库。B12 移除生产 `tempfile`（只服务 `apply_patch_to_index`）和 `tracing`（只服务该路径的删除失败日志）。
+- **依赖**：`pawork-domain`（`CancellationToken`）、`pawork-exec`（`ProcessRuntime` / `CommandSpec` / `ProcessError` / exec 侧 `CancellationToken`）、`tokio`（生产 feature 仅 `rt`，供 `tokio::spawn` 桥接取消）、`serde`、`thiserror`、`dunce`（Windows 路径简化）。dev-dependencies：`proptest`、`tempfile`（测试临时仓库）、`tokio`（`macros` + `rt-multi-thread`，供 `#[tokio::test]`）。B12 移除生产 `tempfile`（只服务 `apply_patch_to_index`）和 `tracing`（只服务该路径的删除失败日志）。
 - **被依赖**：
   - `pawork-app`：默认闭包内唯一生产消费者，仅用 `GitService` / `StatusService` / `DiffService` / `paginate`（`diff.rs` 只读面）。
   - `pawork-orchestration`：`worktree.rs`（`GitRunner` + `WorktreeService`）与 `merge.rs`（`DiffService` + `DiffOptions`）在 feature `git` 之后；该 feature 默认关闭（`default = []`），且 `pawork-app` 以 `default-features = false` 依赖 orchestration，因此默认二进制闭包不含这些路径。
@@ -99,8 +96,8 @@
 
 - 内嵌单元测试（各模块 `#[cfg(test)]`，多为真实临时仓库集成测试）：
   - `process.rs`：option 形位置参数拒绝、相对 cwd 不变、Windows verbatim 简化。
-  - `repo.rs`：open / HEAD 三态（Branch / Detached / Unborn）、repo_info 两次 spawn 断言（`call_count` 测试钩子）。
-  - `status.rs`：porcelain 双列状态、rename 原路径、untracked 过滤。
+  - `repo.rs`：open / `current_head` 三态（Branch / Detached / Unborn）。
+  - `status.rs`：porcelain 双列状态、rename 原路径、未跟踪标记。
   - `worktree.rs`：add / list / remove 生命周期、脏 worktree 无 force 删除失败且数据保留、option 形路径与 branch 拒绝。
   - `diff/service.rs`：diff 清单与 hunks、多文件 NUL numstat 计数、分页、option 形 commit range 拒绝。
 - `tests/parser_contract.rs`：golden 契约（`tests/golden/basic_hunk.diff` / `no_newline.diff` / `context_no_newline.diff`）+ proptest 任意输入不 panic。
@@ -112,5 +109,4 @@
 - **不提供 index 写入**：stage / unstage / discard / hunk / 行级暂存已于 B12 归档。Desktop Changes 仍是只读投影。冻结 `AppCommand::GitStage` 自 API 1.0 存在，但 registry 中 GUI `available=false`、headless 与 ACP 均未开放；gui-server 在进 Host 前拒绝。App 没有处理分支，也不曾调用已删除的 `StageService`。把它改成可用属于 BK-GIT-02，需要双向 wire、Policy、审批/回滚和 Accepted ADR。
 - **`WorktreeService` 不在默认二进制闭包**：仅被 orchestration 的默认关闭 feature `git` 使用。`pawork-app` 以 `default-features = false` 依赖 orchestration。
 - 输出为 lossy UTF-8：非 UTF-8 文件名 / 内容会被替换字符污染而非报错。
-- rename 检测、porcelain 输出细节依赖系统 git 版本行为，本包未固定最低 git 版本。
-- `read_status` 每次调用新建 `GitRunner`（含新 `ProcessRuntime`）；高频调用应改用 `StatusService` 复用 runner。
+- rename 检测、porcelain 输出细节依赖系统 git 版本行为，本包未固定最低 git 版本。高频 status 复用同一个 `GitRunner` 构造 `StatusService`。

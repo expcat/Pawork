@@ -7,7 +7,7 @@
 //! 模块：
 //! - [`error`]：错误归一。
 //! - [`process`]：[`GitRunner`] 系统 git 统一调用入口。
-//! - [`repo`]：[`GitService`] 仓库检测与 HEAD/branch 元信息。
+//! - [`repo`]：[`GitService`] 仓库检测与 HEAD 状态。
 //! - [`status`]：[`status::StatusService`] 工作区状态解析。
 //! - [`worktree`]：[`worktree::WorktreeService`] Worktree 创建/删除（清理不删用户数据）。
 //! - [`diff`]：结构化 Diff（`DiffFile`/`DiffHunk`/`DiffLine`）。
@@ -35,7 +35,7 @@ pub use diff::{
     paginate, DiffFile, DiffHunk, DiffLine, DiffOptions, DiffPage, DiffService, HunkId, LineKind,
 };
 pub use error::GitError;
-pub use process::{validate_position_arg, GitRunner};
-pub use repo::{GitService, Head, RepoInfo};
-pub use status::{read_status, FileChange, FileStatus, StatusService, StatusSnapshot};
+pub use process::GitRunner;
+pub use repo::{GitService, Head};
+pub use status::{FileChange, FileStatus, StatusService, StatusSnapshot};
 pub use worktree::{Worktree, WorktreeService};

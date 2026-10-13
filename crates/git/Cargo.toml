@@ -11,12 +11,11 @@ description = "Pawork 系统 Git 封装与结构化 Diff（repo/status/worktree 
 pawork-domain = { path = "../domain" }
 pawork-exec = { path = "../exec" }
 serde.workspace = true
-serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync", "macros", "rt", "time", "fs"] }
+tokio = { workspace = true, features = ["rt"] }
 dunce.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

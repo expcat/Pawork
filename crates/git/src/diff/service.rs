@@ -8,8 +8,9 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::process::validate_position_arg;
 use crate::status::FileStatus;
-use crate::{validate_position_arg, GitError, GitRunner};
+use crate::{GitError, GitRunner};
 use pawork_domain::CancellationToken;
 
 use super::model::DiffFile;

@@ -1,4 +1,4 @@
-//! Git 工作区状态解析（[`StatusService`] / [`read_status`]）。
+//! Git 工作区状态解析（[`StatusService`]）。
 //!
 //! 通过 `git status --porcelain=v1 -z --untracked-files=all` 获取机器可解析的
 //! NUL 分隔输出，解析为 [`FileChange`] 列表，并归一 index / worktree 两列状态码。
@@ -60,8 +60,7 @@ pub struct StatusSnapshot {
 
 /// 对单个仓库工作区做 status 解析的服务。
 ///
-/// 持有 [`GitRunner`] 引用与 work_dir，[`StatusService::status`] /
-/// [`StatusService::changed_files`] 复用 runner 调用系统 git。
+/// 持有 [`GitRunner`] 引用与 work_dir，[`StatusService::status`] 复用 runner 调用系统 git。
 pub struct StatusService<'a> {
     runner: &'a GitRunner,
     work_dir: PathBuf,
@@ -94,32 +93,6 @@ impl<'a> StatusService<'a> {
             changes: parse_porcelain(&output),
         })
     }
-
-    /// 仅变更文件（剔除未跟踪与未修改），供 diff / UI 使用。
-    pub async fn changed_files(
-        &self,
-        cancel: CancellationToken,
-    ) -> Result<Vec<FileChange>, GitError> {
-        let snapshot = self.status(cancel).await?;
-        Ok(snapshot
-            .changes
-            .into_iter()
-            .filter(|c| {
-                !(c.untracked
-                    || (c.index_status == FileStatus::Unmodified
-                        && c.worktree_status == FileStatus::Unmodified))
-            })
-            .collect())
-    }
-}
-
-/// 在 `work_dir` 直接读取 status 快照（无需先构造 [`StatusService`]）。
-pub async fn read_status(
-    work_dir: &Path,
-    cancel: CancellationToken,
-) -> Result<StatusSnapshot, GitError> {
-    let runner = GitRunner::new();
-    StatusService::new(&runner, work_dir).status(cancel).await
 }
 
 /// 把 porcelain 单字符状态码映射为 [`FileStatus`]。
@@ -272,20 +245,6 @@ mod tests {
         assert!(b.untracked, "b.txt 为未跟踪");
         assert_eq!(b.index_status, FileStatus::Untracked);
         assert_eq!(b.worktree_status, FileStatus::Untracked);
-
-        // changed_files 含 a.txt、不含未跟踪 b.txt。
-        let changed = svc
-            .changed_files(CancellationToken::new())
-            .await
-            .expect("changed_files");
-        assert!(
-            changed.iter().any(|c| c.path == "a.txt"),
-            "changed_files 应含 a.txt"
-        );
-        assert!(
-            !changed.iter().any(|c| c.path == "b.txt"),
-            "changed_files 不应含未跟踪 b.txt"
-        );
     }
 
     #[tokio::test]
@@ -313,22 +272,6 @@ mod tests {
             "previous_path=x.txt"
         );
         assert!(!r.untracked);
-    }
-
-    #[tokio::test]
-    async fn read_status_convenience_works() {
-        let dir = make_initial_repo();
-        std::fs::write(dir.path().join("c.txt"), "c\n").expect("write c.txt");
-
-        let snap = read_status(dir.path(), CancellationToken::new())
-            .await
-            .expect("read_status");
-        assert!(
-            snap.changes
-                .iter()
-                .any(|c| c.path == "c.txt" && c.untracked),
-            "read_status 应解析出未跟踪 c.txt"
-        );
     }
 
     #[test]

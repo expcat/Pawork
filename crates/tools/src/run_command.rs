@@ -83,13 +83,6 @@ impl RunCommandTool {
             runtime: ProcessRuntime::new(),
         }
     }
-
-    pub fn with_runtime(workspaces: WorkspaceService, runtime: ProcessRuntime) -> Self {
-        Self {
-            workspaces,
-            runtime,
-        }
-    }
 }
 
 #[async_trait]
@@ -735,8 +728,7 @@ mod tests {
         .expect("run");
         let sandbox = &res.metadata["sandbox"];
         assert_eq!(
-            sandbox["backend"],
-            "sandbox_exec",
+            sandbox["backend"], "sandbox_exec",
             "macOS run_command must report Seatbelt; sandbox={sandbox}"
         );
         assert_eq!(sandbox["isolation"], "hard_writes_and_network");

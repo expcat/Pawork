@@ -2,18 +2,18 @@
 //!
 //! tool_search 与 MCP 客户端不在本包。
 
-pub mod apply_patch;
-pub mod common;
-pub mod computer;
-pub mod computer_native;
-pub mod edit_file;
-pub mod find_files;
-pub mod list_directory;
-pub mod read_file;
-pub mod run_command;
-pub mod scheduler;
-pub mod search_text;
-pub mod write_file;
+mod apply_patch;
+mod common;
+mod computer;
+mod computer_native;
+mod edit_file;
+mod find_files;
+mod list_directory;
+mod read_file;
+mod run_command;
+mod scheduler;
+mod search_text;
+mod write_file;
 
 pub use apply_patch::ApplyPatchTool;
 pub use computer::ComputerTool;

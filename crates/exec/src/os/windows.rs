@@ -1,63 +1,11 @@
-//! Windows AppContainer 配置/探测与 Job Object 执行后端。
+//! Windows Job Object 执行后端与 AppContainer 探测。
 //!
-//! 配置纯函数 [`policy_to_appcontainer_config`] 跨平台编译并单测；
-//! [`probe_appcontainer_job`] 在 Windows 经 kernel32 `IsProcessInJob` 真实探测
-//! 当前进程是否已身处 Job（影响 Job 嵌套），非 Windows 返回不可用 stub。
-//!
-//! AppContainer 受限令牌 spawn 仍需要 `EXTENDED_STARTUPINFO_PRESENT`，因此探测结果
-//! 明确标记不可用（frozen，`available: false`）；可执行路径使用 Job Object。
+//! [`probe_appcontainer_job`] 在 Windows 经 kernel32 `IsProcessInJob` 记录当前进程
+//! 是否已身处 Job；非 Windows 返回不可用 stub。受限令牌 spawn 不可用，探测结果
+//! 恒为 `available: false`。可执行路径使用 Job Object。
 
-use crate::sandbox::{NetworkMode, ProbeOutcome, SandboxPolicy};
+use crate::sandbox::ProbeOutcome;
 use std::sync::OnceLock;
-
-/// AppContainer capability（最小权限集；默认不授予 Internet 以实现网络隔离）。
-// frozen, awaiting AppContainer restricted-token spawn：生成器仅保留供诊断/审计与单测。
-// 跨平台编译供单测复用；非 Windows 宿主上无生产消费方，dead_code 属预期。
-#[cfg_attr(not(windows), allow(dead_code))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AppContainerCapability {
-    InternetClient,
-    InternetClientServer,
-    PrivateNetworkClientServer,
-    DocumentsLibrary,
-    PicturesLibrary,
-    VideosLibrary,
-    MusicLibrary,
-}
-
-/// AppContainer 配置（纯数据，供后续 spawn 后端消费）。
-// frozen, awaiting AppContainer spawn：无 spawn 消费方，保留至后端接入。
-#[cfg_attr(not(windows), allow(dead_code))]
-#[derive(Clone, Debug, Default)]
-pub struct AppContainerConfig {
-    pub capabilities: Vec<AppContainerCapability>,
-    /// 是否授予 Internet（默认 false = 网络隔离）。
-    pub internet_granted: bool,
-    pub read_paths: Vec<std::path::PathBuf>,
-    pub write_paths: Vec<std::path::PathBuf>,
-    pub denied_paths: Vec<std::path::PathBuf>,
-}
-
-/// 从 [`SandboxPolicy`] 生成 AppContainer 配置。
-///
-/// 网络语义：`Enforce` → 不授予 Internet（出站隔离）；`Off`/`Hint` → 授予 Internet
-/// （AppContainer 作为硬隔离后端，仅在 `Enforce` 时强制网络隔离）。
-// frozen, awaiting AppContainer spawn 后端未接入，生成器保留不删。
-#[cfg_attr(not(windows), allow(dead_code))]
-pub fn policy_to_appcontainer_config(policy: &SandboxPolicy) -> AppContainerConfig {
-    let internet_granted = !matches!(policy.network_mode, NetworkMode::Enforce);
-    let mut capabilities = Vec::new();
-    if internet_granted {
-        capabilities.push(AppContainerCapability::InternetClient);
-    }
-    AppContainerConfig {
-        capabilities,
-        internet_granted,
-        read_paths: policy.filesystem.read_roots.clone(),
-        write_paths: policy.filesystem.write_roots.clone(),
-        denied_paths: policy.filesystem.deny.clone(),
-    }
-}
 
 #[cfg(windows)]
 #[link(name = "kernel32")]
@@ -526,55 +474,6 @@ pub use job_backend::WindowsJobBackend;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sandbox::FilesystemPolicy;
-    use std::path::PathBuf;
-
-    #[test]
-    fn appcontainer_denies_internet_by_default() {
-        // 默认 network_mode == Enforce。
-        let cfg = policy_to_appcontainer_config(&SandboxPolicy::default());
-        assert!(!cfg.internet_granted);
-        assert!(cfg.capabilities.is_empty());
-    }
-
-    #[test]
-    fn appcontainer_grants_internet_when_off() {
-        let policy = SandboxPolicy {
-            network_mode: NetworkMode::Off,
-            ..Default::default()
-        };
-        let cfg = policy_to_appcontainer_config(&policy);
-        assert!(cfg.internet_granted);
-        assert!(cfg
-            .capabilities
-            .contains(&AppContainerCapability::InternetClient));
-    }
-
-    #[test]
-    fn appcontainer_enforce_still_blocks_internet() {
-        let policy = SandboxPolicy {
-            network_mode: NetworkMode::Enforce,
-            ..Default::default()
-        };
-        let cfg = policy_to_appcontainer_config(&policy);
-        assert!(!cfg.internet_granted);
-    }
-
-    #[test]
-    fn appcontainer_maps_filesystem_paths() {
-        let policy = SandboxPolicy {
-            filesystem: FilesystemPolicy {
-                read_roots: vec![PathBuf::from("C:/ws")],
-                write_roots: vec![PathBuf::from("C:/tmp")],
-                deny: vec![PathBuf::from("C:/secrets")],
-            },
-            ..Default::default()
-        };
-        let cfg = policy_to_appcontainer_config(&policy);
-        assert_eq!(cfg.read_paths, vec![PathBuf::from("C:/ws")]);
-        assert_eq!(cfg.write_paths, vec![PathBuf::from("C:/tmp")]);
-        assert_eq!(cfg.denied_paths, vec![PathBuf::from("C:/secrets")]);
-    }
 
     #[test]
     fn probe_reports_unavailable_with_reason() {

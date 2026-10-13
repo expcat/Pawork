@@ -48,26 +48,20 @@ pub enum McpError {
     Registry(#[from] pawork_tools::ToolRegistryError),
 }
 
-/// Capability families advertised during the MCP initialize handshake.
+/// Tools capability advertised during the MCP initialize handshake.
 ///
-/// The permissive all-true default exists purely for test peers and custom
-/// host adapters in this crate; production peers override it with the server's
-/// actual initialize result.
+/// The permissive default exists purely for test peers and custom host adapters
+/// in this crate; production peers override it with the server's actual
+/// initialize result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct McpServerCapabilities {
     pub tools: bool,
-    pub resources: bool,
-    pub prompts: bool,
 }
 
 impl Default for McpServerCapabilities {
     fn default() -> Self {
-        // All-true is a test-peer convenience, not a production claim.
-        Self {
-            tools: true,
-            resources: true,
-            prompts: true,
-        }
+        // tools: true is a test-peer convenience, not a production claim.
+        Self { tools: true }
     }
 }
 

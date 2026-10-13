@@ -6,11 +6,6 @@
 
 use std::path::Path;
 use std::time::Duration;
-#[cfg(test)]
-use std::{
-    sync::atomic::{AtomicUsize, Ordering},
-    sync::Arc,
-};
 
 use pawork_domain::CancellationToken;
 use pawork_exec::CancellationToken as ExecCancellationToken;
@@ -47,7 +42,7 @@ const MAX_OUTPUT_BYTES: u64 = 16 * 1024 * 1024;
 ///
 /// 这些值来自上层（包括模型输出），若以 `-` 开头会被 git 重新解释为选项。
 /// 路径参数应使用 `--` 分隔，不走本校验。
-pub fn validate_position_arg(name: &'static str, value: &str) -> Result<(), GitError> {
+pub(crate) fn validate_position_arg(name: &'static str, value: &str) -> Result<(), GitError> {
     if value.starts_with('-') {
         return Err(GitError::InvalidPositionArgument {
             name,
@@ -67,8 +62,6 @@ pub struct GitRunner {
     runtime: ProcessRuntime,
     git_path: String,
     default_timeout: Duration,
-    #[cfg(test)]
-    call_count: Option<Arc<AtomicUsize>>,
 }
 
 impl GitRunner {
@@ -78,30 +71,7 @@ impl GitRunner {
             runtime: ProcessRuntime::new(),
             git_path: "git".to_string(),
             default_timeout: DEFAULT_TIMEOUT,
-            #[cfg(test)]
-            call_count: None,
         }
-    }
-
-    /// 用指定 runtime / git 路径 / 超时构造，便于测试注入。
-    pub fn with_runtime(
-        runtime: ProcessRuntime,
-        git_path: impl Into<String>,
-        timeout: Duration,
-    ) -> Self {
-        Self {
-            runtime,
-            git_path: git_path.into(),
-            default_timeout: timeout,
-            #[cfg(test)]
-            call_count: None,
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_call_count(mut self, call_count: Arc<AtomicUsize>) -> Self {
-        self.call_count = Some(call_count);
-        self
     }
 
     /// 在 `cwd` 下执行 `git <args>`，stdout 以 lossy UTF-8 返回。
@@ -125,10 +95,6 @@ impl GitRunner {
         args: &[&str],
         cancel: CancellationToken,
     ) -> Result<(String, String), GitError> {
-        #[cfg(test)]
-        if let Some(call_count) = &self.call_count {
-            call_count.fetch_add(1, Ordering::Relaxed);
-        }
         let mut spec = CommandSpec::new(self.git_path.as_str()).args(args.iter().copied());
         // Windows canonicalize 可能产生 `\\?\` verbatim 前缀；部分 git 版本不能
         // 稳定处理该形式，因此在唯一子进程出口统一简化。

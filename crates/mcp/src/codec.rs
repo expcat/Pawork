@@ -289,31 +289,13 @@ fn build_http_transport_config(
     }
     let parsed = url::Url::parse(url)
         .map_err(|error| McpError::Config(format!("invalid http url: {error}")))?;
-    if cfg.auth_token.as_deref().is_some_and(str::is_empty) {
-        return Err(McpError::Config("auth_token must not be empty".into()));
-    }
-    let has_authorization_header = cfg
-        .headers
-        .keys()
-        .any(|name| name.eq_ignore_ascii_case("authorization"));
-    if cfg.auth_token.is_some() && has_authorization_header {
-        return Err(McpError::Config(
-            "auth_token conflicts with a custom Authorization header".into(),
-        ));
-    }
-    if parsed.scheme() == "http"
-        && (cfg.auth_token.is_some() || !cfg.headers.is_empty())
-        && !is_loopback_url(&parsed)
-    {
+    if parsed.scheme() == "http" && !cfg.headers.is_empty() && !is_loopback_url(&parsed) {
         return Err(McpError::Config(
             "secret-bearing HTTP authentication requires HTTPS for non-loopback endpoints".into(),
         ));
     }
 
     let mut rmcp_config = StreamableHttpClientTransportConfig::with_uri(url.to_owned());
-    if let Some(token) = &cfg.auth_token {
-        rmcp_config = rmcp_config.auth_header(token.clone());
-    }
     if !cfg.headers.is_empty() {
         let mut headers = HashMap::with_capacity(cfg.headers.len());
         for (name, value) in &cfg.headers {
@@ -357,8 +339,6 @@ impl ClientPeer {
         })?;
         Ok(McpServerCapabilities {
             tools: info.capabilities.tools.is_some(),
-            resources: info.capabilities.resources.is_some(),
-            prompts: info.capabilities.prompts.is_some(),
         })
     }
 
@@ -602,25 +582,11 @@ mod tests {
             build_http_transport_config(&HttpTransportConfig::new("not a url")),
             Err(McpError::Config(_))
         ));
-        assert!(matches!(
-            build_http_transport_config(
-                &HttpTransportConfig::new("https://h/mcp").with_auth_token("")
-            ),
-            Err(McpError::Config(_))
-        ));
-        assert!(matches!(
-            build_http_transport_config(
-                &HttpTransportConfig::new("http://remote.example/mcp").with_auth_token("secret")
-            ),
-            Err(McpError::Config(_))
-        ));
         let mut headers = HashMap::new();
-        headers.insert("authorization".into(), "Bearer duplicate".into());
+        headers.insert("Authorization".into(), "Bearer secret".into());
         assert!(matches!(
             build_http_transport_config(
-                &HttpTransportConfig::new("https://remote.example/mcp")
-                    .with_auth_token("secret")
-                    .with_headers(headers)
+                &HttpTransportConfig::new("http://remote.example/mcp").with_headers(headers)
             ),
             Err(McpError::Config(_))
         ));
@@ -632,12 +598,17 @@ mod tests {
 
         let mut headers = HashMap::new();
         headers.insert("X-Trace-Id".to_string(), "abc".to_string());
-        let cfg = HttpTransportConfig::new("https://host/mcp")
-            .with_auth_token("tok")
-            .with_headers(headers);
+        headers.insert("Authorization".to_string(), "Bearer tok".to_string());
+        let cfg = HttpTransportConfig::new("https://host/mcp").with_headers(headers);
 
         let rmcp_config = build_http_transport_config(&cfg).expect("valid config");
-        assert_eq!(rmcp_config.auth_header.as_deref(), Some("tok"));
+        assert_eq!(
+            rmcp_config
+                .custom_headers
+                .get(&HeaderName::from_static("authorization"))
+                .map(|v| v.to_str().unwrap()),
+            Some("Bearer tok")
+        );
         assert_eq!(
             rmcp_config
                 .custom_headers

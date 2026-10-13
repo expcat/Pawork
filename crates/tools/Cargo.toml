@@ -19,7 +19,6 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "rt", "sync", "time"] }
-tracing.workspace = true
 ignore.workspace = true
 globset = "0.4"
 regex.workspace = true
