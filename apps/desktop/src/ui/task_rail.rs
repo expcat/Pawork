@@ -12,7 +12,8 @@ use gpui::{
 use std::time::Duration;
 
 use crate::projection::{
-    ConnectionState, SessionLiveStatus, TaskRailDateGroup, TaskRailGrouping, TaskRailProjectGroup,
+    ConnectionState, DateBucket, SessionLiveStatus, TaskRailDateGroup, TaskRailGrouping,
+    TaskRailProjectGroup,
 };
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::{Dropdown, MenuPanel, MenuRow};
@@ -24,8 +25,9 @@ use crate::ui::i18n::t;
 use crate::ui::theme::{dark, font, metrics};
 
 use super::{
-    now_unix_ms, rail_project_key, rail_session_archive_focus_key, rail_session_focus_key,
-    rail_session_rename_focus_key, shell_layout, AppView, MenuKind, RailStop,
+    now_unix_ms, rail_focus_stops, rail_project_key, rail_project_occurrence_key,
+    rail_session_archive_focus_key, rail_session_focus_key, rail_session_rename_focus_key,
+    shell_layout, AppView, MenuKind, RAIL_TAB_STOP_IDS,
 };
 
 enum RailView {
@@ -1420,5 +1422,58 @@ impl AppView {
                 t("rail.newtask_disabled_failed").replace("{}", reason)
             }
         }
+    }
+}
+
+/// rail 焦点链停靠点（design §3.6 顺序的静态语义；focus_key 唯一标识，
+/// ProjectHeader/ProjectAdd 以日期桶限定避免 Timeline 同项目多桶重复）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum RailStop {
+    Search,
+    Scope,
+    Grouping,
+    AddTask,
+    ProjectHeader {
+        bucket: Option<DateBucket>,
+        key: String,
+    },
+    ProjectAdd {
+        bucket: Option<DateBucket>,
+        key: String,
+    },
+    Task {
+        session_id: String,
+    },
+}
+
+impl RailStop {
+    pub(super) fn focus_key(&self) -> String {
+        match self {
+            Self::Search => "quick-search".into(),
+            Self::Scope => RAIL_TAB_STOP_IDS[2].into(),
+            Self::Grouping => RAIL_TAB_STOP_IDS[3].into(),
+            Self::AddTask => RAIL_TAB_STOP_IDS[1].into(),
+            Self::ProjectHeader { bucket, key } => {
+                rail_project_occurrence_key("project", *bucket, key)
+            }
+            Self::ProjectAdd { bucket, key } => {
+                rail_project_occurrence_key("project-add", *bucket, key)
+            }
+            Self::Task { session_id } => rail_session_focus_key(session_id),
+        }
+    }
+}
+
+impl AppView {
+    /// 当前分组模式下按 GUI2-01 顺序的 rail 焦点链（全局新建 → scope →
+    /// grouping → 项目头 / 定向新建 → task 行）；折叠项目只保留头部。
+    pub(super) fn rail_stops(&self) -> Vec<RailStop> {
+        rail_focus_stops(
+            self.grouping,
+            self.scope_workspace_id.as_deref(),
+            &self.collapsed_projects,
+            &self.projection,
+            now_unix_ms(),
+        )
     }
 }
