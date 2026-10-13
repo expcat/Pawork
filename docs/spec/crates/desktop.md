@@ -155,7 +155,7 @@ pawork-desktop [--socket <path>] [--instance <name>] [--probe|--probe-smoke]
 ```
 
 - 手动 argv 解析；未知参数与非法 `--instance` 都打印 usage 并 exit 2。
-- `--instance` 在 desktop 内校验（不依赖 `pawork-app`）：trim 后非空，只允许 `[A-Za-z0-9._-]`，不得包含 `..`。空串、纯空白、路径分量（`../x`、`a/b`、`..`）以及空格或 `\` 拒绝。通过校验的名字原样保存。
+- `--instance` 在 desktop 内校验（不依赖 `pawork-app`）：trim 后非空，只允许 `[A-Za-z0-9._-]`，不得包含 `..`。空串、纯空白、路径分量（`../x`、`a/b`、`..`）以及空格或 `\` 拒绝。通过校验后保存去掉前后空白的名字，与 app 的 `normalize_instance` 收成同一实例。
 - socket 解析：`--socket` 直接指定；否则按 `--instance` 推导 `<data_dir>/pawork-gui[-{instance}].sock`（`default` 等价无后缀）。
 - `--instance` 与 `PAWORK_DATA_DIR` 只决定 socket 和数据目录，不隔离全局认证。认证文件仍是 `$PAWORK_HOME/auth.json`；未设置 `PAWORK_HOME` 时为 `~/.pawork/auth.json`。
 - `--probe`：不开窗。只 connect、取 snapshot、拉 `model_list`，打印一行 `connected: instance=… sessions=… models=… catalog=…` 后退出（成功 0 / 失败 1）。`fetch_models` 失败原样失败，不用空目录冒充成功。不选择模型、不发消息、不启动 run。

@@ -79,6 +79,7 @@
 | ✅ 完成 | [B19 · Desktop 终端响应与实例路径裁决](plan/b19-desktop-terminal-paths.md) | create 回执只保留 terminal_session_id；删除无生产调用的 socket/token wrapper。三项定向回归通过，独立 review / 复审 PASS；未执行真窗口或历史二进制验收。 |
 | ✅ 完成（真实探针）；独立 review PASS | [B20 · Desktop Probe 功能测试模型裁决](plan/b20-desktop-probe-models.md) | GLM 5.3 真实完成 / 取消 / 断线恢复与持久状态一致；修复终态先于运行槽释放的冲突。审批未触发、模型切换未覆盖。 |
 | ✅ 完成（模拟验收）；独立 review PASS；真实系统边界待验 | [B21 · Desktop 大小格式与词条入口裁决](plan/b21-desktop-format-i18n.md) | 附件与单/多工具摘要的英中文经 GPUI 产品链核对；复用 RV-01/02/03、GUI3-01 与 AC-05，保留格式与词条职责。 |
+| ✅ 实施完成（模拟验证）；终审 FAIL → 修正 → 复审代码项 ok；暂存未提交 | [B22 · 逐包架构审查与清理波](plan/b22-package-review-cleanup.md) | 按 §3.3 删除零消费者公开面与依赖边（361 → 351），拆 Desktop / computer-use 大文件；修正 git HEAD 三态、Provider 错误正文、配置原子写、持久 id 撞号、headless 重放、实例名路径逃逸。`TeamEvent` wire 删除、CU-25 音频状态机、全仓 rustfmt 待裁决。 |
 
 条件性工程项 RV-2026-10-A / RV-2026-10-C 的触发条件仍见 [backlog](spec/backlog.md#8-条件性工程项)。RV-2026-10-B 已由 B8 裁决关闭：保留导入副本，不物理去重。B10 对 RV-2026-10-A 的交叉说明仍在其任务文档。
 
