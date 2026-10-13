@@ -52,6 +52,8 @@ CU-21 的显式隔离 GuestSurface 与 raw `computer` 共用桌面占用，仍�
 
 本机后台目标（CU-02 目标契约 / CU-16 审批契约，正式生产接线由 CU-10 完成）：目标授权把应用或单源网站身份绑定 workspace/run。契约层已钉住的证据边界：台账授权拒绝（NotAuthorized、ForbiddenTarget）在绑定、观测登记、窗口校验与动作消费路径上一律先于任何 probe 调用（回归以 probe 计数为零断言）；网站目标的跨源裁决须经 `current_origin` 接缝复核窗口当前 origin（不触碰进程实例与捕获后端），同窗口跨源导航或 origin 不可得按 `SiteChanged` 拒绝。捕获前预检（`require_authorized`）同序执行——先查台账、再复核 origin（非消耗），拒绝时宿主不得连接 / 捕获 / 读取目标。ReadOnly / 未信任 workspace 的 Policy 拒绝已在原生 `NativeComputerTool` → `ToolScheduler` 产品链模拟中验证：工具执行前拒绝，后台计数为零；目标 request 不自批，通用工具审批拒绝与目标批准是独立闸门。正式 GUI 目标命令与工具共用同一 `Core.native` 台账。原生网站因无可信 `current_origin` 拒绝模型请求，不把网站契约写成可用能力；`SiteChanged` 的 origin 接缝读取不计作零 probe。授权粒度只覆盖用户选定的应用或网站源：整应用授权不覆盖其内网站，单源网站授权不覆盖浏览器与其它源。一次 / 本 Run 语义复用既有显式审批；自动 resolver 不能冒充显式批准，永远产生不了目标授权；逐目标持久授权不存在（持久允许仅走已裁决的 ApprovalMode / workspace trust 设置口径，可撤销）。Pawork 自身 UI（`dev.pawork.desktop`）与 OS 权限界面（System Settings、SecurityAgent、UserNotificationCenter、CoreServicesUIAgent）内置为受保护目标——默认构造即生效、大小写不敏感、宿主只能加不能减，永不授权、永不绑定，Agent 不能经 Pawork 审批界面或系统权限界面自我批准；OS Screen Recording / Accessibility / Automation 权限与 Pawork 目标授权分离，Pawork 不代用户批准系统权限，缺失由后端如实报告。撤销阻断后续动作，已执行历史如实保留。
 
+未开放的 computer use 能力（2026-10-13 复核）：锁屏使用、目标音频与 Windows 本机 / 独立会话后台均无生产路径。`Environment` 只有 `isolated_desktop` / `native_background`，`locked_use` 观测反序列化失败；动作、观察与 macOS 权限预检均不含音频，未启用即零采集；非 macOS 的本机后台由 `UnsupportedProbe` fail-closed。开放前须分别完成用户显式启用、特权组件 / 系统授权裁决与真实环境验收（[CU-24](../plan/cu-24-macos-locked-use.md)、[CU-25](../plan/cu-25-audio.md)、[CU-22](../plan/cu-22-windows-isolation.md)），不以普通 AX 后台、录音文件或容器结果替代。
+
 - `ToolDescriptor` 必须准确声明 `requires_approval`、`read_only`、`allowed_in_untrusted_workspace`。
 - 文件工具使用同一 policy 路径内核；执行前与 canonicalize 后均需防越界/TOCTOU。
 - GUI 工具审批以 `run_id + tool_call_id` 关联并持久化；等待前先落事件，resume 不得重跑副作用。
