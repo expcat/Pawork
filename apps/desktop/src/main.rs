@@ -87,7 +87,7 @@ where
                 if let Some(detail) = instance_name_error(name) {
                     return Err(format!("{detail}; {USAGE}"));
                 }
-                parsed.instance = Some(name.to_string());
+                parsed.instance = Some(name.trim().to_string());
             }
             "--probe" => parsed.probe = true,
             "--probe-smoke" => parsed.probe_smoke = true,
@@ -256,5 +256,7 @@ mod instance_args_tests {
             socket_path_for_instance(Some("default")),
             socket_path_for_instance(None)
         );
+        let padded = parse_args_from(["--instance", " dev-1 "]).expect("padded name");
+        assert_eq!(padded.instance.as_deref(), Some("dev-1"));
     }
 }

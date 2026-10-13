@@ -409,7 +409,7 @@ impl AppCore {
         to: (ProviderId, ModelId),
     ) -> Result<(), AppError> {
         let mut sequence = self.next_sequence(session).await?;
-        let run_id = RunId::from(format!("run-switch-{}", Timestamp::now().as_unix_millis()));
+        let run_id = RunId::from(crate::ids::process_unique("run-switch"));
         self.append_payload(
             session,
             &run_id,

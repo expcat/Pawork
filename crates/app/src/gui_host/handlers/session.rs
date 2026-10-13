@@ -1,5 +1,3 @@
-use std::sync::atomic::Ordering;
-
 use crate::app_core::PLACEHOLDER_SESSION_TITLE;
 use pawork_domain::{SessionId, Timestamp, WorkspaceId};
 use pawork_gui_server::GuiHostError;
@@ -201,8 +199,7 @@ pub(crate) async fn session_fork(
         .await
         .map_err(GuiHostAdapter::app_error)?;
     let store = core.store().map_err(GuiHostAdapter::app_error)?;
-    let n = adapter.next_fork.fetch_add(1, Ordering::Relaxed);
-    let branch_id = format!("fork-{}-{n}", Timestamp::now().as_unix_millis());
+    let branch_id = crate::ids::process_unique("fork");
     store
         .fork_from_event(session_id, &branch_id, parent_event_id)
         .await

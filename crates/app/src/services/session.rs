@@ -1,7 +1,6 @@
 //! Session 领域服务：会话生命周期、workspace 绑定、事件序列与 resume 语义。
 
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
 use pawork_domain::{
@@ -436,9 +435,8 @@ impl SessionService {
             )
             .await?,
         );
-        let n = core.next_message.fetch_add(1, Ordering::Relaxed);
         let message = Message {
-            id: MessageId::from(format!("msg-{}-{n}", Timestamp::now().as_unix_millis())),
+            id: MessageId::from(crate::ids::process_unique("msg")),
             role: MessageRole::Tool,
             content: vec![ContentPart::ToolResult(result)],
             metadata: Default::default(),

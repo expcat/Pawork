@@ -171,7 +171,7 @@ impl AppCore {
         event: PlanEvent,
     ) -> Result<(), AppError> {
         let mut sequence = self.next_sequence(session_id).await?;
-        let run_id = RunId::from(format!("run-plan-{sequence}"));
+        let run_id = RunId::from(crate::ids::process_unique("run-plan"));
         self.append_payload(session_id, &run_id, &mut sequence, AgentEvent::Plan(event))
             .await
             .map(|_| ())
@@ -219,6 +219,26 @@ mod tests {
             matches!(result, Err(AppError::StoreNotOpen)),
             "replay 失败必须上抛而非 fail-open: {result:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn plan_and_goal_events_persist_in_sessions_at_the_same_sequence() {
+        let (core, _dir) = crate::testsupport::mock_core(Vec::new()).await;
+        let first = core.create_session("first").await.expect("first session");
+        let second = core.create_session("second").await.expect("second session");
+        assert_eq!(
+            core.next_sequence(&first).await.expect("first sequence"),
+            core.next_sequence(&second).await.expect("second sequence"),
+        );
+        let goal = pawork_domain::GoalId::from("goal-shared");
+        for session in [&first, &second] {
+            core.plan_create(session, "plan", vec!["step".into()])
+                .await
+                .expect("plan event persisted");
+            core.pause_goal(session, &goal, "test")
+                .await
+                .expect("goal events persisted");
+        }
     }
 }
 

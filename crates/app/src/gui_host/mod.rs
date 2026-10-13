@@ -5,7 +5,6 @@
 //! 未支持命令一律结构化 fail-closed。
 
 use std::collections::HashMap;
-use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -96,7 +95,6 @@ pub struct GuiHostAdapter {
     approvals: Arc<GuiApprovalHost>,
     waiters: IdempotencyStore,
     instance: pawork_domain::CoreInstanceId,
-    next_fork: Arc<AtomicU64>,
     goals: handlers::goal::GoalFlights,
     goal_commands: Arc<tokio::sync::Mutex<()>>,
     pty: Arc<PtyService>,
@@ -166,7 +164,6 @@ impl GuiHostAdapter {
             approvals,
             waiters: IdempotencyStore::new(DEFAULT_IDEMPOTENCY_CAPACITY),
             instance,
-            next_fork: Arc::new(AtomicU64::new(1)),
             goals: Arc::new(Mutex::new(HashMap::new())),
             goal_commands: Arc::new(tokio::sync::Mutex::new(())),
             pty: Arc::new(PtyService::new()),

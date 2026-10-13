@@ -176,7 +176,7 @@ impl AppCore {
         event: GoalEvent,
     ) -> Result<(), AppError> {
         let mut sequence = self.next_sequence(session).await?;
-        let run = RunId::from(format!("run-goal-{sequence}"));
+        let run = RunId::from(crate::ids::process_unique("run-goal"));
         self.append_payload(session, &run, &mut sequence, AgentEvent::Goal(event))
             .await?;
         Ok(())
@@ -188,7 +188,7 @@ impl AppCore {
         reason: &str,
     ) -> Result<(), AppError> {
         let mut sequence = self.next_sequence(session).await?;
-        let run = RunId::from(format!("run-goal-{sequence}"));
+        let run = RunId::from(crate::ids::process_unique("run-goal"));
         self.append_payload(
             session,
             &run,
