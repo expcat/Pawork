@@ -71,7 +71,7 @@
 | ID | 候选 | 当前状态 | 激活条件 |
 | --- | --- | --- | --- |
 | BK-REMOTE-01 | 远程 GUI transport | 归档/候选 | 主干不保留远程 trait / `Remote` 端点；按当时 API 版本重评 TLS、认证、授权与远程威胁模型后重新设计接口。 |
-| BK-WORK-01 | 旧 teams / goal / automation / monitor 框架 | V2 reducer 已归档，事件保留；现行有预算 Goal 单独实现于 app | 旧框架仍需独立激活，不把新 Goal 当作整套框架复活。 |
+| BK-WORK-01 | 旧 teams / goal / automation / monitor 框架 | V2 reducer 已归档；无构造点的 `AppEvent::TeamEvent` wire 镜像已于 2026-10-13 删除（[B23](../plan/b23-team-event-removal.md)）；现行有预算 Goal 单独实现于 app | 旧框架仍需独立激活，不把新 Goal 当作整套框架复活；teams 复活时重新定型 wire 事件并先改 golden。 |
 | BK-GIT-01 | GUI Branch/Stash/Conflict/History/Commit | 归档/候选 | 产品定义 + host protocol + Policy；不得让 Desktop 直连 Git。 |
 | BK-GIT-02 | Desktop stage/unstage/hunk | 候选 | 新增双向 wire、审批/回滚语义和 Accepted ADR；当前 Changes 保持只读。B12（2026-10-08）已归档无消费者的 StageService / HunkStageService；冻结 git_stage 仍三通道不可用，不是实现。当前布局从提交 44a8848ed21caeb02fa6318332f4f882df951e3e 的 `crates/git/src/` 取回。tag `v2-final` 只有旧路径 `vcs/git/src/`，不作为当前布局恢复点，不把归档源码拷回主干。 |
 | BK-MCP-01 | MCP HTTP OAuth 登录 | 归档（B13，2026-10-08） | 生产接入前必须另立任务：宿主登录流程、callback 与 state 关联、token 只进独立 `mcp-auth.json` 的 `pawork.mcp.*`（不得写入 Provider 的 `pawork.<provider>.oauth`）、刷新轮换、transport 重建、失效与失败关闭。不新增冻结 wire 之前不能宣称已接线。当前布局从 `3c235c91a07ad348dd68c4dc18c01f4290bb9b2f` 的 `crates/mcp/src/oauth.rs` 取回。tag `v2-final` 的 `extensions/mcp/src/oauth.rs` blob 不同，不作为当前布局恢复点，不把归档源码拷回主干。 |

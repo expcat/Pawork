@@ -133,6 +133,8 @@ Workspace 为 **29 成员（27 库 + 2 应用）**：27 个库平铺 `crates/<�
 | 缓存注解（附加式） | `CanonicalModelRequest` 缓存策略枚举（`Off/Auto/Explicit{retention}`）+ 前缀分段标注；`ModelResponseSummary`/usage 增 `cache_read`/`cache_write`；serde 向后兼容 | golden 先行；方案见 [references.md](references.md) 附录 B（F5-B） |
 | 协议兼容表 | `PROTOCOL_CRATE_COMPATIBILITY` | `crates/protocol` |
 
+**删除 `AppEvent::TeamEvent`（2026-10-13，用户授权，[B23](plan/b23-team-event-removal.md)）**：`teams` 随 R0 归档后，该变体与 Team 镜像类型在仓内没有构造点，唯一引用是 ACP 的种类字符串。删除后 `AppEvent` 为 22 变体，三组 `schemas/` 同批去掉 Team 声明。历史上没有 Host 发出过 `team_event` 帧，所以不提升 minor；帧 golden、domain `AgentEvent` 与存储 schema 不变。
+
 ### 3.3 消费面纪律与路径校验
 
 - **无消费者不合入**：任何保留在主 workspace 的模块必须有真实装配点（生产调用链或已登记的激活条件）；零消费者代码归档，不以 experimental feature 库存。

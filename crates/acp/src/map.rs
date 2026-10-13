@@ -281,6 +281,5 @@ pub fn app_event_kind(event: &AppEvent) -> &'static str {
         AppEvent::GuiClientDisconnected { .. } => "gui_client_disconnected",
         AppEvent::QuotaChanged { .. } => "quota_changed",
         AppEvent::QuotaAlert { .. } => "quota_alert",
-        AppEvent::TeamEvent { .. } => "team_event",
     }
 }
