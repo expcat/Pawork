@@ -52,7 +52,7 @@
 | 当前环境核查与拒绝回归通过，独立 review PASS；Windows 原生待环境 | [CU-22 · Windows 独立会话 / VM 后台能力](plan/cu-22-windows-isolation.md) | 后续平台 | 当前安装 / VM / 容器范围未发现独立 Windows 客户机；UnsupportedProbe 既有拒绝回归 1 passed，不冒充 UIA 或原生验收。 |
 | ✅ 可行性完成；初审 P2 修后独立复审 PASS；生产 Wayland 未实现 | [CU-23 · Wayland 隔离后台路线可行性](plan/cu-23-wayland-feasibility.md) | 后续平台 | Sway 1.7 / wlroots 0.15.1 的专用 seat 截图、点击与按键有原始事件和整帧像素证据；隔离与拒绝边界通过，portal 与生产接线另列缺口。 |
 | 设计完成；契约拒绝模拟通过；独立 review / 复审 PASS；系统安装/授权与真实锁屏待环境 | [CU-24 · macOS 锁屏使用独立设计与验证](plan/cu-24-macos-locked-use.md) | 后续能力 | 研究并验证锁屏下的受限后台操作，不把普通 AX 后台操作等同锁屏支持。 |
-| 设计完成；契约拒绝模拟通过；独立 review / 复审 PASS；系统授权/真实采集与模型音频待环境 | [CU-25 · 显式授权的目标音频采集](plan/cu-25-audio.md) | 后续能力 | 补齐目标音频录制或模型使用链路，并明确二者的能力边界。 |
+| 设计完成；独立 review / 复审 PASS；测试内拒绝模拟已按 2026-10-13 用户裁决删除（B22）；系统授权/真实采集与模型音频待环境 | [CU-25 · 显式授权的目标音频采集](plan/cu-25-audio.md) | 后续能力 | 补齐目标音频录制或模型使用链路，并明确二者的能力边界。 |
 
 ## 待裁决：API 与产品取舍
 

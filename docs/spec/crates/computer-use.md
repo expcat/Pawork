@@ -52,7 +52,7 @@ B22 按既有分节把两个大文件拆成目录模块，只移动代码，公�
 | `src/target/ax_tree.rs` | ~423 | CU-05 有界树、元素查找与后台能力判定 |
 | `src/target/actions.rs` | ~313 | CU-06 / 07 / 08 语义动作、定向输入与指针动作契约，至 `ActivityProof` |
 | `src/target/registry.rs` | ~1112 | 记录、`Validated*`、`TargetState`、`TargetRegistry`（句柄、租约、占用与派发消费） |
-| `src/target/tests.rs` | ~2095 | 契约拒绝回归 |
+| `src/target/tests.rs` | ~1913 | 契约拒绝回归 |
 | `src/macos/mod.rs` | ~1456 | 模块说明、公开类型、`MacosNative` 与 `NativeProbe` 实现、共享 Objective-C helper |
 | `src/macos/discovery.rs` | ~340 | 进程实例、无激活启动、应用族分类、窗口枚举 |
 | `src/macos/ax.rs` | ~522 | AXWindows 与窗口服务器条目交叉校验、读预算 |
@@ -173,7 +173,7 @@ CU-10 native R3 补修交付（2026-10-09，待复审）：删除首组豁免，
 
 CU-24 设计与拒绝边界（2026-10-10）：锁屏使用仍无生产路径，`Environment` 契约只表达 `isolated_desktop` 与 `native_background`；新增 `locked_use_environment_is_rejected_by_the_contract` 钉住两值序列化并证明 `locked_use` 观测 JSON 反序列化失败。设计要求宿主活跃 turn 签发单次短期解锁尝试，普通 Once / ForRun 批准不解锁；停用先撤销尝试并恢复锁定，卸载失败保持拒绝态。特权组件、系统安装与授权、真实锁屏序列均未实施 / 未验收，不以普通 AX 后台能力替代。
 
-CU-25 设计与拒绝边界（2026-10-10）：目标音频仍无生产入口，动作、观察、环境契约与 macOS 权限预检均不含音频。测试 fixture 钉住默认关闭、真实范围未证隔离即 Unsupported、撤销 / 停止 / 取消 / 终态拒绝后续请求、预算拒绝与最终 NotImplemented；设计要求已启动流立即中止并丢弃迟到缓冲。真实采集、OS 音频授权、在途释放与 Provider 音频输入待环境，保存录音不等于模型收到音频。
+CU-25 设计边界（2026-10-10）：目标音频仍无生产入口，动作、观察、环境契约与 macOS 权限预检均不含音频。原测试内的音频拒绝模拟（`audio_capture_is_rejected_by_the_contract`）只在测试里运行、不对应任何生产代码，已按 2026-10-13 用户裁决删除（[B22](../../plan/b22-package-review-cleanup.md)）；拒绝规则仍以 [CU-25 设计](../../plan/cu-25-audio.md) 为准，真正接入音频时要和生产入口同批重写回归。真实采集、OS 音频授权、在途释放与 Provider 音频输入待环境，保存录音不等于模型收到音频。
 
 ## 8. 相关文档
 
