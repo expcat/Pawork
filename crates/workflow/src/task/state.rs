@@ -24,14 +24,6 @@ pub fn is_terminal_status(status: TaskStatus) -> bool {
     )
 }
 
-/// 任务是否仍可转移（Queued / Running / Suspended）。
-pub fn is_active_status(status: TaskStatus) -> bool {
-    matches!(
-        status,
-        TaskStatus::Queued | TaskStatus::Running | TaskStatus::Suspended
-    )
-}
-
 /// 任务的只读快照（serde 可序列化，用于 snapshot / 重连恢复）。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskSnapshot {
@@ -108,8 +100,7 @@ impl TaskRecord {
 
 /// 后台任务聚合状态：任务表 + 事件日志。
 ///
-/// `apply` 是唯一的折叠入口；命令方法通过它落状态。日志只追加，
-/// `events_since(seq)` 用日志下标直接切片（seq 与下标一一对应）。
+/// `apply` 是唯一的折叠入口；命令方法通过它落状态。日志只追加。
 #[derive(Clone, Debug, Default)]
 pub struct TaskManagerState {
     pub(crate) tasks: BTreeMap<BackgroundTaskId, TaskRecord>,
@@ -224,11 +215,6 @@ impl TaskManagerState {
     /// 只读：完整事件日志。
     pub fn event_log(&self) -> Vec<TaskEvent> {
         self.log.clone()
-    }
-
-    /// 只读：`seq` 之后的增量事件（重连恢复用）。
-    pub fn events_since(&self, seq: u64) -> Vec<TaskEvent> {
-        self.log.get(seq as usize..).unwrap_or_default().to_vec()
     }
 
     /// 命令辅助：注册（Queued，不发事件，重放不可见——queued 属于持久化前瞬态）。

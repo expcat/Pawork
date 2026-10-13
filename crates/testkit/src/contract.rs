@@ -66,14 +66,6 @@ pub fn assert_parallel_tool_calls(events: &[ProviderStreamEvent]) {
     }
 }
 
-/// 统计某个事件变体的数量（测试辅助）。
-pub fn count_variant<F>(events: &[ProviderStreamEvent], predicate: F) -> usize
-where
-    F: Fn(&ProviderStreamEvent) -> bool,
-{
-    events.iter().filter(|e| predicate(e)).count()
-}
-
 #[cfg(test)]
 mod tests {
     use pawork_domain::{StopReason, ToolCallId};
@@ -91,12 +83,6 @@ mod tests {
     #[test]
     fn text_assertions_pass_on_valid_stream() {
         assert_text_stream(&text_events());
-        assert_eq!(
-            count_variant(&text_events(), |e| {
-                matches!(e, ProviderStreamEvent::TextDelta(_))
-            }),
-            1
-        );
     }
 
     #[test]

@@ -7,8 +7,7 @@
 //! - 状态机：`queued → running → suspended → completed | failed | canceled`，
 //!   所有转移发出 canonical [`TaskEvent`]，可持久化可重放。
 //! - 断连续存：任务运行与连接解耦——in-memory 任务表 + 事件日志，
-//!   `snapshot()` / `replay()` 恢复任务视图，`events_since` 续读增量；
-//!   CLI/GUI 断连不影响任务执行。
+//!   `snapshot()` / `replay()` 恢复任务视图；CLI/GUI 断连不影响任务执行。
 //! - 取消传播：取消 parent task 沿 `parent_task_id` 链传播到全部后代，无孤儿。
 //! - 执行所有权：本构建是纯状态机，不拉 `pawork-exec`。本模块只编排状态与事件，
 //!   不直连启动子进程、不自造进程树清理、不自定 sandbox policy。
@@ -16,9 +15,8 @@
 //!
 //! # 接口
 //!
-//! [`TaskManager`]：命令面（register / start / suspend / resume / finish /
-//! cancel）与查询面（task / tasks / snapshot / event_log / events_since /
-//! replay）+ 实时事件订阅 `subscribe`。
+//! [`TaskManager`]：命令面（register / start / finish / cancel）与查询面
+//! （task / tasks / snapshot / event_log / replay）。
 //! [`TaskManagerState`]：纯聚合状态，`apply` 为事件折叠 / 重放唯一入口。
 //!
 //! # 事件与持久化
@@ -34,6 +32,4 @@ mod state;
 
 pub use error::TaskManagerError;
 pub use manager::TaskManager;
-pub use state::{
-    is_active_status, is_terminal_status, TaskManagerSnapshot, TaskManagerState, TaskSnapshot,
-};
+pub use state::{is_terminal_status, TaskManagerSnapshot, TaskManagerState, TaskSnapshot};

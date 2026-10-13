@@ -9,7 +9,9 @@
 
 mod identity;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+#[cfg(test)]
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::{AppCommandEnvelope, AppEventEnvelope, AppQueryEnvelope, AppResponseEnvelope};
@@ -21,12 +23,12 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 
 pub use identity::{
-    ExternalAgentIdentity, IdentityError, TenantBinding, TrustedTenantContext, bind_tenant,
+    bind_tenant, ExternalAgentIdentity, IdentityError, TenantBinding, TrustedTenantContext,
 };
 pub use pawork_domain::{
-    CLIENT_ADAPTER_SCHEMA_VERSION, CapabilitySnapshot, ClientCapability, ClientProtocol,
-    ClientSessionId, ClientSessionRecord, ClientSessionState, RegistryWriteOutcome,
-    SessionRegistryError, SessionRegistryStore,
+    CapabilitySnapshot, ClientCapability, ClientProtocol, ClientSessionId, ClientSessionRecord,
+    ClientSessionState, RegistryWriteOutcome, SessionRegistryError, SessionRegistryStore,
+    CLIENT_ADAPTER_SCHEMA_VERSION,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -230,20 +232,23 @@ pub struct AdapterSessionContext {
 
 /// 协议 contract 测试使用的最小 adapter；它只翻译 canonical JSON，未知字段
 /// 显式失败，不包含账号、Provider 或业务决策。
+#[cfg(test)]
 pub struct MockClientAdapter {
     protocol: ClientProtocol,
     capabilities: CapabilitySnapshot,
 }
 
-/// Contract tests and protocol hosts use this factory to exercise the same
-/// fail-closed negotiation path as concrete adapters. A factory is scoped to
-/// one protocol and an explicit capability allowlist; it never infers support
-/// from a client name or silently drops an unknown capability.
+/// Contract tests use this factory to exercise the same fail-closed
+/// negotiation path as concrete adapters. A factory is scoped to one protocol
+/// and an explicit capability allowlist; it never infers support from a
+/// client name or silently drops an unknown capability.
+#[cfg(test)]
 pub struct MockClientAdapterFactory {
     protocol: ClientProtocol,
     supported_capabilities: BTreeSet<ClientCapability>,
 }
 
+#[cfg(test)]
 impl MockClientAdapterFactory {
     pub fn new(
         protocol: ClientProtocol,
@@ -256,6 +261,7 @@ impl MockClientAdapterFactory {
     }
 }
 
+#[cfg(test)]
 impl ClientAdapterFactory for MockClientAdapterFactory {
     fn protocol(&self) -> &ClientProtocol {
         &self.protocol
@@ -282,6 +288,7 @@ impl ClientAdapterFactory for MockClientAdapterFactory {
     }
 }
 
+#[cfg(test)]
 impl MockClientAdapter {
     pub fn new(capabilities: CapabilitySnapshot) -> Result<Self, AdapterError> {
         capabilities.validate()?;
@@ -292,6 +299,7 @@ impl MockClientAdapter {
     }
 }
 
+#[cfg(test)]
 #[async_trait]
 impl ClientAdapter for MockClientAdapter {
     fn protocol(&self) -> &ClientProtocol {
@@ -848,8 +856,8 @@ mod tests {
     #[tokio::test]
     async fn mock_adapter_encodes_all_canonical_frames() {
         use crate::{
-            API_VERSION, AppEvent, AppEventEnvelope, AppResponse, AppResponseEnvelope, EventSource,
-            EventStream, GlobalSequence,
+            AppEvent, AppEventEnvelope, AppResponse, AppResponseEnvelope, EventSource, EventStream,
+            GlobalSequence, API_VERSION,
         };
         use pawork_domain::{CoreInstanceId, QueryId};
 

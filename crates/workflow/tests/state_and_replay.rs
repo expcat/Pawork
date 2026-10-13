@@ -51,14 +51,6 @@ fn legal_lifecycle_emits_events() {
     ));
     assert_eq!(mgr.task(&id).unwrap().status, TaskStatus::Running);
 
-    let suspended = mgr.suspend(&id).unwrap();
-    assert!(matches!(suspended, TaskEvent::Suspended { task_id } if task_id == id));
-    assert_eq!(mgr.task(&id).unwrap().status, TaskStatus::Suspended);
-
-    let resumed = mgr.resume(&id).unwrap();
-    assert!(matches!(resumed, TaskEvent::Resumed { task_id } if task_id == id));
-    assert_eq!(mgr.task(&id).unwrap().status, TaskStatus::Running);
-
     let finished = mgr
         .finish(&id, TaskStatus::Completed, Some("done".into()))
         .unwrap();
@@ -71,7 +63,7 @@ fn legal_lifecycle_emits_events() {
         } if task_id == id
     ));
     assert_eq!(mgr.task(&id).unwrap().status, TaskStatus::Completed);
-    assert_eq!(mgr.event_log().len(), 4);
+    assert_eq!(mgr.event_log().len(), 2);
 }
 
 #[test]
@@ -79,14 +71,6 @@ fn illegal_transitions_rejected() {
     let mgr = manager();
     let id = mgr.register(TaskKind::Process, None).unwrap();
 
-    assert!(matches!(
-        mgr.suspend(&id),
-        Err(TaskManagerError::InvalidTransition { .. })
-    ));
-    assert!(matches!(
-        mgr.resume(&id),
-        Err(TaskManagerError::InvalidTransition { .. })
-    ));
     assert!(matches!(
         mgr.finish(&id, TaskStatus::Completed, None),
         Err(TaskManagerError::InvalidTransition { .. })
@@ -97,17 +81,6 @@ fn illegal_transitions_rejected() {
         mgr.start(&id),
         Err(TaskManagerError::InvalidTransition { .. })
     ));
-    assert!(matches!(
-        mgr.resume(&id),
-        Err(TaskManagerError::InvalidTransition { .. })
-    ));
-
-    mgr.suspend(&id).unwrap();
-    assert!(matches!(
-        mgr.suspend(&id),
-        Err(TaskManagerError::InvalidTransition { .. })
-    ));
-    mgr.resume(&id).unwrap();
 
     assert!(matches!(
         mgr.finish(&id, TaskStatus::Canceled, None),
@@ -116,10 +89,6 @@ fn illegal_transitions_rejected() {
     mgr.finish(&id, TaskStatus::Completed, None).unwrap();
     assert!(matches!(
         mgr.finish(&id, TaskStatus::Completed, None),
-        Err(TaskManagerError::InvalidTransition { .. })
-    ));
-    assert!(matches!(
-        mgr.suspend(&id),
         Err(TaskManagerError::InvalidTransition { .. })
     ));
 
@@ -146,13 +115,12 @@ fn snapshot_and_replay_rebuild_view() {
     let child = mgr.register(TaskKind::Agent, Some(parent.clone())).unwrap();
     mgr.start(&parent).unwrap();
     mgr.start(&child).unwrap();
-    mgr.suspend(&child).unwrap();
     mgr.finish(&parent, TaskStatus::Completed, Some("ok".into()))
         .unwrap();
 
     let snapshot = mgr.snapshot();
     assert_eq!(snapshot.tasks.len(), 2);
-    assert_eq!(snapshot.events.len(), 4);
+    assert_eq!(snapshot.events.len(), 3);
 
     // 事件日志可 JSON 序列化 / 反序列化（持久化 + 重放输入）。
     let json = serde_json::to_string(&snapshot).unwrap();
@@ -162,10 +130,10 @@ fn snapshot_and_replay_rebuild_view() {
     // 全新 manager 重放后重建出相同视图。
     let mgr2 = manager();
     let count = mgr2.replay(restored.events).unwrap();
-    assert_eq!(count, 4);
+    assert_eq!(count, 3);
     assert_eq!(mgr2.snapshot(), snapshot);
     assert_eq!(mgr2.task(&parent).unwrap().status, TaskStatus::Completed);
-    assert_eq!(mgr2.task(&child).unwrap().status, TaskStatus::Suspended);
+    assert_eq!(mgr2.task(&child).unwrap().status, TaskStatus::Running);
     assert_eq!(
         mgr2.task(&child).unwrap().parent_task_id.as_ref(),
         Some(&parent)
@@ -323,22 +291,54 @@ fn shared_cancel_token_stops_real_executor() {
 }
 
 #[test]
-fn events_since_returns_increment() {
+fn replayed_suspend_and_resume_rebuild_and_host_can_finish_or_cancel() {
+    let id = BackgroundTaskId::new("task_hist");
+    let events = vec![
+        TaskEvent::Started {
+            task_id: id.clone(),
+            task_kind: TaskKind::Agent,
+            parent_task_id: None,
+        },
+        TaskEvent::Suspended {
+            task_id: id.clone(),
+        },
+        TaskEvent::Resumed {
+            task_id: id.clone(),
+        },
+        TaskEvent::Suspended {
+            task_id: id.clone(),
+        },
+    ];
+
     let mgr = manager();
-    let id = mgr.register(TaskKind::Automation, None).unwrap();
-    assert!(mgr.events_since(0).is_empty());
+    assert_eq!(mgr.replay(events.clone()).unwrap(), 4);
+    assert_eq!(mgr.task(&id).unwrap().status, TaskStatus::Suspended);
 
-    mgr.start(&id).unwrap();
-    assert_eq!(mgr.events_since(0).len(), 1);
-    let cursor = mgr.event_log().len() as u64;
+    let snapshot = mgr.snapshot();
+    let json = serde_json::to_string(&snapshot).unwrap();
+    let restored: pawork_workflow::task::TaskManagerSnapshot = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored, snapshot);
 
-    mgr.suspend(&id).unwrap();
-    mgr.resume(&id).unwrap();
-    let increment = mgr.events_since(cursor);
-    assert_eq!(increment.len(), 2);
-    assert!(matches!(increment[0], TaskEvent::Suspended { .. }));
-    assert!(matches!(increment[1], TaskEvent::Resumed { .. }));
-    assert!(mgr.events_since(100).is_empty());
+    let mgr2 = manager();
+    mgr2.replay(restored.events).unwrap();
+    assert_eq!(mgr2.task(&id).unwrap().status, TaskStatus::Suspended);
+    mgr2.finish(&id, TaskStatus::Completed, Some("after suspend".into()))
+        .unwrap();
+    assert_eq!(mgr2.task(&id).unwrap().status, TaskStatus::Completed);
+    assert_eq!(mgr2.event_log().len(), 5);
+
+    let mgr3 = manager();
+    mgr3.replay(events).unwrap();
+    let canceled = mgr3.cancel(&id).unwrap();
+    assert_eq!(canceled.len(), 1);
+    assert!(matches!(
+        &canceled[0],
+        TaskEvent::Finished {
+            status: TaskStatus::Canceled,
+            ..
+        }
+    ));
+    assert_eq!(mgr3.task(&id).unwrap().status, TaskStatus::Canceled);
 }
 
 #[test]

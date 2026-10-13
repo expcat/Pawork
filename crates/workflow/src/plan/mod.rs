@@ -2,11 +2,9 @@
 //!
 //! # 职责
 //! Plan 是 Agent 在动手前产出的「只读建议」——有序、可勾选的步骤序列。本
-//! crate 提供进程内内存的 Plan 聚合：步骤状态机（`pending → in_progress →
-//! completed | blocked`，`blocked → in_progress`）、版本替换与修订链、评审
-//! 状态机（`draft → in_review → changes_requested → approved | rejected`）、
-//! 行锚点评审意见与审批 gate，以及 event-sourcing 的 [`apply`] / [`replay`]
-//! 恢复入口。
+//! crate 提供进程内内存的 Plan 聚合：版本替换、评审提交与审批 gate，以及
+//! event-sourcing 的 [`apply`] / [`replay`] 恢复入口。历史事件里的步骤推进、
+//! 修订与行锚点意见仍由 `apply` 折叠，不经现行命令面发出。
 //!
 //! # 关键约束（只读）
 //! Plan **不携带任何写入 / 工具执行能力**：[`PlanService`] 不暴露 spawn /
@@ -31,4 +29,4 @@ mod state;
 pub use error::PlanError;
 pub use service::PlanService;
 pub use snapshot::{PlanSnapshot, PlanVersionInfo};
-pub use state::{apply, is_legal_step_transition, replay, PlanComment, PlanState};
+pub use state::{apply, replay, PlanComment, PlanState};

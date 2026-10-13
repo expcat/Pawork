@@ -1,59 +1,31 @@
-//! 后台任务管理器：统一注册 / 状态机 / 事件广播。
+//! 后台任务管理器：统一注册与状态机。
 //!
 //! 本构建是纯状态机，不持有 `SandboxBackend`。本模块只编排事件转发与状态机，
 //! 不直接启动子进程、不自行清理进程树、不自定义 sandbox policy。
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use pawork_domain::AgentEvent;
 use pawork_domain::{BackgroundTaskId, CancellationToken, TaskEvent, TaskKind, TaskStatus};
-use tokio::sync::broadcast;
 
 use crate::task::error::TaskManagerError;
 use crate::task::state::{TaskManagerSnapshot, TaskManagerState, TaskSnapshot};
 
-/// 实时事件广播默认容量；超出的订阅者会收到 `RecvError::Lagged`，
-/// 此时应通过 `snapshot()` + `events_since()` 重连恢复。
-const DEFAULT_BROADCAST_CAPACITY: usize = 256;
-
-struct TaskManagerInner {
-    state: Mutex<TaskManagerState>,
-    live: broadcast::Sender<AgentEvent>,
-}
-
 /// 统一后台任务管理器（process / agent / monitor / automation）。
 ///
 /// 任务运行与连接解耦：任务表 + 事件日志常驻进程内，`snapshot()` /
-/// `replay()` 恢复任务视图，`events_since` 续读增量；CLI/GUI 断连不影响
-/// 任务执行。
+/// `replay()` 恢复任务视图；CLI/GUI 断连不影响任务执行。持久化事实源是
+/// 事件日志，调用方经 `event_log()` 取出后自行落盘。
 #[derive(Clone)]
 pub struct TaskManager {
-    inner: Arc<TaskManagerInner>,
+    state: Arc<Mutex<TaskManagerState>>,
 }
 
 impl TaskManager {
     /// 纯状态机构造：无沙箱后端，不拉 `pawork-exec`。
     pub fn new() -> Self {
-        Self::with_capacity(DEFAULT_BROADCAST_CAPACITY)
-    }
-
-    /// 同 [`TaskManager::new`]，可自定义实时事件广播容量（测试用）。
-    pub fn with_capacity(capacity: usize) -> Self {
-        let (live, _) = broadcast::channel(capacity);
         Self {
-            inner: Arc::new(TaskManagerInner {
-                state: Mutex::new(TaskManagerState::new()),
-                live,
-            }),
+            state: Arc::new(Mutex::new(TaskManagerState::new())),
         }
-    }
-
-    /// 订阅实时事件流（`AgentEvent::Task(...)`）。
-    ///
-    /// 收到 `RecvError::Lagged` 表示错过事件：先 `snapshot()` 重建视图，
-    /// 再用 `events_since` 续读增量。
-    pub fn subscribe(&self) -> broadcast::Receiver<AgentEvent> {
-        self.inner.live.subscribe()
     }
 
     /// 注册任务（状态 Queued，不发事件；`start` 后才进入可重放事件流）。
@@ -99,29 +71,12 @@ impl TaskManager {
         };
         let _ = record;
         state.apply(&event)?;
-        drop(state);
-        self.broadcast(AgentEvent::Task(event.clone()));
         Ok(event)
-    }
-
-    /// 挂起任务：Running → Suspended，发出 `TaskEvent::Suspended`。
-    ///
-    /// 进程类任务为逻辑挂起（输出继续缓冲）；OS 级暂停由 adapter 落地。
-    pub fn suspend(&self, task_id: &BackgroundTaskId) -> Result<TaskEvent, TaskManagerError> {
-        self.transition(TaskEvent::Suspended {
-            task_id: task_id.clone(),
-        })
-    }
-
-    /// 恢复任务：Suspended → Running，发出 `TaskEvent::Resumed`。
-    pub fn resume(&self, task_id: &BackgroundTaskId) -> Result<TaskEvent, TaskManagerError> {
-        self.transition(TaskEvent::Resumed {
-            task_id: task_id.clone(),
-        })
     }
 
     /// 完成任务：Running / Suspended → Completed | Failed，发出
     /// `TaskEvent::Finished`。Canceled 必须走 [`TaskManager::cancel`]。
+    /// `Suspended` 只由历史事件折叠而来，`finish` 仍接受该前置状态。
     pub fn finish(
         &self,
         task_id: &BackgroundTaskId,
@@ -148,8 +103,6 @@ impl TaskManager {
             detail,
         };
         state.apply(&event)?;
-        drop(state);
-        self.broadcast(AgentEvent::Task(event.clone()));
         Ok(event)
     }
 
@@ -200,9 +153,6 @@ impl TaskManager {
         for token in tokens {
             token.cancel();
         }
-        for event in &events {
-            self.broadcast(AgentEvent::Task(event.clone()));
-        }
         Ok(events)
     }
 
@@ -226,15 +176,7 @@ impl TaskManager {
         self.lock().event_log()
     }
 
-    /// 只读：`seq` 之后的增量事件。
-    pub fn events_since(&self, seq: u64) -> Vec<TaskEvent> {
-        self.lock().events_since(seq)
-    }
-
     /// 重放：把事件序列折叠进状态，重建任务视图（断连 / 重启恢复入口）。
-    ///
-    /// 重放只重建状态与日志，不重复广播；事件本身应由调用方持久化
-    /// （经 `pawork_domain::AgentEvent::Task` 写入 session-store）。
     pub fn replay(
         &self,
         events: impl IntoIterator<Item = TaskEvent>,
@@ -248,21 +190,8 @@ impl TaskManager {
         Ok(count)
     }
 
-    fn transition(&self, event: TaskEvent) -> Result<TaskEvent, TaskManagerError> {
-        let mut state = self.lock();
-        state.apply(&event)?;
-        drop(state);
-        self.broadcast(AgentEvent::Task(event.clone()));
-        Ok(event)
-    }
-
-    fn broadcast(&self, event: AgentEvent) {
-        let _ = self.inner.live.send(event);
-    }
-
     fn lock(&self) -> MutexGuard<'_, TaskManagerState> {
-        self.inner
-            .state
+        self.state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }

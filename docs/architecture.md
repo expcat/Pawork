@@ -31,7 +31,7 @@ Workspace 为 **29 成员（27 库 + 2 应用）**：27 个库平铺 `crates/<�
 
 | 包 | 目录 | 依赖方向 | 备注 |
 | --- | --- | --- | --- |
-| `pawork-domain` | `crates/domain` | 无内部依赖 | canonical 纯净红线；`provider_api/`（ModelProvider、CanonicalModelRequest、ProviderStreamEvent 13 变体、ProviderError、ResolvedCredential）与 `tool_api/`（AgentTool、ToolResult）；事件信封 v1 与契约字节 golden 在本包 tests/ |
+| `pawork-domain` | `crates/domain` | 无内部依赖 | canonical 纯净红线；`provider_api/`（ModelProvider、CanonicalModelRequest、ProviderStreamEvent 14 变体、ProviderError、ResolvedCredential）与 `tool_api/`（AgentTool、ToolResult）；事件信封 v1 与契约字节 golden 在本包 tests/ |
 | `pawork-protocol` | `crates/protocol` | → domain | GUI 帧 / headless-json / core-api / typegen（检入 `schemas/` 三产物）；`app/registry`（三通道登记单源）+ `projection/`（共享投影 reducer） |
 | `pawork-testkit` | `crates/testkit` | → domain | dev-only：MockProvider/MockTool/契约断言 |
 | `pawork-policy` | `crates/policy` | → domain | 安全内核；`PolicyDecision`/`ApprovalMode` 冻结契约与红线回归锚；shell 风险分类；`path` 内核 |
@@ -53,7 +53,7 @@ Workspace 为 **29 成员（27 库 + 2 应用）**：27 个库平铺 `crates/<�
 | `pawork-acp` | `crates/acp` | → domain、protocol | ACP wire、映射、会话 actor、AcpCommandHost 端口；无 CLI / app 依赖 |
 | `pawork-gateway` | `crates/gateway` | → domain、auth | loopback HTTP/SSE、token、GatewayBackend；不依赖 Core/Provider/数据库 |
 | `pawork-app` | `crates/app` | → domain、engine、models、providers、auth、tools、computer-use、mcp、policy、workspace、exec、storage、git、workflow、orchestration、control-plane、protocol、transport、gui-server、gateway | AppCore / gui_host / GatewayBackend 实现；账户、租约、账本、工具与事件装配 |
-| `pawork-cli` | `crates/cli` | → app、client、domain、engine、protocol、storage、transport、gui-server、acp、gateway | 子命令、REPL、stdio / listener / 进程生命周期装配 |
+| `pawork-cli` | `crates/cli` | → app、client、domain、engine、models、protocol、storage、transport、gui-server、acp、gateway | 子命令、REPL、stdio / listener / 进程生命周期装配 |
 | `pawork-client` | `crates/client` | → domain、protocol、transport | framed 连接面 + `headless/`；probe 场景为本包 tests/，live 模式 `examples/probe.rs` |
 | `pawork-terminal` | `crates/terminal` | 无内部依赖 | 终端显示核心：行缓冲解析（CR/退格/擦除/光标/折行/SGR 16 色）、按键→PTY 字节映射、面板像素→列×行估算；不是完整 VT emulator |
 | `pawork-computer-use` | `crates/computer-use` | 无内部依赖 | 独立虚拟桌面截图与输入、本机后台目标契约（本地 RFB / 容器内 Xvnc / macOS 原生探针），不使用本机 HID；不依赖 GUI / Core / Provider；CU-17 起 app 直接依赖承载 GUI 目标注册表，模型侧 tools 适配另行任务 |
@@ -119,7 +119,7 @@ Workspace 为 **29 成员（27 库 + 2 应用）**：27 个库平铺 `crates/<�
 
 | 契约 | 形状要点 | golden / 锚位置 |
 | --- | --- | --- |
-| Provider 契约 | `ModelProvider`（`id`/`list_models`/`stream`）、`CanonicalModelRequest`（ADR-057 可选 `session_id`，缺省 None；真实会话入口传递）、`ProviderStreamEvent`（13 变体，tag=`type`/content=`data`）、`ModelResponseSummary`、`ResolvedCredential`（Debug 脱敏、无 Serialize）、`ProviderError` | `crates/domain`（`provider_api`）+ tests/ 契约 golden |
+| Provider 契约 | `ModelProvider`（`id`/`list_models`/`stream`）、`CanonicalModelRequest`（ADR-057 可选 `session_id`，缺省 None；真实会话入口传递）、`ProviderStreamEvent`（14 变体，tag=`type`/content=`data`）、`ModelResponseSummary`、`ResolvedCredential`（Debug 脱敏、无 Serialize）、`ProviderError` | `crates/domain`（`provider_api`）+ tests/ 契约 golden |
 | 事件信封 | `AgentEventEnvelope`（`schema_version = 1`、`event_id/session_id/run_id/sequence/timestamp/parent_event_id/payload`）、`AgentEvent` 32 变体（含 `Diagnostic`）；与 SQLite migration 版本相互独立 | 信封字节 golden `crates/domain/tests/events_golden.rs` |
 | 会话存储 | `session_events` DDL（`UNIQUE(session_id, sequence)`、`CHECK(sequence > 0)`）、append-only 双触发器、`AppendReceipt`；DB `CURRENT_SCHEMA_VERSION = 14`（v11 = `command_ledger` 宿主幂等表，纯新增不进 export；v12 = 分支 lineage 原生化，`messages` 整表重建去 `DEFAULT 'main'`、回填即校验孤儿行 fail-closed；v13 = `sessions.workspace_id` 归属弱引用列，纯追加不回填；v14 = `workspaces` 持久项目注册表，空表不回填、`root_path` UNIQUE）；import/export v3；fork 分支（`fork_from_event`） | DDL/迁移锚 `crates/storage/src/session/migration.rs`；升级 golden `crates/storage/src/session/fixtures/`（v9→v14 链；lineage 期望文件沿用 `v12_*`） |
 | 工具契约 | `AgentTool`（`descriptor`/`execute`）、`ToolEventSink`、`ToolExecutionContext`（`workspace_id` + 相对 `working_directory`）、`ToolDescriptor`（含 `requires_approval`/`read_only`/`allowed_in_untrusted_workspace`） | `crates/domain::tool_api` |

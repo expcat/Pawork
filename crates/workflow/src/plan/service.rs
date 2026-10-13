@@ -8,13 +8,13 @@
 use std::sync::{Mutex, PoisonError};
 
 use pawork_domain::{
-    CheckpointId, PlanCommentAnchor, PlanEvent, PlanId, PlanReviewStatus, PlanStepId,
-    PlanStepSnapshot, PlanStepStatus, PlanVersionId,
+    CheckpointId, PlanEvent, PlanId, PlanReviewStatus, PlanStepId, PlanStepSnapshot,
+    PlanStepStatus, PlanVersionId,
 };
 
 use super::error::PlanError;
-use super::snapshot::{PlanSnapshot, PlanVersionInfo};
-use super::state::{apply, is_legal_step_transition, replay, PlanState};
+use super::snapshot::PlanSnapshot;
+use super::state::{apply, replay, PlanState};
 
 /// 进程内内存 Plan service（只读聚合）。
 pub struct PlanService {
@@ -137,42 +137,6 @@ impl PlanService {
         Ok(event)
     }
 
-    /// 单步状态转移（须经合法状态机）；返回 [`PlanEvent::StepUpdated`]。
-    pub fn update_step(
-        &self,
-        step_id: &PlanStepId,
-        new_status: PlanStepStatus,
-        note: Option<String>,
-    ) -> Result<PlanEvent, PlanError> {
-        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let plan_id = inner
-            .state
-            .plan_id()
-            .cloned()
-            .ok_or(PlanError::NotCreated)?;
-        let from = inner
-            .state
-            .steps()
-            .iter()
-            .find(|s| &s.step_id == step_id)
-            .map(|s| s.status)
-            .ok_or_else(|| PlanError::StepNotFound(step_id.clone()))?;
-        if !is_legal_step_transition(from, new_status) {
-            return Err(PlanError::IllegalStepTransition {
-                from,
-                to: new_status,
-            });
-        }
-        let event = PlanEvent::StepUpdated {
-            plan_id,
-            step_id: step_id.clone(),
-            status: new_status,
-            note,
-        };
-        apply(&mut inner.state, &event);
-        Ok(event)
-    }
-
     /// 查询面：当前 Plan 只读快照；尚未创建时返回 `None`。
     pub fn plan_snapshot(&self) -> Option<PlanSnapshot> {
         self.inner
@@ -180,16 +144,6 @@ impl PlanService {
             .unwrap_or_else(PoisonError::into_inner)
             .state
             .snapshot()
-    }
-
-    /// 查询面：版本修订链（含当前版本，按创建顺序）。
-    pub fn version_history(&self) -> Vec<PlanVersionInfo> {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .state
-            .history()
-            .to_vec()
     }
 
     /// 提交评审：`Draft → InReview`；返回 [`PlanEvent::ReviewRequested`]。
@@ -208,72 +162,6 @@ impl PlanService {
         let event = PlanEvent::ReviewRequested {
             plan_id,
             version: version.clone(),
-        };
-        apply(state, &event);
-        Ok(event)
-    }
-
-    /// 评审方请求修改：`InReview → ChangesRequested`；同样发出
-    /// [`PlanEvent::ReviewRequested`]（推进「评审回合」，apply 按当前状态折叠）。
-    pub fn request_changes(&self, version: &PlanVersionId) -> Result<PlanEvent, PlanError> {
-        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let state = &mut inner.state;
-        let plan_id = state.plan_id().cloned().ok_or(PlanError::NotCreated)?;
-        check_current_version(state, version)?;
-        let from = state.review_status();
-        if from != PlanReviewStatus::InReview {
-            return Err(PlanError::IllegalReviewTransition {
-                from,
-                to: PlanReviewStatus::ChangesRequested,
-            });
-        }
-        let event = PlanEvent::ReviewRequested {
-            plan_id,
-            version: version.clone(),
-        };
-        apply(state, &event);
-        Ok(event)
-    }
-
-    /// 修订：`ChangesRequested → Draft`（新版本，`parent_version` 指向被修订版本）。
-    /// 校验 `parent_version` 必须等于当前版本、新版本不同于 parent、且 version
-    /// 不与历史冲突。`title`/`steps` 写入 `PlanEvent::Revised`（ADR-037）。
-    pub fn revise(
-        &self,
-        version: &PlanVersionId,
-        parent_version: &PlanVersionId,
-        title: impl Into<String>,
-        steps: Vec<PlanStepSnapshot>,
-    ) -> Result<PlanEvent, PlanError> {
-        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let state = &mut inner.state;
-        let plan_id = state.plan_id().cloned().ok_or(PlanError::NotCreated)?;
-        let current = state
-            .current_version()
-            .cloned()
-            .ok_or(PlanError::NotCreated)?;
-        if &current != parent_version {
-            return Err(PlanError::VersionMismatch {
-                expected: current,
-                actual: parent_version.clone(),
-            });
-        }
-        if version == parent_version {
-            return Err(PlanError::SameVersion(version.clone()));
-        }
-        if state.history().iter().any(|h| &h.version == version) {
-            return Err(PlanError::DuplicateVersion(version.clone()));
-        }
-        let from = state.review_status();
-        if from != PlanReviewStatus::ChangesRequested {
-            return Err(PlanError::NotChangesRequested { current: from });
-        }
-        let event = PlanEvent::Revised {
-            plan_id,
-            version: version.clone(),
-            parent_version: parent_version.clone(),
-            title: title.into(),
-            steps,
         };
         apply(state, &event);
         Ok(event)
@@ -336,34 +224,6 @@ impl PlanService {
             plan_id: plan_id.clone(),
             version: version.clone(),
             reason: reason.to_owned(),
-        };
-        apply(state, &event);
-        Ok(event)
-    }
-
-    /// 追加行锚点评审意见（锚点 `step_id` 必须是当前版本的既有步骤）；返回
-    /// [`PlanEvent::CommentAdded`]。
-    pub fn add_comment(
-        &self,
-        plan_id: &PlanId,
-        version: &PlanVersionId,
-        anchor: PlanCommentAnchor,
-        body: &str,
-    ) -> Result<PlanEvent, PlanError> {
-        if body.trim().is_empty() {
-            return Err(PlanError::EmptyComment);
-        }
-        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let state = &mut inner.state;
-        check_plan_version(state, plan_id, version)?;
-        if !state.steps().iter().any(|s| s.step_id == anchor.step_id) {
-            return Err(PlanError::StepNotFound(anchor.step_id.clone()));
-        }
-        let event = PlanEvent::CommentAdded {
-            plan_id: plan_id.clone(),
-            version: version.clone(),
-            anchor,
-            body: body.to_owned(),
         };
         apply(state, &event);
         Ok(event)

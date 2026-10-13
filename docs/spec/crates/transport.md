@@ -7,14 +7,14 @@
 - 为本机 GUI 连接提供 `GuiTransportServer` / `GuiTransportClient` 抽象及两套实现：Unix Domain Socket / Windows Named Pipe（feature `local`，默认开）与进程内通道（feature `memory`，默认关，测试用）。
 - 只搬运字节：**不**编解码 GUI Connection Protocol（编解码在 [protocol.md](protocol.md)），不解析 JSON，不引用任何 Agent 领域类型。
 - 帧长度上限与 `pawork-protocol::MAX_PROTOCOL_FRAME_BYTES`（1 MiB）对齐，但**不依赖**该 crate（两侧各自定义常量，人工保持同步，避免依赖环）。
-- 远程传输（TLS / 中继）的生产实现已在 R0 归档；`RemoteGuiTransportProvider` / `RemoteGuiConnector` trait 与 DTO 仍保留在 `api.rs` 作为唯一契约来源，无生产 impl、无 `remote` feature。
+- 远程传输（TLS / 中继）不在本 crate。复活条件见 [产品候选](../backlog.md) BK-REMOTE-01，复活时须按当时协议版本重评威胁模型。无 `remote` feature。
 
 ## 2. 模块与文件地图
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
 | `src/lib.rs` | ~25 | crate 文档、feature 门控（`local` / `memory`）、re-export：`api::*`、`LocalTransport`、`MemoryTransport` / `MemoryListener` |
-| `src/api.rs` | ~215 | 始终编译的抽象层：`DEFAULT_MAX_FRAME_BYTES`、`TransportFrame`、`TransportEndpoint`、`ConnectOptions`、`ConnectionInfo`/`ConnectionLocality`、四个核心 trait、`TransportError`/`TransportErrorKind`、远程契约 trait 与 DTO |
+| `src/api.rs` | ~140 | 始终编译的抽象层：`DEFAULT_MAX_FRAME_BYTES`、`TransportFrame`、`TransportEndpoint`、`ConnectOptions`、`ConnectionInfo`/`ConnectionLocality`、四个本机 trait（`GuiTransportServer` / `GuiListener` / `GuiConnection` / `GuiTransportClient`）、`TransportError`/`TransportErrorKind` |
 | `src/local.rs` | ~420 | feature `local`：`LocalTransport`（同一类型兼任 Server 与 Client）、帧编解码核心 `StreamConnection<R, W>`（读写各持一把 `tokio::sync::Mutex`；跨调用保留分帧进度，半截帧头/帧尾断流即标记关闭）、错误构造辅助；按平台 `#[path]` 引入下两文件 |
 | `src/local_unix.rs` | ~450 | Unix Domain Socket 的 `bind`/`connect`：陈旧 socket 文件清理、`0o600` 权限收紧、`UnixSocketListener`（bind 时记录所创建 socket 文件的 dev/ino，close 仅当路径仍指向该文件才删除——旧所有者不删新端点，R-04；重复 close 幂等；R-17：accept 持锁等待时与 `close_notify` select，close 先置 closed 再唤醒，pending accept 被唤醒放锁、close 因此有界收口） |
 | `src/local_windows.rs` | ~350 | Windows Named Pipe 的 `bind`/`connect`：owner-only DACL 管道创建、逐连接重建 pipe instance；R-17：`close_watch`（watch 留存值）唤醒 pending `server.connect()`，close 幂等（Windows 侧未在本平台验证，记待验） |
@@ -28,9 +28,9 @@
 
 - `DEFAULT_MAX_FRAME_BYTES: u64 = 1024 * 1024`：默认单帧上限。
 - `TransportFrame`：只持有 `Vec<u8>`（`new` / `as_bytes` / `into_bytes`），无任何协议语义。
-- `TransportEndpoint`（serde `tag = "kind"`, snake_case）：`Local { address }`（socket 路径 / pipe 名）、`Remote { address, adapter }`（契约保留）、`Memory { channel }`。
+- `TransportEndpoint`（serde `tag = "kind"`, snake_case）：`Local { address }`（socket 路径 / pipe 名）、`Memory { channel }`。
 - `ConnectOptions { timeout_ms, client_label: Option<String>, max_frame_bytes }`：客户端侧单帧上限来自此处；服务端上限来自 `LocalTransport::new(max)`。
-- `ConnectionInfo { connection_id, locality, peer_label, encrypted, max_frame_bytes }`；`ConnectionLocality`：`Local` / `Remote` / `InProcess`。
+- `ConnectionInfo { connection_id, locality, peer_label, encrypted, max_frame_bytes }`；`ConnectionLocality`：`Local` / `InProcess`。
 
 **核心 trait（全部 `async_trait`、`Send + Sync`）**
 
@@ -40,13 +40,12 @@
 
 **错误**
 
-- `TransportError { kind, message, retryable }`（可序列化）；`TransportErrorKind`：`InvalidEndpoint` / `BindFailed` / `ConnectionFailed` / `ConnectionClosed` / `Timeout` / `FrameTooLarge` / `ProtocolViolation` / `AuthenticationFailed` / `Unsupported` / `Internal`。
+- `TransportError { kind, message, retryable }`（可序列化）；`TransportErrorKind`：`InvalidEndpoint` / `BindFailed` / `ConnectionFailed` / `ConnectionClosed` / `Timeout` / `FrameTooLarge` / `Internal`。
 
 **实现（feature 门控）**
 
 - feature `local`（默认）：`LocalTransport`——`new(max_frame_bytes)` / `Default`（1 MiB）；只接受 `TransportEndpoint::Local`，其余端点返回 `InvalidEndpoint`。
 - feature `memory`：`MemoryTransport`（`Clone` 共享同一 channel 注册表）、`MemoryListener`；只接受 `Memory` 端点；重复 bind 同名 channel 返回 `BindFailed`，向未 bind 的 channel connect 返回 `ConnectionFailed`。
-- 远程契约（无生产 impl）：`RemoteGuiTransportProvider::{describe, publish, unpublish, revoke}`、`RemoteGuiConnector::connect` 及 `RemoteTransportDescription` / `RemotePublishRequest` / `RemotePublishHandle`。
 
 ## 4. 核心行为与数据流
 
@@ -81,7 +80,7 @@
 
 全部为源文件内联 `#[cfg(test)]`：
 
-- `api.rs`（1）：`TransportEndpoint` serde 往返不需要 protocol 类型。帧只持有字节由 `local.rs` 超限拒绝与 round-trip 证明。
+- `api.rs`（1）：`TransportEndpoint::Local` serde 往返不需要 protocol 类型。帧只持有字节由 `local.rs` 超限拒绝与 round-trip 证明。
 - `local.rs`（4）：默认帧上限 = 1 MiB（与 protocol 对齐的钉子测试）；非 `Local` 端点被拒；半截帧头 / 帧尾断流后连接标记关闭、残留字节不当下一帧前缀（`truncated_header_or_payload_closes_connection`）；外层超时取消 receive 后从断点续读不丢半帧（`cancelled_receive_mid_frame_resumes_without_desync`）。
 - `local_unix.rs`（7）：bind 后 socket 权限 `0o600`；双向帧往返；超限 send 在写前被拒；伪造超限长度头在分配前被拒；对端关闭 → `ConnectionClosed`、关闭后的 listener 拒绝 accept；R-04 归属回归——路径被新所有者重绑后旧 close 不删新端点（`close_does_not_remove_socket_rebound_by_new_owner`）；R-17：pending accept 被并发 close 唤醒、双方有界结束且重复 close 幂等（`pending_accept_is_woken_by_close`）。
 - `local_windows.rs`（3）：Windows 侧对应回归（round trip / 权限 / 关闭）。
@@ -91,7 +90,7 @@
 
 ## 8. 注意事项与已知限制
 
-- `Remote` 端点与 trait 存在 ≠ 远程传输已交付；复活须按当时协议版本重评（见 [产品候选](../backlog.md)）。
+- 远程传输不在树内。复活须按当时协议版本重评威胁模型（见 [产品候选](../backlog.md) BK-REMOTE-01）。
 - GUI 不得经 transport 直连 Provider / 数据库 / 工具，只连 CLI 暴露的 GUI Connection Protocol（架构红线，见 [../../design.md](../../design.md) §2）。
 - `memory` 通道为 mpsc 无界队列：不模拟背压与半关闭细节，仅供进程内装配测试。
 - 声明长度超限后连接被单方面标记关闭，调用方需重连而非重试同一连接。

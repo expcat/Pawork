@@ -11,7 +11,7 @@
 
 use pawork_domain::{
     CheckpointId, PlanCommentAnchor, PlanEvent, PlanId, PlanReviewStatus, PlanStepId,
-    PlanStepSnapshot, PlanStepStatus, PlanVersionId,
+    PlanStepSnapshot, PlanVersionId,
 };
 
 use super::snapshot::{PlanSnapshot, PlanVersionInfo};
@@ -95,20 +95,6 @@ impl PlanState {
     pub(crate) fn step_mut(&mut self, id: &PlanStepId) -> Option<&mut PlanStepSnapshot> {
         self.steps.iter_mut().find(|s| s.step_id == *id)
     }
-}
-
-/// 步骤状态机合法转移判定（命令面校验用）。
-///
-/// 合法：`Pending→InProgress`、`InProgress→Completed|Blocked`、`Blocked→InProgress`。
-/// 其余（含同态自环、终态跳出、回退到 `Pending`）均非法。
-pub fn is_legal_step_transition(from: PlanStepStatus, to: PlanStepStatus) -> bool {
-    matches!(
-        (from, to),
-        (PlanStepStatus::Pending, PlanStepStatus::InProgress)
-            | (PlanStepStatus::InProgress, PlanStepStatus::Completed)
-            | (PlanStepStatus::InProgress, PlanStepStatus::Blocked)
-            | (PlanStepStatus::Blocked, PlanStepStatus::InProgress)
-    )
 }
 
 /// 把一个 canonical [`PlanEvent`] 纯函数式折叠进 [`PlanState`]（恢复入口）。

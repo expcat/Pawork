@@ -2,9 +2,7 @@
 
 pub mod contract;
 
-pub use contract::{
-    assert_parallel_tool_calls, assert_single_tool_call, assert_text_stream, count_variant,
-};
+pub use contract::{assert_parallel_tool_calls, assert_single_tool_call, assert_text_stream};
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -369,11 +367,6 @@ impl MockTool {
     pub fn calls(&self) -> Vec<MockToolCallRecord> {
         self.calls.lock().expect("mock tool calls mutex").clone()
     }
-
-    pub fn assert_called_with(&self, expected: &[Value]) {
-        let actual: Vec<_> = self.calls().into_iter().map(|call| call.input).collect();
-        assert_eq!(actual, expected, "mock tool input sequence differs");
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -644,9 +637,10 @@ mod tests {
         );
         assert_parallel_tool_calls(&events);
         assert_eq!(
-            count_variant(&events, |event| {
-                matches!(event, ProviderStreamEvent::ToolCallStarted { .. })
-            }),
+            events
+                .iter()
+                .filter(|event| matches!(event, ProviderStreamEvent::ToolCallStarted { .. }))
+                .count(),
             2
         );
     }
@@ -687,7 +681,14 @@ mod tests {
             .await
             .expect("mock tool success");
         assert!(!ok.is_error());
-        success.assert_called_with(&[serde_json::json!({"path": "README.md"})]);
+        assert_eq!(
+            success
+                .calls()
+                .into_iter()
+                .map(|call| call.input)
+                .collect::<Vec<_>>(),
+            vec![serde_json::json!({"path": "README.md"})]
+        );
 
         let fail_error = ToolError {
             kind: ToolErrorKind::ExecutionFailed,
@@ -709,7 +710,14 @@ mod tests {
             .await
             .expect_err("mock tool failure");
         assert_eq!(failed, fail_error);
-        failing.assert_called_with(&[serde_json::json!({"x": 1})]);
+        assert_eq!(
+            failing
+                .calls()
+                .into_iter()
+                .map(|call| call.input)
+                .collect::<Vec<_>>(),
+            vec![serde_json::json!({"x": 1})]
+        );
 
         let cancellable = MockTool::new("read_file", ToolResult::success(Vec::new()));
         let cancel = CancellationToken::new();

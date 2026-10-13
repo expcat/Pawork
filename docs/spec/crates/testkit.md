@@ -13,7 +13,7 @@
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
 | `src/lib.rs` | ~750（约后半为 `#[cfg(test)]` 自测） | `MockScript`（Provider 事件脚本 builder）、`MockProvider`（实现 `ModelProvider`；Replay/Sequence 两种脚本源 + 调用记录）、`MockProviderCallRecord`、`MockTool`（实现 `AgentTool`）、`MockToolCallRecord`、`RecordingProviderSink` / `RecordingToolSink`（记录型 sink）；re-export `contract` 断言到 crate 根 |
-| `src/contract.rs` | ~140 | Provider 流最小断言（不绑定具体 Provider，不按 Provider 名分支）：`assert_text_stream`、`assert_single_tool_call`、`assert_parallel_tool_calls`、`count_variant` |
+| `src/contract.rs` | ~130 | Provider 流最小断言（不绑定具体 Provider，不按 Provider 名分支）：`assert_text_stream`、`assert_single_tool_call`、`assert_parallel_tool_calls` |
 
 无 `tests/` 目录；自测全部内嵌于两个源文件。
 
@@ -35,7 +35,7 @@
 ### 3.2 MockProvider / MockTool
 
 - **`MockProvider`**：`new(script)` 同一脚本可重复 replay；`sequence(vec![脚本])` 逐请求原子消耗，耗尽后返回 `ProviderErrorKind::StreamInterrupted`（message 含 "mock script sequence exhausted"）；`with_id(ProviderId)`（默认 `"mock"`）、`with_models(Vec<ModelDefinition>)`（供 `list_models` 返回，默认空）；`calls()` 返回 `MockProviderCallRecord{request_id, model, tool_names, hosted_tools, has_image, event_count, cancelled, completed}` 快照（SEARCH-1 / VISION-1 起记录请求的 hosted 工具类别与图片内容位；CU-11 起记录请求暴露的客户端工具名，供注入 / 闸门 / 工具暴露断言）。
-- **`MockTool`**：`new(name, ToolResult)` 生成默认 descriptor——`ToolCapability::ReadOnly`、`ToolKind::ClientFunction`、`ToolHosting::Local`、`requires_approval: false`、`read_only: true`、`supports_concurrency: true`、`default_timeout_ms: Some(1000)`、`max_output_bytes: 64 KiB`、`allowed_in_untrusted_workspace: true`、`input_schema: {"type":"object"}`；`failing(name, ToolError)` 固定失败；`with_descriptor` 整体替换；`calls()` 返回 `MockToolCallRecord{tool_call_id, input, workspace_id, run_id, cancelled}`；`assert_called_with(&[input])` 断言输入序列。
+- **`MockTool`**：`new(name, ToolResult)` 生成默认 descriptor——`ToolCapability::ReadOnly`、`ToolKind::ClientFunction`、`ToolHosting::Local`、`requires_approval: false`、`read_only: true`、`supports_concurrency: true`、`default_timeout_ms: Some(1000)`、`max_output_bytes: 64 KiB`、`allowed_in_untrusted_workspace: true`、`input_schema: {"type":"object"}`；`failing(name, ToolError)` 固定失败；`with_descriptor` 整体替换；`calls()` 返回 `MockToolCallRecord{tool_call_id, input, workspace_id, run_id, cancelled}`。
 - **Sink**：`RecordingProviderSink::events()` / `RecordingToolSink::events()` 返回捕获的事件向量（内部 `Arc<Mutex<Vec<_>>>`，克隆共享同一存储）。
 
 ### 3.3 断言函数
@@ -43,7 +43,6 @@
 - `assert_text_stream`：至少一条非空 `TextDelta` 且末尾为 `ResponseCompleted`。
 - `assert_single_tool_call`：存在 `ToolCallStarted` 且同 id 被 `ToolCallCompleted` 闭合。
 - `assert_parallel_tool_calls`：≥2 个 `Started` 且各自闭合（可交错）。
-- `count_variant(events, predicate)`：按谓词计数。
 
 ## 4. 核心行为与数据流
 
@@ -76,7 +75,7 @@
 | 位置 | 覆盖点 |
 | --- | --- |
 | `src/lib.rs` tests | `single_script_text_tool_call_and_complete`（全链路 + 同脚本重复 replay）；`sequence_plays_two_scripts_then_exhausts`（顺序消耗与耗尽错误）；`tool_call_chunks_keep_partial_json_in_order`（分片保序 + 并行闭合）；`mock_tool_success_failure_and_cancellation`（三态 + 默认 descriptor 全字段断言）；`provider_cancellation_is_recorded`；`fail_returns_scripted_error_immediately` |
-| `src/contract.rs` tests | 三个断言函数与 `count_variant` 的通过路径 |
+| `src/contract.rs` tests | 三个断言函数的通过路径 |
 
 默认验证命令：`cargo test -p pawork-testkit --offline --lib --tests`。
 
