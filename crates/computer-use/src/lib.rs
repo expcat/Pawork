@@ -17,7 +17,7 @@ pub mod target;
 
 pub use native_host::{
     AppSnapshot, CapturedFrame, HostSurface, NativeControl, NativeHost, NativeOutput,
-    NativePerform, NativeRequest, NativeSurface, WindowSnapshot,
+    NativePerform, NativeRequest, NativeSurface, ObservedAction, ObservedOutcome, WindowSnapshot,
 };
 
 /// macOS native backend (CU-03): application/window discovery, window
@@ -27,9 +27,12 @@ pub mod macos;
 
 /// Dedicated Sway / wlroots seat client for the controlled guest (CU-26):
 /// screencopy, virtual pointer / keyboard and compositor-authoritative
-/// window identity. Not wired into NativeHost yet.
+/// window identity, served to the Host by `computer_guest --wayland`.
 #[cfg(target_os = "linux")]
 pub mod wayland;
+/// Host side of the CU-26 Wayland guest: a NativeSurface over the guest
+/// frame protocol, reached only through `NativeHost::wayland()`.
+pub mod wayland_surface;
 
 pub const MAX_IMAGE_BYTES: usize = 512 * 1024;
 pub const MAX_IMAGE_EDGE: u32 = 1280;

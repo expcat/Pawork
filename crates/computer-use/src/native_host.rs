@@ -10,11 +10,11 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use crate::approval::{DispatchPermit, GrantKind, TargetIdentity};
 use crate::target::{
     lookup_element, require_background, ActivityProof, AppFamily, AppIdentity, AxTreeRead,
-    ElementHandle, ElementQuery, Environment, NativeActionKind, NativeProbe, ObservationGeometry,
-    ObservationHandle, ObservationKind, ProcessInstance, Scope, SemanticAction, SemanticOutcome,
-    TargetError, TargetObservation, TargetRegistry, TargetState, TargetedInput, TargetedOutcome,
-    ValidatedElement, ValidatedWindow, ValidatedWindowDispatch, WindowHandle, WindowIdentity,
-    WindowMove,
+    ElementHandle, ElementQuery, Environment, ImagePoint, NativeActionKind, NativeProbe,
+    ObservationGeometry, ObservationHandle, ObservationKind, ProcessInstance, Scope,
+    SemanticAction, SemanticOutcome, TargetError, TargetObservation, TargetRegistry, TargetState,
+    TargetedInput, TargetedOutcome, ValidatedElement, ValidatedObservationDispatch,
+    ValidatedWindow, ValidatedWindowDispatch, WindowHandle, WindowIdentity, WindowMove,
 };
 use crate::MAX_IMAGE_EDGE;
 
@@ -109,6 +109,56 @@ pub trait NativeSurface: NativeProbe + Clone + Send + Sync + 'static {
     fn admit_action(&self, family: AppFamily, action: NativeActionKind) -> Result<(), TargetError> {
         require_background(family, action, false)
     }
+
+    /// Payload gate for seat input bound to a screenshot (CU-26), checked
+    /// before the lease or grant is spent. Only a surface that owns a
+    /// dedicated seat admits anything.
+    fn admit_observed(&self, _action: &ObservedAction) -> Result<(), TargetError> {
+        Err(TargetError::BackgroundUnsupported)
+    }
+
+    fn observed_input(
+        &self,
+        _validated: &ValidatedObservationDispatch,
+        _action: &ObservedAction,
+        _cancelled: &dyn Fn() -> bool,
+    ) -> Result<ObservedOutcome, TargetError> {
+        Err(TargetError::BackgroundUnsupported)
+    }
+}
+
+/// Seat input made against one screenshot observation (CU-26). A click
+/// lands at the image point carried in the request; keys go to whatever
+/// the guest proves is the focused target window.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ObservedAction {
+    Click,
+    Keys(TargetedInput),
+}
+
+impl ObservedAction {
+    pub fn kind(&self) -> NativeActionKind {
+        match self {
+            Self::Click => NativeActionKind::Pointer,
+            Self::Keys(input) => input.kind(),
+        }
+    }
+}
+
+/// `Dispatched` proves the seat received every step, not the target's
+/// reaction. `Partial` left nothing pressed; `UnknownEffect` lost the
+/// receipt after the request went out. Neither is retried.
+#[derive(Debug, PartialEq)]
+pub enum ObservedOutcome {
+    Dispatched {
+        steps: u32,
+    },
+    Partial {
+        steps_sent: u32,
+        steps_total: u32,
+        cause: TargetError,
+    },
+    UnknownEffect,
 }
 
 /// The surface this process can actually drive.
@@ -388,6 +438,17 @@ pub enum NativeRequest {
     Pointer {
         window: String,
     },
+    /// CU-26: left click at an image point of a screenshot observation.
+    ObservedClick {
+        observation: String,
+        x: f64,
+        y: f64,
+    },
+    /// CU-26: text or one key press while a screenshot observation is current.
+    ObservedKeys {
+        observation: String,
+        input: TargetedInput,
+    },
 }
 
 /// Typed result. `jpeg` is set only when this call issued a new observation lease.
@@ -576,6 +637,13 @@ impl NativeHost<crate::isolated::GuestSurface> {
     }
 }
 
+impl NativeHost<crate::wayland_surface::WaylandSurface> {
+    /// Explicit CU-26 Wayland guest. This does not replace [Self::host].
+    pub fn wayland() -> Self {
+        Self::new(crate::wayland_surface::WaylandSurface::endpoint())
+    }
+}
+
 impl<S: NativeSurface> NativeHost<S> {
     pub fn new(surface: S) -> Self {
         Self {
@@ -673,6 +741,20 @@ impl<S: NativeSurface> NativeHost<S> {
                 self.move_window(scope, &window, WindowMove { x, y }, cancelled)
             }
             NativeRequest::Pointer { window } => self.reject_pointer(scope, &window),
+            NativeRequest::ObservedClick { observation, x, y } => self.observed(
+                scope,
+                &observation,
+                Some(ImagePoint { x, y }),
+                ObservedAction::Click,
+                cancelled,
+            ),
+            NativeRequest::ObservedKeys { observation, input } => self.observed(
+                scope,
+                &observation,
+                None,
+                ObservedAction::Keys(input),
+                cancelled,
+            ),
         }
     }
 
@@ -1143,6 +1225,95 @@ impl<S: NativeSurface> NativeHost<S> {
             SemanticOutcome::UnknownEffect => "unknown_effect",
         };
         Ok(self.observe_after(scope, &validated.window, &target, watch, label, cancelled))
+    }
+
+    /// Same chain as a window move: ledger and gates before any probe, facts
+    /// read outside the lock, one armed permit per consumed screenshot, and
+    /// a fresh observation after the seat reports delivery.
+    fn observed(
+        &self,
+        scope: &Scope,
+        observation: &str,
+        point: Option<ImagePoint>,
+        action: ObservedAction,
+        cancelled: &(dyn Fn() -> bool + Send + Sync),
+    ) -> Result<NativeOutput, TargetError> {
+        if let ObservedAction::Keys(input) = &action {
+            input.validate()?;
+        }
+        let id = ObservationHandle::from_model(observation);
+        let (target, window) = {
+            let registry = self.lock();
+            self.require_scope_locked(&registry, scope)?;
+            let window = registry.observation_window(&id, scope)?;
+            let target = registry.window_target(&window, scope)?;
+            registry.authorizer().check(scope, &target)?;
+            self.surface
+                .admit_action(target.app().family, action.kind())?;
+            self.surface.admit_observed(&action)?;
+            (target, window)
+        };
+        self.yield_if_user(scope, &target)?;
+        let watch = self.watches_for_run(scope, &target);
+        let (instance, identity) = {
+            let registry = self.lock();
+            self.ready_to_dispatch(&registry, scope, &target, cancelled)?;
+            registry.window_probe_inputs(&window, scope)?
+        };
+        let snapshot = self.snapshot(&instance, &identity, false);
+        self.yield_if_user(scope, &target)?;
+        let validated = {
+            let mut registry = self.lock();
+            if cancelled() {
+                return Err(TargetError::Cancelled);
+            }
+            let validated = registry.consume_observation_dispatch_with(
+                &id,
+                scope,
+                point,
+                &|| false,
+                &snapshot,
+            )?;
+            registry.authorizer_mut().consume_dispatch_permit(
+                &validated.observation.window.scope,
+                &validated.observation.window.target,
+                &validated.dispatch_permit,
+            )?;
+            validated
+        };
+        let permit = validated.dispatch_permit.clone();
+        let ticket = self.arm_watch(scope, &target, permit.clone());
+        let surface = self.surface.clone();
+        let dispatched = self.platform_dispatch(scope, &target, &permit, cancelled, |stop| {
+            surface.observed_input(&validated, &action, stop)
+        });
+        drop(ticket);
+        let (outcome, stop) = dispatched?;
+        let label = match outcome {
+            ObservedOutcome::Dispatched { .. } => "dispatched".to_string(),
+            ObservedOutcome::Partial {
+                steps_sent,
+                steps_total,
+                cause,
+            } => {
+                let cause = match cause {
+                    TargetError::Cancelled => stop
+                        .map(DispatchStop::error)
+                        .unwrap_or(TargetError::Cancelled),
+                    other => other,
+                };
+                format!("partial {steps_sent}/{steps_total}: {cause}")
+            }
+            ObservedOutcome::UnknownEffect => "unknown_effect".to_string(),
+        };
+        Ok(self.observe_after(
+            scope,
+            &validated.observation.window,
+            &target,
+            watch,
+            &label,
+            cancelled,
+        ))
     }
 
     fn reject_pointer(&self, scope: &Scope, window: &str) -> Result<NativeOutput, TargetError> {

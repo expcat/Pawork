@@ -12,6 +12,7 @@
 //! portal. Host approval, occupancy, cancellation and post-action
 //! observation stay with the existing NativeHost chain.
 
+pub mod guest;
 mod keymap;
 pub mod sway;
 mod wire;

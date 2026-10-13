@@ -3,7 +3,8 @@
 //! Listens on 0.0.0.0:5906 inside the container so Docker can publish that
 //! port to the host loopback. The host client still dials only 127.0.0.1:5906.
 //! macOS and every other host target exit immediately; AT-SPI and X11 exist
-//! only in the Linux binary.
+//! only in the Linux binary. `--wayland` instead serves the CU-26 dedicated
+//! Sway seat on 0.0.0.0:5907 (see `wayland::guest`).
 
 fn main() {
     let code = match run() {
@@ -19,6 +20,9 @@ fn main() {
 fn run() -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
+        if std::env::args().nth(1).as_deref() == Some("--wayland") {
+            return pawork_computer_use::wayland::guest::run();
+        }
         linux::run()
     }
     #[cfg(not(target_os = "linux"))]

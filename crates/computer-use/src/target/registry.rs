@@ -50,6 +50,15 @@ pub struct ValidatedObservation {
     pub tree_revision: Option<u64>,
 }
 
+/// A consumed screenshot lease for one seat input (CU-26). `point` is the
+/// image point already mapped to window points; keys carry none.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ValidatedObservationDispatch {
+    pub observation: ValidatedObservation,
+    pub point: Option<WindowPoint>,
+    pub dispatch_permit: DispatchPermit,
+}
+
 /// A consumed element handle: exactly one semantic action may dispatch.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ValidatedElement {
@@ -833,6 +842,73 @@ impl<P: NativeProbe> TargetRegistry<P> {
         };
         self.observations.get_mut(id.as_str()).unwrap().consumed = true;
         Ok(validated)
+    }
+
+    /// Consume a screenshot lease for one seat input made against that image
+    /// (CU-26): a click at a point of it, or keys while it is current. Same
+    /// gate order as [Self::consume_observation] with facts read outside the
+    /// lock, and a single-use permit like an element consume. The point is
+    /// checked against the image before anything is spent, so a bad
+    /// coordinate leaves the lease and the grant untouched.
+    pub fn consume_observation_dispatch_with<Q: NativeProbe>(
+        &mut self,
+        id: &ObservationHandle,
+        scope: &Scope,
+        point: Option<ImagePoint>,
+        cancelled: &dyn Fn() -> bool,
+        probe: &Q,
+    ) -> Result<ValidatedObservationDispatch, TargetError> {
+        if cancelled() {
+            return Err(TargetError::Cancelled);
+        }
+        let record = self
+            .observations
+            .get(id.as_str())
+            .ok_or(TargetError::UnknownHandle)?;
+        if &record.scope != scope {
+            return Err(TargetError::CrossRun);
+        }
+        if record.consumed || record.created.elapsed() > LEASE_TTL {
+            return Err(TargetError::StaleHandle);
+        }
+        if record.tree_revision.is_some() {
+            return Err(TargetError::Invalid(
+                "seat input needs a screenshot observation, not a tree read",
+            ));
+        }
+        let point = point
+            .map(|point| image_to_window(point, &record.observation))
+            .transpose()?;
+        let observation = record.observation.clone();
+        let window_record = self
+            .windows
+            .get(record.window.as_str())
+            .ok_or(TargetError::UnknownHandle)?;
+        self.authorizer.check(scope, &window_record.target)?;
+        let dispatch_target = window_record.target.clone();
+        self.occupancy_conflict(&dispatch_target, scope)?;
+        self.dispatch_paused(&dispatch_target)?;
+        let window = self.live_with(window_record, probe)?;
+        self.size_current(
+            probe,
+            &window_record.instance,
+            &window_record.window,
+            (observation.window_width, observation.window_height),
+        )?;
+        let dispatch_permit = self
+            .authorizer
+            .spend_for_dispatch(scope, &window_record.target)?;
+        self.touch_occupancy(&dispatch_target, scope);
+        self.observations.get_mut(id.as_str()).unwrap().consumed = true;
+        Ok(ValidatedObservationDispatch {
+            observation: ValidatedObservation {
+                window,
+                observation,
+                tree_revision: None,
+            },
+            point,
+            dispatch_permit,
+        })
     }
 
     /// Ledger checks that precede an element probe. Does not probe or consume.
