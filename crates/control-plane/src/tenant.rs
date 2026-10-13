@@ -10,15 +10,14 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::decision::PolicyDecisionEvent;
 use crate::identity::{default_tenant, DEFAULT_TENANT};
-use crate::rbac::{AuditExportPolicy, Permission, PermissionProfile, PrincipalRole};
+use crate::rbac::{Permission, PermissionProfile, PrincipalRole};
 
 pub use pawork_domain::{
     AccountId, AgentId, ModelId, PrincipalId, ProviderId, SessionId, TenantId,
 };
 
-/// 租户级策略：并发 / 预算 / 模型白名单。
+/// 租户级策略：agent 并发、预算、模型 / Provider / 账号白名单与权限配置。
 ///
 /// 所有字段均为 `Option`，`None` 表示不限制（放行）；`Some` 时按 deny-first 执行。
 #[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -26,9 +25,6 @@ pub struct TenantPolicy {
     /// 同一租户最大并发 agent 数。
     #[serde(default)]
     pub max_concurrent_agents: Option<u64>,
-    /// 同一租户最大并发请求数。
-    #[serde(default)]
-    pub max_concurrent_requests: Option<u64>,
     /// 每日输入 token 预算。
     #[serde(default)]
     pub daily_input_token_budget: Option<u64>,
@@ -55,12 +51,6 @@ pub struct TenantPolicy {
     /// 取最受限角色 Viewer（deny-first）。
     #[serde(default)]
     pub permission_profile: Option<PermissionProfile>,
-    /// 审计/会话保留天数；`None` 表示永久保留。
-    #[serde(default)]
-    pub retention_days: Option<u64>,
-    /// Audit 导出策略；`None` 或未启用一律拒绝导出（deny-first）。
-    #[serde(default)]
-    pub audit_export: Option<AuditExportPolicy>,
 }
 
 /// 租户策略决策结果（与冻结的 `pawork_policy::PolicyDecision` 不是同一类型）。
@@ -76,14 +66,12 @@ pub enum TenantPolicyDecision {
     Fallback { reason: String },
 }
 
-/// 并发维度：agent 并发或请求并发。
+/// 并发维度：agent 并发。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConcurrencyKind {
     /// agent 并发。
     Agents,
-    /// 请求并发。
-    Requests,
 }
 
 /// 预算维度：Token 或 Cost。
@@ -145,12 +133,6 @@ pub enum TenantPolicyError {
         /// 被拒权限。
         permission: Permission,
     },
-    /// Audit 导出被拒。
-    #[error("Audit 导出被拒：{reason}")]
-    AuditExportDenied {
-        /// 脱敏原因。
-        reason: String,
-    },
 }
 
 /// 租户策略引擎：提供策略读取与 spawn / acquire / budget 闸口检查。
@@ -160,20 +142,6 @@ pub enum TenantPolicyError {
 pub trait TenantPolicyEngine: Send + Sync {
     /// 返回指定租户的当前策略；未知租户返回全 `None` 的默认策略。
     fn policy(&self, tenant: &TenantId) -> TenantPolicy;
-
-    /// 检查 agent 并发是否在限制内。
-    async fn check_agent_concurrency(
-        &self,
-        tenant: &TenantId,
-        current_active_agents: u64,
-    ) -> Result<(), TenantPolicyError>;
-
-    /// 检查请求并发是否在限制内。
-    async fn check_request_concurrency(
-        &self,
-        tenant: &TenantId,
-        current_active_requests: u64,
-    ) -> Result<(), TenantPolicyError>;
 
     /// 检查模型是否在允许列表内。
     async fn check_model(
@@ -204,14 +172,6 @@ pub trait TenantPolicyEngine: Send + Sync {
         permission: Permission,
     ) -> Result<(), TenantPolicyError>;
 
-    /// 检查 Audit 导出是否被允许：角色 + 导出策略 + 目标白名单。
-    async fn check_audit_export(
-        &self,
-        tenant: &TenantId,
-        principal: &PrincipalId,
-        destination: &str,
-    ) -> Result<(), TenantPolicyError>;
-
     /// 检查每日预算（输入 token / 输出 token / 成本 micros）是否在限制内。
     async fn check_budget(
         &self,
@@ -230,12 +190,6 @@ pub trait TenantPolicyEngine: Send + Sync {
 
     /// 返回主体在该租户的有效角色（deny-first，见 [`PermissionProfile`]）。
     fn principal_role(&self, tenant: &TenantId, principal: &PrincipalId) -> PrincipalRole;
-
-    /// 记录一条版本化决策事件（reason 构造时统一脱敏）。
-    fn record_decision(&self, event: PolicyDecisionEvent);
-
-    /// 返回指定租户已记录的决策事件（审计读取）。
-    fn decisions(&self, tenant: &TenantId) -> Vec<PolicyDecisionEvent>;
 }
 
 /// 内存版租户策略引擎：`BTreeMap<TenantId, TenantPolicy>` + `Arc<Mutex<_>>`。
@@ -244,11 +198,7 @@ pub trait TenantPolicyEngine: Send + Sync {
 pub struct InMemoryTenantPolicyEngine {
     policies: Arc<Mutex<BTreeMap<TenantId, TenantPolicy>>>,
     versions: Arc<Mutex<BTreeMap<TenantId, u64>>>,
-    decisions: Arc<Mutex<BTreeMap<TenantId, Vec<PolicyDecisionEvent>>>>,
 }
-
-/// 每租户保留的最大决策事件数（防内存无界增长）。
-const MAX_DECISIONS_PER_TENANT: usize = 1024;
 
 impl InMemoryTenantPolicyEngine {
     /// 以指定默认策略创建引擎，并将 `DEFAULT_TENANT` 播种为该策略。
@@ -258,17 +208,15 @@ impl InMemoryTenantPolicyEngine {
         Self {
             policies: Arc::new(Mutex::new(policies)),
             versions: Arc::new(Mutex::new(BTreeMap::from([(default_tenant(), 1)]))),
-            decisions: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 }
 
 impl Default for InMemoryTenantPolicyEngine {
-    /// 宽松默认策略：agent 并发 8、请求并发 16，预算与模型白名单不限制。
+    /// 宽松默认策略：agent 并发 8，预算与白名单不限制。
     fn default() -> Self {
         Self::new(TenantPolicy {
             max_concurrent_agents: Some(8),
-            max_concurrent_requests: Some(16),
             ..TenantPolicy::default()
         })
     }
@@ -283,40 +231,6 @@ impl TenantPolicyEngine for InMemoryTenantPolicyEngine {
             .get(tenant)
             .cloned()
             .unwrap_or_default()
-    }
-
-    async fn check_agent_concurrency(
-        &self,
-        tenant: &TenantId,
-        current_active_agents: u64,
-    ) -> Result<(), TenantPolicyError> {
-        let policy = self.policy(tenant);
-        match policy.max_concurrent_agents {
-            None => Ok(()),
-            Some(max) if current_active_agents < max => Ok(()),
-            Some(max) => Err(TenantPolicyError::ConcurrencyExceeded {
-                kind: ConcurrencyKind::Agents,
-                current: current_active_agents,
-                max,
-            }),
-        }
-    }
-
-    async fn check_request_concurrency(
-        &self,
-        tenant: &TenantId,
-        current_active_requests: u64,
-    ) -> Result<(), TenantPolicyError> {
-        let policy = self.policy(tenant);
-        match policy.max_concurrent_requests {
-            None => Ok(()),
-            Some(max) if current_active_requests < max => Ok(()),
-            Some(max) => Err(TenantPolicyError::ConcurrencyExceeded {
-                kind: ConcurrencyKind::Requests,
-                current: current_active_requests,
-                max,
-            }),
-        }
     }
 
     async fn check_model(
@@ -376,26 +290,6 @@ impl TenantPolicyEngine for InMemoryTenantPolicyEngine {
                 principal: principal.to_string(),
                 permission,
             }),
-        }
-    }
-
-    async fn check_audit_export(
-        &self,
-        tenant: &TenantId,
-        principal: &PrincipalId,
-        destination: &str,
-    ) -> Result<(), TenantPolicyError> {
-        let policy = self.policy(tenant);
-        match decide_audit_export(
-            self.principal_role(tenant, principal),
-            policy.audit_export.as_ref(),
-            destination,
-        ) {
-            TenantPolicyDecision::Allow => Ok(()),
-            TenantPolicyDecision::Deny { reason } => Err(TenantPolicyError::AuditExportDenied { reason }),
-            TenantPolicyDecision::Limit { reason } | TenantPolicyDecision::Fallback { reason } => {
-                Err(TenantPolicyError::AuditExportDenied { reason })
-            }
         }
     }
 
@@ -470,24 +364,6 @@ impl TenantPolicyEngine for InMemoryTenantPolicyEngine {
             None => PrincipalRole::Viewer,
         }
     }
-
-    fn record_decision(&self, event: PolicyDecisionEvent) {
-        let mut decisions = self.decisions.lock().expect("决策事件锁中毒");
-        let tenant_decisions = decisions.entry(event.tenant_id.clone()).or_default();
-        if tenant_decisions.len() >= MAX_DECISIONS_PER_TENANT {
-            tenant_decisions.remove(0);
-        }
-        tenant_decisions.push(event);
-    }
-
-    fn decisions(&self, tenant: &TenantId) -> Vec<PolicyDecisionEvent> {
-        self.decisions
-            .lock()
-            .expect("决策事件锁中毒")
-            .get(tenant)
-            .cloned()
-            .unwrap_or_default()
-    }
 }
 
 /// 决策助手：判断模型是否放行（`None` 不限制；`Some([])` 拒绝全部；
@@ -507,7 +383,10 @@ pub fn decide_model(model: &ModelId, allowed: Option<&[ModelId]>) -> TenantPolic
 
 /// 决策助手：判断 Provider 是否放行（`None` 不限制；`Some([])` 拒绝全部；
 /// 命中列表放行，否则拒绝）。
-pub fn decide_provider(provider: &ProviderId, allowed: Option<&[ProviderId]>) -> TenantPolicyDecision {
+pub fn decide_provider(
+    provider: &ProviderId,
+    allowed: Option<&[ProviderId]>,
+) -> TenantPolicyDecision {
     match allowed {
         None => TenantPolicyDecision::Allow,
         Some([]) => TenantPolicyDecision::Deny {
@@ -546,42 +425,6 @@ pub fn decide_permission(role: PrincipalRole, permission: Permission) -> TenantP
     }
 }
 
-/// 决策助手：判断 Audit 导出是否放行（角色 + 导出策略 + 目标白名单，
-/// 全部 deny-first）。
-pub fn decide_audit_export(
-    role: PrincipalRole,
-    policy: Option<&AuditExportPolicy>,
-    destination: &str,
-) -> TenantPolicyDecision {
-    if let TenantPolicyDecision::Deny { reason } = decide_permission(role, Permission::AuditExport) {
-        return TenantPolicyDecision::Deny { reason };
-    }
-    let policy = match policy {
-        Some(policy) if policy.enabled => policy,
-        Some(_) => {
-            return TenantPolicyDecision::Deny {
-                reason: "租户未启用 Audit 导出".to_string(),
-            }
-        }
-        None => {
-            return TenantPolicyDecision::Deny {
-                reason: "租户未配置 Audit 导出策略".to_string(),
-            }
-        }
-    };
-    if policy
-        .allowed_destinations
-        .iter()
-        .any(|allowed| allowed == destination)
-    {
-        TenantPolicyDecision::Allow
-    } else {
-        TenantPolicyDecision::Deny {
-            reason: format!("导出目标 {destination} 不在允许列表内"),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -599,68 +442,6 @@ mod tests {
             engine.policy(&default_tenant()).max_concurrent_agents,
             Some(8)
         );
-    }
-
-    #[tokio::test]
-    async fn agent_concurrency_under_limit_allowed() {
-        let engine = InMemoryTenantPolicyEngine::new(TenantPolicy {
-            max_concurrent_agents: Some(2),
-            ..TenantPolicy::default()
-        });
-        assert!(engine
-            .check_agent_concurrency(&default_tenant(), 0)
-            .await
-            .is_ok());
-        assert!(engine
-            .check_agent_concurrency(&default_tenant(), 1)
-            .await
-            .is_ok());
-    }
-
-    #[tokio::test]
-    async fn agent_concurrency_over_limit_denied() {
-        let engine = InMemoryTenantPolicyEngine::new(TenantPolicy {
-            max_concurrent_agents: Some(2),
-            ..TenantPolicy::default()
-        });
-        let err = engine
-            .check_agent_concurrency(&default_tenant(), 2)
-            .await
-            .unwrap_err();
-        assert!(matches!(
-            err,
-            TenantPolicyError::ConcurrencyExceeded {
-                kind: ConcurrencyKind::Agents,
-                current: 2,
-                max: 2,
-            }
-        ));
-        assert!(engine
-            .check_agent_concurrency(&default_tenant(), 3)
-            .await
-            .is_err());
-    }
-
-    #[tokio::test]
-    async fn request_concurrency_independent_from_agent_concurrency() {
-        let engine = InMemoryTenantPolicyEngine::new(TenantPolicy {
-            max_concurrent_agents: Some(1),
-            max_concurrent_requests: Some(5),
-            ..TenantPolicy::default()
-        });
-        // agent 已达上限被拒，请求并发不受 agent 字段影响。
-        assert!(engine
-            .check_agent_concurrency(&default_tenant(), 1)
-            .await
-            .is_err());
-        assert!(engine
-            .check_request_concurrency(&default_tenant(), 1)
-            .await
-            .is_ok());
-        assert!(engine
-            .check_request_concurrency(&default_tenant(), 5)
-            .await
-            .is_err());
     }
 
     #[tokio::test]
@@ -842,8 +623,8 @@ mod tests {
             .is_ok());
     }
 
-    #[tokio::test]
-    async fn set_policy_overrides_for_tenant() {
+    #[test]
+    fn set_policy_overrides_for_tenant() {
         let engine = InMemoryTenantPolicyEngine::default();
         let tenant = TenantId::new("tenant-a");
         engine.set_policy(
@@ -853,13 +634,10 @@ mod tests {
                 ..TenantPolicy::default()
             },
         );
-        assert!(engine.check_agent_concurrency(&tenant, 1).await.is_err());
-        assert!(engine.check_agent_concurrency(&tenant, 0).await.is_ok());
-        // 默认租户策略不受影响。
+        assert_eq!(engine.policy(&tenant).max_concurrent_agents, Some(1));
         assert_eq!(
             engine.policy(&default_tenant()).max_concurrent_agents,
             Some(8)
         );
-        assert_eq!(engine.policy(&tenant).max_concurrent_agents, Some(1));
     }
 }

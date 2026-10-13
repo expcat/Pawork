@@ -1,7 +1,7 @@
 //! Pawork 控制面：tenant / identity、usage ledger、audit JSONL。
 //!
 //! 合并自 V1 `tenant-service` + `usage-ledger` + `audit-log`。关键 trait
-//! （[`UsageLedger`] / [`TenantPolicyEngine`] / [`AuditSink`] / [`AuditStore`]）
+//! （[`UsageLedger`] / [`TenantPolicyEngine`] / [`AuditSink`]）
 //! 保持 V1 签名，供波 C 注入。`sqlite` feature（默认开启）门控
 //! [`SqliteUsageLedger`]。
 
@@ -16,23 +16,23 @@ pub mod tenant;
 pub mod usage;
 
 pub use audit::{
-    AuditAction, AuditDecision, AuditError, AuditEventV1, AuditSink, AuditStore, AuditTargetKind,
+    AuditAction, AuditDecision, AuditError, AuditEventV1, AuditSink, AuditTargetKind,
     FileAuditStore, InMemoryAuditStore, AUDIT_SCHEMA_VERSION,
 };
 pub use decision::{sanitize_reason, PolicyDecisionEvent, PolicyDecisionKind, PolicyGate};
 pub use identity::{
-    default_principal, default_tenant, IdentityContext, IdentityError, IdentityResolver,
-    LocalIdentityResolver, DEFAULT_PRINCIPAL, DEFAULT_TENANT,
+    default_principal, default_tenant, IdentityContext, IdentityError, DEFAULT_PRINCIPAL,
+    DEFAULT_TENANT,
 };
 pub use pawork_domain::{
     AccountId, AgentId, EventId, ModelId, PrincipalId, ProviderId, RequestId, RunId, SessionId,
     TenantId, Timestamp,
 };
-pub use rbac::{AuditExportPolicy, Permission, PermissionProfile, PrincipalRole};
+pub use rbac::{Permission, PermissionProfile, PrincipalRole};
 pub use tenant::{
-    decide_account, decide_audit_export, decide_model, decide_permission, decide_provider,
-    BudgetDimension, ConcurrencyKind, InMemoryTenantPolicyEngine, TenantPolicy,
-    TenantPolicyDecision, TenantPolicyEngine, TenantPolicyError,
+    decide_account, decide_model, decide_permission, decide_provider, BudgetDimension,
+    ConcurrencyKind, InMemoryTenantPolicyEngine, TenantPolicy, TenantPolicyDecision,
+    TenantPolicyEngine, TenantPolicyError,
 };
 pub use usage::{
     CostConfidence, InMemoryUsageLedger, UsageLedger, UsageLedgerError, UsageQuery, UsageRecord,

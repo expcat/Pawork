@@ -20,13 +20,11 @@ use pawork_domain::{
 };
 
 pub use appender::{tool_results_message, AssembledTurn, PendingToolCall, ToolCallResult};
-pub use cancel::{
-    CancelHandle, CancelReason, CancelReceipt, NoopProcessTreeCleaner, ProcessTreeCleaner,
-};
+pub use cancel::{CancelHandle, CancelReason, CancelReceipt};
 pub use context::{
     compute_compaction, AutoCompactionReason, CompactionReason, CompactionTrigger, ContextBudget,
     ContextBudgetBreakdown, ContextLimits, HeuristicEstimator, InjectedLayer, TokenEstimator,
-    ToolSchema, TrimThresholds, TrimmedToolResult, TurnContext,
+    ToolSchema, TurnContext,
 };
 pub use event::{map_provider_event, AgentEventSink, EngineError, LoopEventEmitter};
 pub use session_turn::{now_timestamp, SessionTurn};
@@ -333,9 +331,14 @@ mod tests {
         };
         let sink = RecordingSink::default();
 
-        let result = run_turn(&provider, &sample_request(), &sink, CancellationToken::new())
-            .await
-            .expect("turn with extra variants");
+        let result = run_turn(
+            &provider,
+            &sample_request(),
+            &sink,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("turn with extra variants");
 
         assert_eq!(result, completed_summary());
         let received = sink.snapshot();
@@ -366,12 +369,7 @@ mod tests {
         let token = CancellationToken::new();
         let sink = RecordingSink::default();
         let request = sample_request();
-        let run = run_turn(
-            &CancelAfterDeltaProvider,
-            &request,
-            &sink,
-            token.clone(),
-        );
+        let run = run_turn(&CancelAfterDeltaProvider, &request, &sink, token.clone());
         let cancel_after_delta = async {
             loop {
                 if !sink.snapshot().is_empty() {

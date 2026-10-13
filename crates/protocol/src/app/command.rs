@@ -13,7 +13,7 @@ use thiserror::Error;
 use ts_rs::TS;
 
 use super::settings::{DefaultModelPair, ProviderAccountSelectionMode};
-use super::version::{ApiVersion, DEFAULT_CONTROL_PLANE_PRINCIPAL};
+use super::version::ApiVersion;
 
 /// Provider API Key 明文 newtype（SET-1，ADR-046）。
 ///
@@ -306,36 +306,6 @@ fn validate_client_range(range: Option<ClientTextRange>) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-impl ActorIdentity {
-    /// 映射为 canonical 主体键（P18-2 身份传播）。
-    ///
-    /// 供 `app-service` 的身份解析器（`tenant-service::IdentityResolver`）消费：
-    /// 本地用户 / 已认证客户端 / 自动化 / 插件 / MCP 服务器均能映射出非空主体键；
-    /// `System` 显式映射为 `local/system`。任何携带空白 payload 的身份返回
-    /// `None`，解析层据此 fail-closed 拒绝，而不是静默落入默认身份。
-    pub fn canonical_principal(&self) -> Option<String> {
-        match self {
-            ActorIdentity::LocalUser { actor_id, .. } if !actor_id.as_str().trim().is_empty() => {
-                Some(DEFAULT_CONTROL_PLANE_PRINCIPAL.to_string())
-            }
-            ActorIdentity::AuthenticatedClient { subject, .. } if !subject.trim().is_empty() => {
-                Some(format!("authenticated_client:{}", subject.trim()))
-            }
-            ActorIdentity::Automation { name } if !name.trim().is_empty() => {
-                Some(format!("automation:{}", name.trim()))
-            }
-            ActorIdentity::Plugin { plugin_id } if !plugin_id.as_str().trim().is_empty() => {
-                Some(format!("plugin:{}", plugin_id.as_str().trim()))
-            }
-            ActorIdentity::McpServer { server_id } if !server_id.trim().is_empty() => {
-                Some(format!("mcp_server:{}", server_id.trim()))
-            }
-            ActorIdentity::System => Some("local/system".to_string()),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -761,9 +731,7 @@ pub struct RelativePathError;
 
 #[cfg(test)]
 mod tests {
-    use pawork_domain::{
-        ActorId, CommandId, ConnectionId, GuiClientId, PluginId, Timestamp, WorkspaceId,
-    };
+    use pawork_domain::{ActorId, CommandId, ConnectionId, GuiClientId, Timestamp, WorkspaceId};
 
     use super::*;
     use crate::app::API_VERSION;
@@ -953,63 +921,6 @@ mod tests {
         assert!(WorkspaceRelativePath::new(r"\\server\share").is_err());
         assert!(serde_json::from_str::<WorkspaceRelativePath>(r#""../secret""#).is_err());
         assert!(serde_json::from_str::<WorkspaceRelativePath>(r#""C:\\Windows""#).is_err());
-    }
-
-    #[test]
-    fn actor_identity_canonical_principal_maps_stable_principals() {
-        let cases = [
-            (
-                ActorIdentity::LocalUser {
-                    actor_id: ActorId::from("actor-1"),
-                    display_name: None,
-                },
-                Some("local/user"),
-            ),
-            (
-                ActorIdentity::AuthenticatedClient {
-                    actor_id: ActorId::from("actor-2"),
-                    subject: "subject-1".into(),
-                },
-                Some("authenticated_client:subject-1"),
-            ),
-            (
-                ActorIdentity::Automation {
-                    name: "scheduler".into(),
-                },
-                Some("automation:scheduler"),
-            ),
-            (
-                ActorIdentity::Plugin {
-                    plugin_id: PluginId::from("plugin-1"),
-                },
-                Some("plugin:plugin-1"),
-            ),
-            (
-                ActorIdentity::McpServer {
-                    server_id: "server-1".into(),
-                },
-                Some("mcp_server:server-1"),
-            ),
-        ];
-        for (identity, expected) in cases {
-            assert_eq!(identity.canonical_principal().as_deref(), expected);
-        }
-        assert_eq!(
-            ActorIdentity::System.canonical_principal().as_deref(),
-            Some("local/system")
-        );
-        assert_eq!(
-            ActorIdentity::AuthenticatedClient {
-                actor_id: ActorId::from("actor"),
-                subject: "   ".into(),
-            }
-            .canonical_principal(),
-            None
-        );
-        assert_eq!(
-            ActorIdentity::Automation { name: "\t".into() }.canonical_principal(),
-            None
-        );
     }
 
     #[test]

@@ -2,8 +2,8 @@
 //!
 //! 双层并发上限的实现位置：
 //!
-//! - **Agent 并发**：由 [`crate::AgentSupervisor`] 的活动 worker 计数 +
-//!   `TenantPolicyEngine::check_agent_concurrency` 实现（见 supervisor.rs）；
+//! - **Agent 并发**：由 [`crate::AgentSupervisor`] 在 `reserve_concurrency` 里
+//!   合并活动 worker 计数与租户策略 `max_concurrent_agents`；
 //! - **请求 / Lease 并发**：由 `pawork-control-plane` 的 `CredentialPool` 实现。
 //!
 //! 两层互不读写对方状态（P12-4 验收标准："Agent 并发与 account request

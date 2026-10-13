@@ -5,8 +5,8 @@
 ## 1. 职责与边界
 
 - **做什么**：请求装配（`assemble_request` / `assemble_request_with_tools`）；单轮流式调用（内部 `run_turn`，`pub(crate)`）；多轮工具循环（`run_session`）；上下文预算 / 压缩触发 / token 估算 / tool result 裁剪（`context` 子模块）；run 级取消（`CancelHandle`）；手动压缩（`run_manual_compaction`）。
-- **不做什么**：不重试、不落库（落库由调用方在 `AgentEventSink` 里 persist-first）、不选通道、不读 Secret、不执行工具（经 `LoopContext` 回调宿主）、不杀进程树（经 `ProcessTreeCleaner` 注入）、不按 Provider 名称分支。
-- **宿主注入点**：`ModelProvider`（模型流）、`AgentEventSink`(事件出口)、`LoopContext`（工具执行 / 审批 / 压缩 / 快照回调）、`ProcessTreeCleaner`（取消时杀树）、`TokenEstimator` 与 `ContextLimits`（经 `TurnContext`）。
+- **不做什么**：不重试、不落库（落库由调用方在 `AgentEventSink` 里 persist-first）、不选通道、不读 Secret、不执行工具（经 `LoopContext` 回调宿主）、不杀进程树（杀树由取消令牌桥到 exec 的 `ProcessTreeGuard`）、不按 Provider 名称分支。
+- **宿主注入点**：`ModelProvider`（模型流）、`AgentEventSink`(事件出口)、`LoopContext`（工具执行 / 审批 / 压缩 / 快照回调）、`TokenEstimator` 与 `ContextLimits`（经 `TurnContext`）。取消只暴露根 `CancellationToken`。
 
 ## 2. 模块与文件地图
 
@@ -21,13 +21,13 @@
 | `src/tool_loop/tests.rs` | ~2180 | 原 `tool_loop.rs` 内联测试整文件迁入（`#[cfg(test)]`） |
 | `src/session_turn.rs` | ~70 | `SessionTurn`（会话轮次标识 + start_sequence）；`now_timestamp`；工具循环共享的 usage 归并 helper（`optional_usage` / `last_stream_usage`，`pub(crate)`） |
 | `src/appender.rs` | ~330 | `AssembledTurn`：把 `ProviderStreamEvent` 流折叠成一条助手 `Message`（text / thinking / reasoning / tool_calls / summary）；`PendingToolCall`；`ToolCallResult`；`tool_results_message` |
-| `src/cancel.rs` | ~190 | `CancelHandle`（原子幂等 cancel：取消根 token → 触发 cleaner 杀树）；`CancelReason` / `CancelReceipt`；`ProcessTreeCleaner` trait 与 `NoopProcessTreeCleaner` |
+| `src/cancel.rs` | ~120 | `CancelHandle`（原子幂等 cancel：只取消根 token）；`CancelReason` / `CancelReceipt`（`already_cancelled`） |
 | `src/event.rs` | ~245 | `EngineError`；`AgentEventSink` trait；`EventEmitter`（pub(crate)，sequence 分配 + 信封封装）；`LoopEventEmitter`（工具流事件入口）；`LoopSink`（pub(crate)，Provider 事件双写：映射转发 + 缓冲）；`map_provider_event` |
 | `src/context/mod.rs` | ~65 | `context` 门面；`ContextLimits`（硬预算 + 历史软限）；`InjectedLayer`（宿主注入的系统提示层）；`TurnContext`（默认全禁用，retained 4） |
 | `src/context/budget.rs` | ~90 | `ContextBudget`（`from_context_window` 推导 `max_input_tokens`，serde 形状冻结）；`ContextBudgetBreakdown` 占用明细 |
 | `src/context/compaction.rs` | ~150 | `compute_compaction` 触发判定纯函数（硬限优先于软限）；`CompactionReason` / `CompactionTrigger`（serde snake_case）；`AutoCompactionReason`（engine → host 原因，含 `Manual`） |
 | `src/context/token.rs` | ~290 | `TokenEstimator` trait（`count_text` 为核心，message / content part / tool schema 计数为默认实现）；`HeuristicEstimator`（非 CJK chars/4，CJK/Kana/Hangul 按 1 字符/token）；`ToolSchema`；`MESSAGE_FRAMING_TOKENS` 由 `count_message` 直接使用；`reply_primer_tokens`（pub(crate)） |
-| `src/context/tool_result_trim.rs` | ~560 | tool result 分级裁剪：`TrimThresholds`（2/16/256 KiB）、`ResultSize`（Small/Medium/Large/Huge）、`trim_tool_result(_with)`、`TrimmedToolResult`（`retained_full` 暂存原文）、`byte_len_of_tool_result`；CU-12 请求侧观测图像裁剪：`trim_observation_images`、`observation_image_budget_bytes`、`ObservationImageTrim` |
+| `src/context/tool_result_trim.rs` | ~340 | CU-12 请求侧观测图像裁剪：`trim_observation_images`、`observation_image_budget_bytes`、`ObservationImageTrim` |
 | `tests/domain_only.rs` | ~90 | 红线断言：解析本包 Cargo.toml，生产 `pawork-*` 依赖必须恰为 `{pawork-domain}`（覆盖 alias 与 target 表） |
 | `tests/no_provider_branch.rs` | ~115 | 红线断言：扫描 `src/` 全部 `.rs`，禁止出现任何 provider 名串；名单 = `pawork-providers::CHANNEL_REGISTRY` 派生通道 id + 固化基线别名（openai/anthropic/grok/glm 等） |
 
@@ -94,18 +94,17 @@
 
 ### 3.6 取消
 
-- `CancelHandle::new(run_id, Arc<dyn ProcessTreeCleaner>)`；`token()` / `child_token()` 返回同一根 `CancellationToken`（传给 Provider stream 与 Tool execute）。
-- `cancel(reason: CancelReason) -> CancelReceipt`：原子门控幂等——首次调用 ① 取消根令牌 ② 触发 `cleaner.cleanup(run_id)` 杀树并记录 `processes_killed`；重复调用返回 `already_cancelled: true` 且不重复清理。`CancelReason::{User, Budget, System, Shutdown}` 仅供调用方写事件 / 日志，不进 `RunCancelled` 信封。
-- 生产杀树由宿主注入 `pawork-exec` 侧实现；engine 默认 `NoopProcessTreeCleaner`，不自建 `run_id → 进程` 登记表。
+- `CancelHandle::new(run_id)`；`token()` / `child_token()` 返回同一根 `CancellationToken`（传给 Provider stream 与 Tool execute）。
+- `cancel(reason: CancelReason) -> CancelReceipt`：原子门控幂等——首次调用取消根令牌；重复调用返回 `already_cancelled: true`。`CancelReason::{User, Budget, System, Shutdown}` 仅供调用方写事件 / 日志，不进 `RunCancelled` 信封。
+- 杀树由取消令牌桥到 exec 的 `ProcessTreeGuard`。engine 不依赖 exec，不自建 `run_id → 进程` 登记表。
 
 ### 3.7 context 子模块
 
 - `ContextBudget::from_context_window(window, output_reserve, thinking_reserve)`：`max_input_tokens = window - reserves`（饱和到 0）；默认 128k/4k/0。serde 形状与 V1 一致（冻结）。
 - `compute_compaction(&ContextBudgetBreakdown, history_soft_limit) -> Option<CompactionTrigger>`：`estimated_input_tokens > max_input_tokens` → `InputBudgetExceeded`（优先）；否则 `history_tokens > soft` → `HistorySoftLimit`；否则 None。
 - `TokenEstimator`：`count_text` 唯一必须实现的核心；`count_message`（+4 framing）/ `count_content_part`（图片 85 placeholder；Reasoning 只数 summary）/ `count_tool_schemas`（JSON 序列化 + 每工具 +8）均为默认实现。`HeuristicEstimator::new(chars_per_token)`（默认 4；CJK 类字符恒按 1 字符/token）。
-- `trim_tool_result(_with)(&ToolResultContent, &TrimThresholds, [TrimStrategy])`：按字节分级——Small 完整保留；Medium 头尾各 2 KiB + 截断说明；Large 摘要 + `ArtifactRef` 占位（占位 id `artifact:trimmed-tool-result`）；Huge 仅 `ArtifactRef`。原文经 `TrimmedToolResult::retained_full` 暂存，写 Blob 由调用方负责。
- - `trim_observation_images(&mut [Message], retained_image_bytes) -> ObservationImageTrim`（CU-12，请求侧截图历史裁剪）：只处理 `Tool` 角色消息内 `ToolResultContent` 的 `ImageSource::Base64` 图像（用户附图、`Url` / `Artifact` 来源不动；`Tool` 消息顶层直接挂的图像也不动——生产循环把工具结果统一包装为 `ToolResult`，顶层图像既不裁剪也不参与最新观测判定）；最后一条含图像的 `Tool` 消息（最新观测）全部图像无条件保留、不占预算；更早图像从新到旧在预算内保留；被裁剪图像原位替换为 `[image trimmed: … retained in session history]` 文本说明（不用 `ArtifactRef`——Chat / Responses 会丢弃 Artifact 类型图像来源），同一 tool result 的文本部分（观测 metadata 等）原样保留。
- - `observation_image_budget_bytes(&ContextBudget) -> u64`：旧观测图像保留预算 = `max_input_tokens` × 4 字符/token（与 `HeuristicEstimator` 默认口径一致）。token 估算器对图像只计 85 placeholder token，反映不了 base64 在请求体中的真实体量，图像因此单独按字节设限。最新观测全部保留且不占该预算，所以它不是请求全部图像的总字节上限；CU-12 主路径中旧图预算 3_000，最终请求的 B+C 载荷为 4_000 字节。
+- `trim_observation_images(&mut [Message], retained_image_bytes) -> ObservationImageTrim`（CU-12，请求侧截图历史裁剪）：只处理 `Tool` 角色消息内 `ToolResultContent` 的 `ImageSource::Base64` 图像（用户附图、`Url` / `Artifact` 来源不动；`Tool` 消息顶层直接挂的图像也不动——生产循环把工具结果统一包装为 `ToolResult`，顶层图像既不裁剪也不参与最新观测判定）；最后一条含图像的 `Tool` 消息（最新观测）全部图像无条件保留、不占预算；更早图像从新到旧在预算内保留；被裁剪图像原位替换为 `[image trimmed: … retained in session history]` 文本说明（不用 `ArtifactRef`——Chat / Responses 会丢弃 Artifact 类型图像来源），同一 tool result 的文本部分（观测 metadata 等）原样保留。
+- `observation_image_budget_bytes(&ContextBudget) -> u64`：旧观测图像保留预算 = `max_input_tokens` × 4 字符/token（与 `HeuristicEstimator` 默认口径一致）。token 估算器对图像只计 85 placeholder token，反映不了 base64 在请求体中的真实体量，图像因此单独按字节设限。最新观测全部保留且不占该预算，所以它不是请求全部图像的总字节上限；CU-12 主路径中旧图预算 3_000，最终请求的 B+C 载荷为 4_000 字节。
 - `TurnContext { limits, estimator, retained_messages（默认 4）, injected_layers }`：`Default` 全禁用，行为与未接线时完全一致（估算 0、不压缩、不截断、不注入）。
 
 ## 4. 核心行为与数据流
@@ -140,7 +139,7 @@
 
 ### 4.3 取消传播
 
-`CancelHandle.cancel()` → 根 token 取消 + cleaner 杀树；`run_session` 在轮首、审批返回后、工具执行后三处检查并发 `RunCancelled`；`run_turn` 在调用 provider 前做预取消检查（已取消则不调 provider）。工具内部与 provider 流内取消由同一把 token 传播。
+`CancelHandle.cancel()` → 根 token 取消；杀树由该令牌桥到 exec 的 `ProcessTreeGuard`。`run_session` 在轮首、审批返回后、工具执行后三处检查并发 `RunCancelled`；`run_turn` 在调用 provider 前做预取消检查（已取消则不调 provider）。工具内部与 provider 流内取消由同一把 token 传播。
 
 CU-10：工具执行返回时若已取消，`success == true` 或严格 JSON 布尔 `metadata.input_dispatched == true` 的结果仍是必须保留的事实。至少一条结果有事实时，按原 invocation 顺序为整批配对：事实结果原样保留，Denied 保持 Authorization，其余缺项或无事实结果回填 Cancelled 与明确取消文本；沿既有 `ToolExecutionCompleted` → 紧随对应结果的可选 `sandbox.fallback` Diagnostic → 唯一 `MessageCommitted(tool)` 提交，再返回 Cancelled 由调用者发 `RunCancelled`。整批没有事实时维持原取消路径，不提交 Completed 或工具消息。两条路径均不再次请求 Provider 或重派发工具。
 
@@ -158,7 +157,7 @@ API 1.24 视频引用：context token 估算只统计 URL 字符文本，不能�
 - **审批事件对（K-02，冻结）**：`ToolApprovalRequested` 由 `request_approval` 实现方在每次阻塞等待前 emit（reason 逐字 ``tool `{name}` requires approval``）；`ToolApprovalResponded` 由 engine 补发。等待审批期间取消 → 有 Requested 无 Responded 是合法事件序。审批经宿主的 ApprovalResolver 体系 await，engine 不感知具体审批 UI。
 - **事件可持久化可重放**：所有事件带连续 sequence（从 `start_sequence` 起）；sink persist 失败后 engine 不再补发终态事件（磁盘停在最后一条成功 append，恢复由重放完成）。
 - **不按 Provider 名称分支**：`src/` 出现任何已知 provider 名串即红线违规（`tests/no_provider_branch.rs` 守护，名单自 `CHANNEL_REGISTRY` 派生 + 基线别名）。压缩 = 重写前缀 = 缓存失效，不做任何厂商 cache 特例。
-- **依赖红线**：生产依赖唯一 `pawork-*` 为 `pawork-domain`（`tests/domain_only.rs` 守护）；不依赖 tools / exec / storage / policy；`ProcessTreeCleaner` / 工具执行 / 落库全部由宿主注入。
+- **依赖红线**：生产依赖唯一 `pawork-*` 为 `pawork-domain`（`tests/domain_only.rs` 守护）；不依赖 tools / exec / storage / policy。工具执行与落库由宿主注入；杀树由取消令牌桥到 exec 的 `ProcessTreeGuard`，engine 不链接 exec。
 - **`run_turn` 透传**：`ProviderStreamEvent` 14 变体全部由 provider 发射、sink 原样接收，engine 不滤不删；预取消时不调 provider 直接 `ProviderError::cancelled`。
 - **压缩失败即失败**：`compact_history` 的宿主错误必须终止当前 run；无持久化 outcome 时水位只能为 0，不得拿摘要事件自身 sequence 代替。
 - **fail-closed 审批**：gate 向量长度与调用数不匹配时全部按 Denied 处理，不执行任何工具。
@@ -184,7 +183,7 @@ API 1.24 视频引用：context token 估算只统计 URL 字符文本，不能�
 | `tool_loop/tests.rs::cancelled_batch_with_dispatch_fact_pairs_all_invocations` | CU-10 取消后整批配对：success / 严格布尔派发事实、Denied / 缺项 / 非布尔反例、诊断顺序、唯一工具消息、RunCancelled 与零二次 Provider 请求 |
 | `lib.rs` 内联测试 | 装配默认值冻结断言；`run_turn` 透传（含 Thinking/ToolCallStarted 等变体）、预取消不调 provider、流中取消 |
 | `tool_loop/tests.rs`（27 个，原内联测试整文件迁入） | 多轮循环（`mock_provider_completes_multi_turn_tool_loop`）、并行只读工具、工具失败回填续跑、`max_tool_rounds_emits_run_failed_without_extra_stream`、审批事件对与 ApprovedOnce/ForRun/Denied（`approval_event_pair_then_execute_on_approved_once`、`short_approval_gates_fail_closed_without_executing`、`denied_fills_tool_result_and_continues_without_executing`、`approved_for_run_remembers_across_tool_rounds`）、取消（长工具中取消、`cancel_while_waiting_for_approval_emits_requested_without_responded`）、S5 上下文（默认关闭现状、注入层、软限压缩、硬限截断、`compaction_outcome_metadata_flows_into_events`、`compact_history_error_fails_the_run_instead_of_being_swallowed`、手动压缩两例、R-18 压缩取消两例 `manual_compaction_pre_cancelled_token_fails_without_provider_call` / `manual_compaction_cancelled_summary_is_not_degraded`、长对话恒不超硬限）、CU-12 观测图像裁剪（`observation_images_trimmed_in_request_copy_but_persisted_in_events`：多步截图请求图像受控 + 最新观测保留 + 已提交事件图像完整 + Diagnostic 留痕；`observation_images_untouched_without_context_limits`：默认上下文不裁剪）、checkpoint（快照先于执行、回滚追加事件）、sandbox fallback 诊断 |
-| `appender.rs` / `cancel.rs` / `context/*` 内联测试 | 流式折叠、取消幂等与杀树计数、预算推导 / 触发优先级 / 估算口径 / 裁剪分级边界、观测图像裁剪（最新观测保留 / 预算内保留 / 嵌套结果递归 / 用户附图、Url 来源与 Tool 消息顶层图像不动 / 预算折算） |
+| `appender.rs` / `cancel.rs` / `context/*` 内联测试 | 流式折叠、取消幂等与预取消、预算推导 / 触发优先级 / 估算口径、观测图像裁剪（最新观测保留 / 预算内保留 / 嵌套结果递归 / 用户附图、Url 来源与 Tool 消息顶层图像不动 / 预算折算） |
 
 默认验证命令：`cargo test -p pawork-engine --offline --lib --tests`。
 
@@ -195,7 +194,7 @@ ADR-057 的会话身份语义现由工具循环与压缩路径承载：相关测
 - `run_turn` 为 `pub(crate)`（R0 D12 公开面收口）；外部走 `run_session` / `run_manual_compaction`。
 - `TurnContext::default()` 全禁用：不配置 limits + estimator 时无估算（`estimated_input_tokens = 0`）、无压缩、无截断——上下文管理是 opt-in。
 - 精确 tokenizer（tiktoken）刻意不迁入本包；需要时由宿主实现 `TokenEstimator` 注入，默认只有 `HeuristicEstimator`。
- - tool result 分级裁剪（`trim_tool_result`，Medium/Large/Huge 含 `ArtifactRef` 占位）仍是独立纯函数工具，`run_session` 不自动调用；Blob 写入与真实 `ArtifactId` 替换由调用方完成，当前仍无生产消费者。CU-12（2026-10-07）已按 B10 裁决接入一条必要生产路径：请求侧观测图像裁剪 `trim_observation_images` 由 `run_session` 在 `limits` 配置时每轮执行，只改请求副本（语义见 §3.7 / §4.1，计划见 [CU-12](../../plan/cu-12-screenshot-context.md)）。
+- CU-12 请求侧观测图像裁剪 `trim_observation_images` 由 `run_session` 在 `limits` 配置时每轮执行，只改请求副本（语义见 §3.7 / §4.1，计划见 [CU-12](../../plan/cu-12-screenshot-context.md)）。
 - `AssembledTurn` 对 `ToolCallArgumentsDelta` 早于 `ToolCallStarted` 到达的乱序容错（补建空名调用）；参数 JSON 解析失败时降级 `Value::Null`，不报错。
 - 结构性摘要（降级路径）只截取文本 part，非文本内容不进入摘要。
 - `ToolStreamEvent::Progress` 与 `ArtifactAvailable` 目前在 `LoopEventEmitter::emit_tool_event` 中被静默忽略，不映射为 AgentEvent。

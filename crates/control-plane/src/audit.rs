@@ -149,15 +149,9 @@ impl AuditEventV1 {
     }
 }
 
-/// Append-only event sink. Implementations must preserve event ids and order.
+/// Append-only event sink. Implementations must preserve event ids and reject duplicates.
 pub trait AuditSink: Send + Sync {
     fn append(&self, event: AuditEventV1) -> Result<(), AuditError>;
-}
-
-/// Query surface always requires an explicit tenant scope.
-pub trait AuditStore: AuditSink {
-    fn query_tenant(&self, tenant: &TenantId) -> Result<Vec<AuditEventV1>, AuditError>;
-    fn replay(&self) -> Result<Vec<AuditEventV1>, AuditError>;
 }
 
 /// Deterministic append-only in-memory implementation used by the composition layer and tests.
@@ -178,20 +172,6 @@ impl AuditSink for InMemoryAuditStore {
         }
         events.push(event);
         Ok(())
-    }
-}
-
-impl AuditStore for InMemoryAuditStore {
-    fn query_tenant(&self, tenant: &TenantId) -> Result<Vec<AuditEventV1>, AuditError> {
-        Ok(lock(&self.events)
-            .iter()
-            .filter(|event| event.tenant_id == *tenant)
-            .cloned()
-            .collect())
-    }
-
-    fn replay(&self) -> Result<Vec<AuditEventV1>, AuditError> {
-        Ok(lock(&self.events).clone())
     }
 }
 
@@ -281,20 +261,6 @@ impl AuditSink for FileAuditStore {
     }
 }
 
-impl AuditStore for FileAuditStore {
-    fn query_tenant(&self, tenant: &TenantId) -> Result<Vec<AuditEventV1>, AuditError> {
-        Ok(lock(&self.events)
-            .iter()
-            .filter(|event| event.tenant_id == *tenant)
-            .cloned()
-            .collect())
-    }
-
-    fn replay(&self) -> Result<Vec<AuditEventV1>, AuditError> {
-        Ok(lock(&self.events).clone())
-    }
-}
-
 fn safe_label(value: &str) -> bool {
     value.len() <= 256
         && value.bytes().all(|byte| {
@@ -350,25 +316,14 @@ mod tests {
     }
 
     #[test]
-    fn replay_rebuilds_order_and_duplicate_ids_fail_closed() {
+    fn duplicate_append_is_rejected() {
         let store = InMemoryAuditStore::default();
         store.append(event("event-1", "tenant-a")).unwrap();
         store.append(event("event-2", "tenant-b")).unwrap();
-        assert_eq!(store.replay().unwrap().len(), 2);
         assert!(matches!(
             store.append(event("event-1", "tenant-a")),
             Err(AuditError::DuplicateEvent(_))
         ));
-    }
-
-    #[test]
-    fn tenant_queries_never_cross_boundaries() {
-        let store = InMemoryAuditStore::default();
-        store.append(event("event-1", "tenant-a")).unwrap();
-        store.append(event("event-2", "tenant-b")).unwrap();
-        let a = store.query_tenant(&TenantId::new("tenant-a")).unwrap();
-        assert_eq!(a.len(), 1);
-        assert_eq!(a[0].event_id, EventId::new("event-1"));
     }
 
     #[test]
@@ -382,7 +337,7 @@ mod tests {
     }
 
     #[test]
-    fn durable_store_reopens_and_preserves_tenant_isolation() {
+    fn durable_store_reopens_and_preserves_tenant_lines() {
         let path = std::env::temp_dir().join(format!(
             "pawork-audit-{}-{}.jsonl",
             std::process::id(),
@@ -398,18 +353,30 @@ mod tests {
             store.append(event("event-2", "tenant-b")).unwrap();
         }
         let reopened = FileAuditStore::open(&path).unwrap();
-        assert_eq!(reopened.replay().unwrap().len(), 2);
-        assert_eq!(
-            reopened
-                .query_tenant(&TenantId::new("tenant-a"))
-                .unwrap()
-                .len(),
-            1
-        );
+        let raw = std::fs::read_to_string(reopened.path()).unwrap();
+        let lines: Vec<&str> = raw.lines().filter(|line| !line.trim().is_empty()).collect();
+        assert_eq!(lines.len(), 2);
+        let parsed: Vec<AuditEventV1> = lines
+            .iter()
+            .map(|line| serde_json::from_str(line).expect("audit line"))
+            .collect();
+        assert_eq!(parsed[0].event_id, EventId::new("event-1"));
+        assert_eq!(parsed[0].tenant_id, TenantId::new("tenant-a"));
+        assert_eq!(parsed[1].event_id, EventId::new("event-2"));
+        assert_eq!(parsed[1].tenant_id, TenantId::new("tenant-b"));
         assert!(matches!(
             reopened.append(event("event-1", "tenant-a")),
             Err(AuditError::DuplicateEvent(_))
         ));
+        let raw_after = std::fs::read_to_string(reopened.path()).unwrap();
+        assert_eq!(
+            raw_after
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .count(),
+            2,
+            "rejected duplicate must not append another line"
+        );
         let _ = std::fs::remove_file(path);
     }
 

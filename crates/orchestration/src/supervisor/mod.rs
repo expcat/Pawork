@@ -37,9 +37,9 @@ use pawork_control_plane::{InMemoryUsageLedger, UsageLedgerError, UsageRecord, U
 use crate::budget::{now_ms, LedgerContext, WorkerBudgetController, WorkerBudgetLimits};
 #[cfg(test)]
 use crate::identity::WorkerRole;
-use crate::lifecycle::{OrchestrationEvent, WorkerTransition};
 #[cfg(test)]
-use crate::lifecycle::{WorkerState, replay_workers};
+use crate::lifecycle::{replay_workers, WorkerState};
+use crate::lifecycle::{OrchestrationEvent, WorkerTransition};
 #[cfg(test)]
 use crate::merge::{
     ConflictReport, MergeDecision, MergeOutcome, PatchMerger, PatchProposal, WorkerPatch,
@@ -56,8 +56,6 @@ use registry::TerminalTake;
 pub struct SupervisorConfig {
     /// 本 Supervisor 允许的最大 agent 并发（本地闸门，租户策略之外）。
     pub max_agent_concurrency: u64,
-    /// 默认账号侧并发（创建 `CredentialPool` 时的建议值；本 Supervisor 不创建池）。
-    pub default_pool_concurrency: u64,
     /// spawn 未显式携带预算时使用的默认预算。
     pub budget: WorkerBudgetLimits,
     /// 沿 parent_id 的最大 worker 深度；`None` 表示不限制。
@@ -68,7 +66,6 @@ impl Default for SupervisorConfig {
     fn default() -> Self {
         Self {
             max_agent_concurrency: 16,
-            default_pool_concurrency: 4,
             budget: WorkerBudgetLimits::default(),
             max_worker_depth: None,
         }
@@ -455,14 +452,14 @@ impl AgentSupervisor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lifecycle::OrchestrationEvent;
     use async_trait::async_trait;
     use pawork_control_plane::credential::{
         AccountId, AcquireRequest, CredentialLease, CredentialPool, InMemoryCredentialPool,
         LeaseGuard, LeaseId, LeaseOutcome, PoolError, ReleaseReceipt,
     };
     use pawork_control_plane::{
-        InMemoryTenantPolicyEngine, PermissionProfile, PolicyDecisionKind, PolicyGate,
-        PrincipalRole, TenantPolicy,
+        InMemoryTenantPolicyEngine, PermissionProfile, PrincipalRole, TenantPolicy,
     };
     use pawork_control_plane::{InMemoryUsageLedger, UsageQuery};
     use pawork_domain::{ModelId, PrincipalId, SessionId, TenantId};
@@ -932,25 +929,21 @@ mod tests {
             report.recovered_states[&AgentId::new("d")],
             WorkerState::Failed
         );
-        assert!(
-            report
-                .recovered_states
-                .values()
-                .all(|state| state.is_terminal())
-        );
+        assert!(report
+            .recovered_states
+            .values()
+            .all(|state| state.is_terminal()));
         // report-only：Supervisor 自身不被重建，不能据此 cancel / assign / flush。
         assert!(supervisor.state(&AgentId::new("a")).is_none());
         assert!(supervisor.state(&AgentId::new("b")).is_none());
         assert!(supervisor.state(&AgentId::new("c")).is_none());
         assert!(supervisor.cancel_token(&AgentId::new("a")).is_none());
         assert!(supervisor.events().is_empty());
-        assert!(
-            supervisor
-                .children
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .is_empty()
-        );
+        assert!(supervisor
+            .children
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .is_empty());
         assert_eq!(supervisor.active_worker_count(None), 0);
     }
 
@@ -970,20 +963,16 @@ mod tests {
         assert!(supervisor.state(&AgentId::new("no-such-parent")).is_none());
         assert_eq!(supervisor.active_worker_count(None), 0);
         assert!(supervisor.events().is_empty());
-        assert!(
-            supervisor
-                .children
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .is_empty()
-        );
-        assert!(
-            supervisor
-                .workers
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .is_empty()
-        );
+        assert!(supervisor
+            .children
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .is_empty());
+        assert!(supervisor
+            .workers
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .is_empty());
     }
 
     #[tokio::test]
@@ -1019,14 +1008,12 @@ mod tests {
 
         assert_eq!(supervisor.state(&parent), Some(WorkerState::Starting));
         assert_eq!(supervisor.active_worker_count(None), 1);
-        assert!(
-            supervisor
-                .children
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .get(&parent)
-                .is_none()
-        );
+        assert!(supervisor
+            .children
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .get(&parent)
+            .is_none());
         assert_eq!(
             supervisor
                 .workers
@@ -1060,14 +1047,12 @@ mod tests {
             matches!(err, SupervisorError::PolicyDenied(ref reason) if reason.contains("cannot spawn")),
             "{err:?}"
         );
-        assert!(
-            supervisor
-                .children
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .get(&parent)
-                .is_none()
-        );
+        assert!(supervisor
+            .children
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .get(&parent)
+            .is_none());
         assert_eq!(supervisor.active_worker_count(None), 0);
     }
 
@@ -1299,15 +1284,13 @@ mod tests {
             Some(&WorkerState::Failed)
         );
         assert!(supervisor.cancel_token(&failed).is_none());
-        assert!(
-            !supervisor
-                .children
-                .lock()
-                .unwrap()
-                .get(&parent)
-                .unwrap()
-                .contains(&failed)
-        );
+        assert!(!supervisor
+            .children
+            .lock()
+            .unwrap()
+            .get(&parent)
+            .unwrap()
+            .contains(&failed));
         assert!(supervisor.reservations.lock().unwrap().is_empty());
         assert_eq!(supervisor.active_worker_count(None), 1);
         assert_eq!(graph.state_of(&TaskId::new(failed.as_str())), None);
@@ -1719,16 +1702,21 @@ mod tests {
         let mut req = spawn_request(None);
         req.acquire = Some(whitelisted_acquire(Some("anthropic"), None));
         let err = supervisor.spawn(req).await.unwrap_err();
-        assert!(matches!(err, SupervisorError::PolicyDenied(_)), "{err:?}");
-        // 拒绝记为 versioned 决策事件（LeaseAcquire 闸口），deny 不被后续
-        // 任何阶段覆盖（deny-first 短路：仅此一条事件）。
-        let decisions = engine.decisions(&TenantId::new("tenant-a"));
-        assert_eq!(decisions.len(), 1, "{decisions:?}");
-        assert_eq!(decisions[0].gate, PolicyGate::LeaseAcquire);
-        assert_eq!(decisions[0].decision, PolicyDecisionKind::Deny);
-        assert_eq!(decisions[0].policy_version, 1);
-        assert_eq!(decisions[0].tenant_id, TenantId::new("tenant-a"));
-        assert_eq!(decisions[0].principal_id, PrincipalId::new("principal-1"));
+        assert!(
+            matches!(
+                err,
+                SupervisorError::PolicyDenied(ref reason)
+                    if reason.contains("Provider 不在允许列表内")
+                        && reason.contains("anthropic")
+            ),
+            "{err:?}"
+        );
+        assert_eq!(supervisor.active_worker_count(None), 0);
+        assert!(
+            supervisor.events().is_empty(),
+            "provider deny must short-circuit before admission"
+        );
+        assert_eq!(engine.policy_version(&TenantId::new("tenant-a")), 1);
         // 跨租户隔离：未配置租户 tenant-b 不继承 tenant-a 的 deny。
         let mut other = spawn_request(None);
         other.tenant_id = TenantId::new("tenant-b");
@@ -1741,12 +1729,12 @@ mod tests {
             supervisor.spawn(other).await.is_ok(),
             "tenant-b must not inherit tenant-a deny policy"
         );
-        let tenant_b_decisions = engine.decisions(&TenantId::new("tenant-b"));
         assert!(
-            tenant_b_decisions
+            supervisor
+                .events()
                 .iter()
-                .all(|event| event.decision == PolicyDecisionKind::Allow),
-            "tenant-b spawn must be allowed (no inherited deny): {tenant_b_decisions:?}"
+                .any(|event| matches!(event, OrchestrationEvent::WorkerAdmitted { .. })),
+            "tenant-b spawn must be admitted"
         );
     }
 
@@ -1759,32 +1747,34 @@ mod tests {
                 ..TenantPolicy::default()
             },
         );
-        let supervisor = harness(Arc::new(InMemoryCredentialPool::new(4)), engine.clone());
+        let supervisor = harness(Arc::new(InMemoryCredentialPool::new(4)), engine);
 
         let mut deny_req = spawn_request(None);
         deny_req.acquire = Some(whitelisted_acquire(None, Some("acct-b")));
         let err = supervisor.spawn(deny_req).await.unwrap_err();
-        assert!(matches!(err, SupervisorError::PolicyDenied(_)), "{err:?}");
+        assert!(
+            matches!(
+                err,
+                SupervisorError::PolicyDenied(ref reason)
+                    if reason.contains("账号不在允许列表内") && reason.contains("acct-b")
+            ),
+            "{err:?}"
+        );
+        assert!(supervisor.events().is_empty());
+        assert_eq!(supervisor.active_worker_count(None), 0);
 
         let mut allow_req = spawn_request(None);
         allow_req.acquire = Some(whitelisted_acquire(None, Some("acct-a")));
         let agent = supervisor.spawn(allow_req).await.unwrap();
+        assert!(
+            supervisor.events().iter().any(|event| matches!(
+                event,
+                OrchestrationEvent::WorkerAdmitted { agent_id, .. } if agent_id == &agent
+            )),
+            "matching account must pass lease acquire and be admitted"
+        );
         supervisor.start_worker(&agent).await.unwrap();
         supervisor.complete(&agent).await.unwrap();
-
-        let decisions = engine.decisions(&TenantId::new("tenant-a"));
-        assert!(
-            decisions
-                .iter()
-                .any(|event| event.gate == PolicyGate::LeaseAcquire
-                    && event.decision == PolicyDecisionKind::Deny)
-        );
-        assert!(
-            decisions
-                .iter()
-                .any(|event| event.gate == PolicyGate::AgentSpawn
-                    && event.decision == PolicyDecisionKind::Allow)
-        );
     }
 
     #[tokio::test]
@@ -1796,15 +1786,20 @@ mod tests {
                 ..TenantPolicy::default()
             },
         );
-        let supervisor = harness(Arc::new(InMemoryCredentialPool::new(4)), engine.clone());
+        let supervisor = harness(Arc::new(InMemoryCredentialPool::new(4)), engine);
         let mut req = spawn_request(None);
         req.model = Some(ModelId::new("claude-3-5-sonnet"));
         let err = supervisor.spawn(req).await.unwrap_err();
-        assert!(matches!(err, SupervisorError::PolicyDenied(_)), "{err:?}");
-        assert_eq!(
-            engine.decisions(&TenantId::new("tenant-a"))[0].gate,
-            PolicyGate::AgentSpawn
+        assert!(
+            matches!(
+                err,
+                SupervisorError::PolicyDenied(ref reason)
+                    if reason.contains("模型不在允许列表内")
+                        && reason.contains("claude-3-5-sonnet")
+            ),
+            "{err:?}"
         );
+        assert!(supervisor.events().is_empty());
 
         // 命中白名单放行。
         let mut ok = spawn_request(None);
@@ -1826,11 +1821,16 @@ mod tests {
         );
         let supervisor = harness(Arc::new(InMemoryCredentialPool::new(4)), engine.clone());
         let err = supervisor.spawn(spawn_request(None)).await.unwrap_err();
-        assert!(matches!(err, SupervisorError::PolicyDenied(_)), "{err:?}");
-        assert_eq!(
-            engine.decisions(&TenantId::new("tenant-a"))[0].decision,
-            PolicyDecisionKind::Deny
+        assert!(
+            matches!(
+                err,
+                SupervisorError::PolicyDenied(ref reason)
+                    if reason.contains("缺少权限") && reason.contains("AgentSpawn")
+            ),
+            "{err:?}"
         );
+        assert!(supervisor.events().is_empty());
+        assert_eq!(engine.policy_version(&TenantId::new("tenant-a")), 1);
 
         // adapter / GUI / plugin 无法覆盖：只有 Core 策略更新（版本递增）后放行。
         engine.set_policy(
@@ -1843,13 +1843,21 @@ mod tests {
                 ..TenantPolicy::default()
             },
         );
+        assert_eq!(
+            engine.policy_version(&TenantId::new("tenant-a")),
+            2,
+            "set_policy 递增版本"
+        );
         let agent = supervisor.spawn(spawn_request(None)).await.unwrap();
+        assert!(
+            supervisor.events().iter().any(|event| matches!(
+                event,
+                OrchestrationEvent::WorkerAdmitted { agent_id, .. } if agent_id == &agent
+            )),
+            "updated admin policy must admit the spawn"
+        );
         supervisor.start_worker(&agent).await.unwrap();
         supervisor.complete(&agent).await.unwrap();
-        let decisions = engine.decisions(&TenantId::new("tenant-a"));
-        assert_eq!(decisions[0].decision, PolicyDecisionKind::Deny);
-        assert_eq!(decisions[1].policy_version, 2, "set_policy 递增版本");
-        assert_eq!(decisions[1].decision, PolicyDecisionKind::Allow);
     }
 
     #[tokio::test]
@@ -1861,17 +1869,16 @@ mod tests {
                 ..TenantPolicy::default()
             },
         );
-        let supervisor = harness(Arc::new(InMemoryCredentialPool::new(4)), engine.clone());
+        let supervisor = harness(Arc::new(InMemoryCredentialPool::new(4)), engine);
         let first = supervisor.spawn(spawn_request(None)).await.unwrap();
         let err = supervisor.spawn(spawn_request(None)).await.unwrap_err();
-        assert!(matches!(err, SupervisorError::PolicyDenied(_)), "{err:?}");
-        assert_eq!(
-            engine
-                .decisions(&TenantId::new("tenant-a"))
-                .iter()
-                .filter(|event| event.decision == PolicyDecisionKind::Deny)
-                .count(),
-            1
+        assert!(
+            matches!(
+                err,
+                SupervisorError::PolicyDenied(ref reason)
+                    if reason.contains("kind=Agents") && reason.contains("max=1")
+            ),
+            "{err:?}"
         );
 
         // 终态后并发恢复；同租户限制不泄漏到其它租户。
@@ -2011,25 +2018,30 @@ mod tests {
         );
         let supervisor = AgentSupervisor::new(
             Arc::new(InMemoryCredentialPool::new(4)),
-            engine.clone(),
+            engine,
             ledger,
             SupervisorConfig::default(),
         );
         let err = supervisor.spawn(spawn_request(None)).await.unwrap_err();
         assert!(
-            matches!(err, SupervisorError::PolicyDenied(ref reason) if reason.contains("预算")),
+            matches!(
+                err,
+                SupervisorError::PolicyDenied(ref reason)
+                    if reason.contains("预算限制被超出") && reason.contains("Tokens")
+            ),
             "{err:?}"
         );
-        let decisions = engine.decisions(&TenantId::new("tenant-a"));
-        assert_eq!(decisions.len(), 1);
-        assert_eq!(decisions[0].gate, PolicyGate::AgentSpawn);
-        assert_eq!(decisions[0].decision, PolicyDecisionKind::Deny);
+        assert_eq!(supervisor.active_worker_count(None), 0);
+        assert!(
+            supervisor.events().is_empty(),
+            "budget deny must happen before admission"
+        );
     }
 
     #[tokio::test]
     async fn acquire_tenant_principal_session_mismatch_is_rejected() {
         let engine = engine_for("tenant-a", TenantPolicy::default());
-        let supervisor = harness(Arc::new(InMemoryCredentialPool::new(4)), engine.clone());
+        let supervisor = harness(Arc::new(InMemoryCredentialPool::new(4)), engine);
 
         // 外层 tenant-a / principal-1 / session-1；acquire 逐个字段错配。
         let mismatched: Vec<AcquireRequest> = vec![
@@ -2056,12 +2068,6 @@ mod tests {
             );
         }
 
-        // 拒绝记录在 LeaseAcquire 闸口，且不产生任何 worker / 事件流。
-        let decisions = engine.decisions(&TenantId::new("tenant-a"));
-        assert_eq!(decisions.len(), 3, "{decisions:?}");
-        assert!(decisions.iter().all(|event| {
-            event.gate == PolicyGate::LeaseAcquire && event.decision == PolicyDecisionKind::Deny
-        }));
         assert_eq!(supervisor.active_worker_count(None), 0);
         assert!(supervisor.events().is_empty());
     }
@@ -2712,13 +2718,11 @@ mod terminal_flush_tests {
             "{err:?}"
         );
         // controller 必须被保留（不吞 pending、不丢账）。
-        assert!(
-            supervisor
-                .budget
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .contains_key(&agent)
-        );
+        assert!(supervisor
+            .budget
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .contains_key(&agent));
 
         // 恢复 ctx 后重试成功。
         supervisor

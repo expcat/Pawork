@@ -15,7 +15,7 @@
 | --- | --- | --- |
 | `src/lib.rs` | ~20 | 7 个私有模块全部 glob re-export 到 crate 根（无 `pub mod` 子命名空间） |
 | `src/supervisor/mod.rs` | ~2820（非测试 ~440） | `AgentSupervisor` 结构（workers / cancel_tokens / children / reservations / budget / event_log / flush_ctx / flush_in_flight；测试构建另有 patch 字段）；`SupervisorConfig`（并发 16、池并发建议 4、默认预算、`max_worker_depth`）；`SupervisorError`（11 变体）；测试构建 builder 注入；公开 `complete` / `fail`，测试构建 `retry_task` / `propose_patch` / `approve_patch`；约 2380 行内联测试 |
-| `src/supervisor/spawn.rs` | ~730 | `SpawnRequest`；`spawn` 全流程（parent 准入 → 原子并发预约 → 策略闸门 → worktree → lease → 注册）；`abort_spawn_as_failed` 统一失败收口（标记 Failed、发 `WorkerFailed`、移除 children / cancel token、释放 worktree 并以 `LeaseOutcome::Released` 释放 lease）；`ConcurrencyReservation`（RAII 槽位）；lease 作用域校验 `validate_lease_scope`；策略决策审计记录 |
+| `src/supervisor/spawn.rs` | ~670 | `SpawnRequest`；`spawn` 全流程（parent 准入 → 原子并发预约 → 策略闸门 → worktree → lease → 注册）；`abort_spawn_as_failed` 统一失败收口（标记 Failed、发 `WorkerFailed`、移除 children / cancel token、释放 worktree 并以 `LeaseOutcome::Released` 释放 lease）；`ConcurrencyReservation`（RAII 槽位）；lease 作用域校验 `validate_lease_scope` |
 | `src/supervisor/cancel_tree.rs` | ~175 | `cancel_tree`（栈式深度优先遍历取消整棵子树，覆盖全部后代）；`CancelTreeReceipt` |
 | `src/supervisor/budget_gate.rs` | ~260 | `record_usage`（预算检查 + `BudgetExceeded` 去重发射）；`flush_usage`（终态 flush 显式重试）；`flush_terminal_usage`（pub(crate) 终态路径）；`FlushTicket`（在途标记 RAII） |
 | `src/supervisor/recovery.rs` | ~50 | `#[cfg(test)]` 的 `recover_report`（report-only 崩溃诊断）；`RecoveryReport` |
@@ -34,7 +34,7 @@
 ### 3.1 `AgentSupervisor`
 
 - 构造：`new(pool: Arc<dyn CredentialPool>, policy: Arc<dyn TenantPolicyEngine>, ledger: Arc<dyn UsageLedger>, config: SupervisorConfig)` 公开。`with_parent_workspace` / `with_worktree_allocator` / `with_task_graph` / `with_patch_merger` 只在测试构建存在。App 子代理与 S11 demo 都不调用。未注入图时，公开 `SpawnRequest` 上的 `task_deps` / `task_description` / `task_max_retries` 被 spawn 忽略。
-- `SupervisorConfig` 字段：`max_agent_concurrency`（默认 16，本地全局闸门）；`default_pool_concurrency`（默认 4，建池建议值，本包不建池）；`budget`（spawn 未携带预算时的默认 `WorkerBudgetLimits`）；`max_worker_depth`（`None` 不限）。
+- `SupervisorConfig` 字段：`max_agent_concurrency`（默认 16，本地全局闸门）；`budget`（spawn 未携带预算时的默认 `WorkerBudgetLimits`）；`max_worker_depth`（`None` 不限）。本包不建 credential pool。
 - `SupervisorError` 变体一览：`UnknownAgent` / `IllegalLifecycle` / `PolicyDenied` / `PoolAcquire` / `LeaseError` / `Merge` / `WorkerTerminal`（终态拒绝 record_usage）/ `UsageFlushPending`（flush 失败或在途）/ `FlushNotTerminal` / `FlushContextMissing` / `CancelTreeFlushPending { receipt, pending }`。
 - `spawn(SpawnRequest) -> Result<AgentId, SupervisorError>`：创建并启动 worker（流程见 §4.1）。`SpawnRequest` 携带 tenant / principal / parent_id（None = 根 Parent）/ session / 可选 worktree_path / 可选预算覆盖 / 可选 model（过租户模型白名单）/ 可选 `AcquireRequest`（申请 lease）/ 任务图参数（deps / description / max_retries）。
 - `start_worker(&AgentId)`：Starting → Running，发 `WorkerRunning`。
@@ -75,7 +75,7 @@
 1. **parent 准入**：parent 存在、同 tenant、同 session、状态活动且非 Cancelling，否则 `PolicyDenied`（不写任何注册表）。
 2. 生成 canonical `agent-N` id；深度闸门（`max_worker_depth`，超限发 `ConcurrencyDenied{kind:"depth"}`）。
 3. **原子并发预约**：单一临界区合并「活动 worker + 在途预约」计数，先全局本地上限（拒绝发 `ConcurrencyDenied{kind:"agents"}`）再租户 `max_concurrent_agents`；通过后插入 RAII `ConcurrencyReservation`——后续任一步失败自动归还槽位，杜绝 check-then-act 超配。
-4. **策略闸门**：`AgentSpawn` 权限 → 模型白名单 → （携带 acquire 时）AcquireRequest 外层一致性校验 + `LeaseAcquire` 权限 + provider / account 白名单 → 日 token/cost 预算（配置任一维度才查账本；账本不可用 fail-closed 拒绝）。每次允许 / 拒绝都记 versioned `PolicyDecisionEvent` 审计。
+4. **策略闸门**：`AgentSpawn` 权限 → 模型白名单 → （携带 acquire 时）AcquireRequest 外层一致性校验 + `LeaseAcquire` 权限 + provider / account 白名单 → 日 token/cost 预算（配置任一维度才查账本；账本不可用 fail-closed 拒绝）。拒绝返回 `SupervisorError::PolicyDenied`，原因串区分权限、模型、账号、Provider、租户并发（`kind=Agents`）与预算；允许则继续注册并发出 `WorkerAdmitted`。闸门结果不写入 audit JSONL。
 5. 创建 `AgentInstance`（Parent / Worker 按 parent_id）；状态机 Admit。
 6. **worktree 分配**（配置了 allocator + parent workspace 且请求未自带路径时）：失败则标记 Failed、发 `WorkerFailed`、注册条目后返回 `PoolAcquire` 错误（事件流一致，恢复不留悬挂 worker）。
 7. 发 `WorkerCreated`（含分配后真实 worktree 路径）→ `WorkerAdmitted`。

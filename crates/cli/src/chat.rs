@@ -17,9 +17,7 @@ use pawork_domain::{
     ContentPart, ImageContent, ImageSource, Message, MessageId, MessageRole, RunId, SessionId,
     TextContent, WorkspaceId,
 };
-use pawork_engine::{
-    AgentEventSink, CancelHandle, CancelReason, EngineError, NoopProcessTreeCleaner,
-};
+use pawork_engine::{AgentEventSink, CancelHandle, CancelReason, EngineError};
 use pawork_gui_server::GuiHost;
 use pawork_protocol::headless::translate::encode_protocol_response;
 use pawork_protocol::headless::{HeadlessResponse, ProtocolErrorKind};
@@ -586,10 +584,7 @@ async fn run_one_turn(
         content,
         metadata: Default::default(),
     });
-    let handle = CancelHandle::new(
-        RunId::from(format!("cli-{session}")),
-        std::sync::Arc::new(NoopProcessTreeCleaner),
-    );
+    let handle = CancelHandle::new(RunId::from(format!("cli-{session}")));
     let sink = TextSink::default();
     let outcome = drive_turn(core, session, history, &sink, handle).await;
     println!();
@@ -643,10 +638,7 @@ async fn print_usage_line(core: &AppCore, session: &SessionId) {
 /// 手动压缩：与自动链同一 engine 函数与事件序；TextSink 静默承载事件，
 /// 结果行由调用方输出。
 async fn compact_now(core: &AppCore, session: &SessionId) -> Result<usize, CliError> {
-    let handle = CancelHandle::new(
-        RunId::from(format!("cli-compact-{session}")),
-        std::sync::Arc::new(NoopProcessTreeCleaner),
-    );
+    let handle = CancelHandle::new(RunId::from(format!("cli-compact-{session}")));
     let sink = crate::render::TextSink::default();
     let rebuilt = core.compact_session(session, &sink, handle.token()).await?;
     Ok(rebuilt.len())

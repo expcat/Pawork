@@ -7,9 +7,9 @@ use async_trait::async_trait;
 use pawork_domain::{
     AgentEvent, AgentEventEnvelope, ApprovalDecision, ArtifactId, ArtifactReference,
     CancellationToken, CheckpointId, ContentPart, ErrorCategory, ErrorContext, EventId,
-    EventSequence, ImageContent, ImageSource, Message, MessageId, MessageRole, ModelId,
-    ProviderId, RequestId, RunId,
-    SessionId, StopReason, TextContent, Timestamp, TokenUsage, ToolCallId, WorkspaceId,
+    EventSequence, ImageContent, ImageSource, Message, MessageId, MessageRole, ModelId, ProviderId,
+    RequestId, RunId, SessionId, StopReason, TextContent, Timestamp, TokenUsage, ToolCallId,
+    WorkspaceId,
 };
 use pawork_domain::{
     AgentTool, CanonicalModelRequest, ModelProvider, ModelResponseSummary, ProviderError,
@@ -1436,19 +1436,6 @@ impl LoopContext for HangUntilCancelCtx {
     }
 }
 
-struct CountingCleaner {
-    run: RunId,
-    count: Arc<std::sync::atomic::AtomicUsize>,
-}
-
-impl crate::ProcessTreeCleaner for CountingCleaner {
-    fn cleanup(&self, run_id: &RunId) -> usize {
-        assert_eq!(run_id, &self.run);
-        self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        1
-    }
-}
-
 #[tokio::test]
 async fn cancel_during_long_tool_emits_run_cancelled_without_completing_tools() {
     use crate::{CancelHandle, CancelReason};
@@ -1459,14 +1446,7 @@ async fn cancel_during_long_tool_emits_run_cancelled_without_completing_tools() 
     let (tx, rx) = tokio::sync::oneshot::channel();
     let ctx = HangUntilCancelCtx::new(tx);
     let sink = RecordingEvents::default();
-    let cleaned = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let handle = CancelHandle::new(
-        RunId::from("run-1"),
-        Arc::new(CountingCleaner {
-            run: RunId::from("run-1"),
-            count: cleaned.clone(),
-        }),
-    );
+    let handle = CancelHandle::new(RunId::from("run-1"));
 
     let session = run_session(
         &provider,
@@ -1507,7 +1487,6 @@ async fn cancel_during_long_tool_emits_run_cancelled_without_completing_tools() 
     assert!(!types.contains(&"RunCompleted"));
     assert!(!types.contains(&"RunFailed"));
     assert_eq!(provider.requests().len(), 1);
-    assert_eq!(cleaned.load(std::sync::atomic::Ordering::SeqCst), 1);
     let last = types.last().copied();
     assert_eq!(last, Some("RunCancelled"));
 }
@@ -1526,11 +1505,15 @@ async fn cancelled_batch_with_dispatch_fact_pairs_all_invocations() {
 
     let error = run_session(
         &provider,
-        sample_request((0..5).map(|n| ToolDefinition {
-            name: format!("call-{n}"),
-            description: "cancelled batch call".into(),
-            input_schema: serde_json::json!({"type": "object"}),
-        }).collect()),
+        sample_request(
+            (0..5)
+                .map(|n| ToolDefinition {
+                    name: format!("call-{n}"),
+                    description: "cancelled batch call".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                })
+                .collect(),
+        ),
         sample_turn(),
         &sink,
         CancellationToken::new(),
@@ -1835,13 +1818,7 @@ async fn cancel_while_waiting_for_approval_emits_requested_without_responded() {
     let (tx, rx) = tokio::sync::oneshot::channel();
     let ctx = HangUntilApprovalCtx::new(tx);
     let sink = RecordingEvents::default();
-    let handle = CancelHandle::new(
-        RunId::from("run-1"),
-        Arc::new(CountingCleaner {
-            run: RunId::from("run-1"),
-            count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-        }),
-    );
+    let handle = CancelHandle::new(RunId::from("run-1"));
 
     let session = run_session(
         &provider,
@@ -2577,7 +2554,11 @@ fn screenshot_run_setup() -> (
         screenshot_tool("shot_b", image_b.clone()),
         screenshot_tool("shot_c", image_c.clone()),
     ]);
-    let request = sample_request(vec![tool_def("shot_a"), tool_def("shot_b"), tool_def("shot_c")]);
+    let request = sample_request(vec![
+        tool_def("shot_a"),
+        tool_def("shot_b"),
+        tool_def("shot_c"),
+    ]);
     (provider, ctx, request, image_a, image_b, image_c)
 }
 
@@ -2606,11 +2587,17 @@ async fn observation_images_trimmed_in_request_copy_but_persisted_in_events() {
     // 第 2 轮：A 是当时最新观测，原样带上（最新观测仍可用）。
     assert_eq!(request_images(&requests[1]), vec![image_a.clone()]);
     // 第 3 轮：B 为最新观测，A 在预算内，两图都保留。
-    assert_eq!(request_images(&requests[2]), vec![image_a.clone(), image_b.clone()]);
+    assert_eq!(
+        request_images(&requests[2]),
+        vec![image_a.clone(), image_b.clone()]
+    );
     // 第 4 轮：最新观测 C 无条件保留；预算 3_000 留住 B（2_000），
     // 再留 A 会到 4_000 超预算 → A 被裁剪成文本说明。请求图像字节
     // 4_000 受控（< 未裁剪的 6_000，上界 = 预算 3_000 + 最新观测 2_000）。
-    assert_eq!(request_images(&requests[3]), vec![image_b.clone(), image_c.clone()]);
+    assert_eq!(
+        request_images(&requests[3]),
+        vec![image_b.clone(), image_c.clone()]
+    );
     let round4 = serde_json::to_string(&requests[3].messages).expect("serialize round 4");
     assert_eq!(round4.matches("image trimmed").count(), 1);
     assert!(round4.contains("retained in session history"));
@@ -2636,13 +2623,14 @@ async fn observation_images_trimmed_in_request_copy_but_persisted_in_events() {
     assert_eq!(trim_events[0]["retained_images"], 2);
 
     // 持久历史不裁剪：三条已提交工具消息仍带原始图像（重放源不变）。
-    let persisted: Vec<Vec<String>> = tool_messages(&sink)
-        .iter()
-        .map(message_images)
-        .collect();
+    let persisted: Vec<Vec<String>> = tool_messages(&sink).iter().map(message_images).collect();
     assert_eq!(
         persisted,
-        vec![vec![image_a.clone()], vec![image_b.clone()], vec![image_c.clone()]]
+        vec![
+            vec![image_a.clone()],
+            vec![image_b.clone()],
+            vec![image_c.clone()]
+        ]
     );
     assert!(sink.types().contains(&"RunCompleted"));
 }
@@ -2668,6 +2656,9 @@ async fn observation_images_untouched_without_context_limits() {
     // TurnContext::default()（limits 未配置）不裁剪：三图全部随请求发出，无 Diagnostic。
     let requests = provider.requests();
     assert_eq!(requests.len(), 4);
-    assert_eq!(request_images(&requests[3]), vec![image_a, image_b, image_c]);
+    assert_eq!(
+        request_images(&requests[3]),
+        vec![image_a, image_b, image_c]
+    );
     assert!(!sink.types().contains(&"Diagnostic"));
 }

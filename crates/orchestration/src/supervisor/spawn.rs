@@ -6,10 +6,8 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use pawork_control_plane::credential::{LeaseGuard, LeaseOutcome};
+use pawork_control_plane::Permission;
 use pawork_control_plane::UsageQuery;
-use pawork_control_plane::{
-    IdentityContext, Permission, PolicyDecisionEvent, PolicyDecisionKind, PolicyGate,
-};
 use pawork_domain::{AgentId, CancellationToken, ModelId};
 
 use crate::budget::WorkerBudgetController;
@@ -99,7 +97,6 @@ impl AgentSupervisor {
             let depth = self.worker_depth(req.parent_id.as_ref());
             if depth > max_depth {
                 let reason = format!("worker depth limit exceeded: depth={depth} max={max_depth}");
-                self.record_policy_denial(&req, PolicyGate::AgentSpawn, &reason);
                 self.emit(OrchestrationEvent::ConcurrencyDenied {
                     kind: "depth".to_string(),
                     current: depth,
@@ -121,9 +118,9 @@ impl AgentSupervisor {
                 )));
             }
             Err(ConcurrencyReservationError::Tenant { current, max }) => {
-                let reason = format!("并发限制被超出：kind=Agents current={current} max={max}");
-                self.record_policy_denial(&req, PolicyGate::AgentSpawn, &reason);
-                return Err(SupervisorError::PolicyDenied(reason));
+                return Err(SupervisorError::PolicyDenied(format!(
+                    "并发限制被超出：kind=Agents current={current} max={max}",
+                )));
             }
         };
         // 2. 策略闸门（P18-9，deny-first，任何一层拒绝都不可被上层覆盖）：
@@ -133,18 +130,12 @@ impl AgentSupervisor {
         self.policy
             .check_permission(&req.tenant_id, &req.principal_id, Permission::AgentSpawn)
             .await
-            .map_err(|error| {
-                self.record_policy_denial(&req, PolicyGate::AgentSpawn, &error);
-                SupervisorError::PolicyDenied(error.to_string())
-            })?;
+            .map_err(|error| SupervisorError::PolicyDenied(error.to_string()))?;
         if let Some(model) = &req.model {
             self.policy
                 .check_model(&req.tenant_id, model)
                 .await
-                .map_err(|error| {
-                    self.record_policy_denial(&req, PolicyGate::AgentSpawn, &error);
-                    SupervisorError::PolicyDenied(error.to_string())
-                })?;
+                .map_err(|error| SupervisorError::PolicyDenied(error.to_string()))?;
         }
         if let Some(acquire) = &req.acquire {
             // P18-9：AcquireRequest 的 tenant / principal / session 必须与
@@ -156,33 +147,23 @@ impl AgentSupervisor {
             if mismatched {
                 let reason =
                     "AcquireRequest 与 SpawnRequest 的 tenant/principal/session 不一致".to_string();
-                self.record_policy_denial(&req, PolicyGate::LeaseAcquire, &reason);
                 return Err(SupervisorError::PolicyDenied(reason));
             }
             self.policy
                 .check_permission(&req.tenant_id, &req.principal_id, Permission::LeaseAcquire)
                 .await
-                .map_err(|error| {
-                    self.record_policy_denial(&req, PolicyGate::LeaseAcquire, &error);
-                    SupervisorError::PolicyDenied(error.to_string())
-                })?;
+                .map_err(|error| SupervisorError::PolicyDenied(error.to_string()))?;
             if let Some(provider) = &acquire.provider_id {
                 self.policy
                     .check_provider(&req.tenant_id, provider)
                     .await
-                    .map_err(|error| {
-                        self.record_policy_denial(&req, PolicyGate::LeaseAcquire, &error);
-                        SupervisorError::PolicyDenied(error.to_string())
-                    })?;
+                    .map_err(|error| SupervisorError::PolicyDenied(error.to_string()))?;
             }
             if let Some(account) = &acquire.account_id {
                 self.policy
                     .check_account(&req.tenant_id, account)
                     .await
-                    .map_err(|error| {
-                        self.record_policy_denial(&req, PolicyGate::LeaseAcquire, &error);
-                        SupervisorError::PolicyDenied(error.to_string())
-                    })?;
+                    .map_err(|error| SupervisorError::PolicyDenied(error.to_string()))?;
             }
         }
         // 日 token/cost 预算在准入前执行：仅当租户策略配置了任一预算维度时
@@ -208,20 +189,14 @@ impl AgentSupervisor {
                             totals.cost_micros,
                         )
                         .await
-                        .map_err(|error| {
-                            self.record_policy_denial(&req, PolicyGate::AgentSpawn, &error);
-                            SupervisorError::PolicyDenied(error.to_string())
-                        })?;
+                        .map_err(|error| SupervisorError::PolicyDenied(error.to_string()))?;
                 }
                 Err(error) => {
                     let reason = format!("日预算准入前查询账本失败（fail-closed）：{error}");
-                    self.record_policy_denial(&req, PolicyGate::AgentSpawn, &reason);
                     return Err(SupervisorError::PolicyDenied(reason));
                 }
             }
         }
-        // 准入成功：记录 versioned 决策事件（审计事实源）。
-        self.record_policy_allow(&req, PolicyGate::AgentSpawn, "agent spawn 准入");
         // 3. 创建实例（worktree_path 初始来自请求，分配后可能被覆盖）。
         let now = now_ms();
         let (role, mut instance) = match &req.parent_id {
@@ -353,7 +328,6 @@ impl AgentSupervisor {
                             )
                             .await;
                             let reason_msg = format!("lease scope validation failed: {reason}");
-                            self.record_policy_denial(&req, PolicyGate::LeaseAcquire, &reason_msg);
                             return Err(SupervisorError::PolicyDenied(reason_msg));
                         }
                         Some(guard)
@@ -540,37 +514,6 @@ impl AgentSupervisor {
         }
     }
 
-    /// 记录一次策略拒绝决策（versioned，reason 统一脱敏）。
-    fn record_policy_denial(
-        &self,
-        req: &SpawnRequest,
-        gate: PolicyGate,
-        reason: impl std::fmt::Display,
-    ) {
-        let identity = IdentityContext::new(req.tenant_id.clone(), req.principal_id.clone());
-        self.policy.record_decision(PolicyDecisionEvent::new(
-            self.policy.policy_version(&req.tenant_id),
-            &identity,
-            gate,
-            PolicyDecisionKind::Deny,
-            reason.to_string(),
-            now_ms(),
-        ));
-    }
-
-    /// 记录一次策略放行决策（versioned）。
-    fn record_policy_allow(&self, req: &SpawnRequest, gate: PolicyGate, reason: &str) {
-        let identity = IdentityContext::new(req.tenant_id.clone(), req.principal_id.clone());
-        self.policy.record_decision(PolicyDecisionEvent::new(
-            self.policy.policy_version(&req.tenant_id),
-            &identity,
-            gate,
-            PolicyDecisionKind::Allow,
-            reason,
-            now_ms(),
-        ));
-    }
-
     /// 原子并发预约：在单一临界区内把「活动 worker + 在途 reservations」合并
     /// 计数，校验全局本地上限与租户策略 `max_concurrent_agents`，通过后插入
     /// 一条 reservation 并返回 RAII 守卫。租户上限取自同步 `policy()`，全程
@@ -664,7 +607,6 @@ impl AgentSupervisor {
                 Some(_) => return Ok(()),
             }
         };
-        self.record_policy_denial(req, PolicyGate::AgentSpawn, &reason);
         Err(SupervisorError::PolicyDenied(reason))
     }
 

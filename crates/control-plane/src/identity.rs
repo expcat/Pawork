@@ -1,13 +1,13 @@
-//! Canonical identity（P18-2）：`IdentityContext` 与身份解析器。
+//! Canonical identity（P18-2）：`IdentityContext`。
 //!
 //! `IdentityContext` 是跨模块统一键（tenant + principal），Session / Agent /
 //! Usage / Audit 的创建与查询都必须携带它；`TenantId` 表示组织 / 逻辑租户，
-//! `PrincipalId` 表示当前用户或服务账号，两者不得由 API key hash 代替
+//! `PrincipalId` 表示当前用户或服务账号，两者不得由 API key hash 代替。
 //!
 //! 未配置 tenant 的本地用户固定映射 `tenant_id = local/default`、
-//! `principal_id = local/user`（ADR-033），由 [`LocalIdentityResolver`] 提供。
-//! **缺失身份 fail-closed**：解析器收到 `None` / 空主体时返回错误，调用方必须
-//! 拒绝操作，不得静默落入默认身份。
+//! `principal_id = local/user`（ADR-033），由 [`IdentityContext::local`] /
+//! [`default_tenant`] / [`default_principal`] 提供。空 tenant / principal 经
+//! [`IdentityContext::validate`] 拒绝。
 
 use serde::{Deserialize, Serialize};
 
@@ -31,8 +31,8 @@ pub fn default_principal() -> PrincipalId {
 /// 一次请求 / 一条持久记录的身份上下文：租户 + 主体。
 ///
 /// 值类型：`Clone + Eq`，可序列化进入 canonical event / 持久化实体；不可变，
-/// 创建后不修改。生产路径必须经 [`IdentityResolver`] 解析获得，禁止从默认值
-/// 直接构造后冒充真实身份（测试与 legacy 回退除外，见 [`Self::local`]）。
+/// 创建后不修改。空 tenant / principal 必须经 [`Self::validate`] 拒绝，不得把
+/// 空白身份写入持久记录。测试与 legacy 单用户回退使用 [`Self::local`]。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IdentityContext {
     /// 组织 / 逻辑租户。
@@ -106,39 +106,6 @@ pub enum IdentityError {
     EmptyTenant,
 }
 
-/// 身份解析器：把请求携带的主体键解析为 [`IdentityContext`]。
-///
-/// `principal` 是请求协议层（如 `core_api::ActorIdentity`）映射出的主体键；
-/// `None` 表示请求未携带可解析身份，解析器必须返回错误（fail-closed），
-/// 不得静默使用默认身份。
-pub trait IdentityResolver: Send + Sync {
-    /// 解析主体键为身份上下文；缺失 / 空主体返回 [`IdentityError`]。
-    fn resolve(&self, principal: Option<&str>) -> Result<IdentityContext, IdentityError>;
-}
-
-/// 本地默认解析器：tenant 固定为 `local/default`，principal 保留协议层提供的
-/// canonical 主体。`LocalUser` 由协议层映射为 `local/user`，其它已认证主体保持
-/// 稳定区分，避免不同调用者共享 usage / session principal。
-///
-/// 缺失（`None`）或空主体一律拒绝（fail-closed），保证升级后无 tenant 归属
-/// 的持久记录不可能从新代码路径产生。
-#[derive(Clone, Copy, Debug, Default)]
-pub struct LocalIdentityResolver;
-
-impl IdentityResolver for LocalIdentityResolver {
-    fn resolve(&self, principal: Option<&str>) -> Result<IdentityContext, IdentityError> {
-        match principal {
-            None => Err(IdentityError::MissingIdentity(
-                "request carries no resolvable principal".into(),
-            )),
-            Some(principal) if principal.trim().is_empty() => Err(IdentityError::EmptyPrincipal),
-            Some(principal) => {
-                IdentityContext::try_new(default_tenant(), PrincipalId::new(principal.trim()))
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,45 +130,6 @@ mod tests {
         let json = serde_json::to_string(&identity).expect("serialize");
         let decoded: IdentityContext = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(decoded, identity);
-    }
-
-    #[test]
-    fn local_resolver_preserves_canonical_principal() {
-        let resolver = LocalIdentityResolver;
-        let identity = resolver.resolve(Some("local/user")).expect("resolve");
-        assert!(identity.is_local_default());
-        let automation = resolver
-            .resolve(Some("automation:scheduler"))
-            .expect("resolve");
-        assert_eq!(automation.tenant_id.as_str(), "local/default");
-        assert_eq!(automation.principal_id.as_str(), "automation:scheduler");
-    }
-
-    #[test]
-    fn missing_identity_fails_closed() {
-        let resolver = LocalIdentityResolver;
-        assert_eq!(
-            resolver.resolve(None),
-            Err(IdentityError::MissingIdentity(
-                "request carries no resolvable principal".into()
-            ))
-        );
-        assert_eq!(
-            resolver.resolve(Some("")),
-            Err(IdentityError::EmptyPrincipal)
-        );
-        assert_eq!(
-            resolver.resolve(Some("   ")),
-            Err(IdentityError::EmptyPrincipal)
-        );
-        // 空 tenant / 空 principal 的上下文本身不可构造成功（类型安全），
-        // 此处验证解析器不会产生空值身份。
-        assert!(!resolver
-            .resolve(Some("x"))
-            .expect("resolve")
-            .tenant_id
-            .as_str()
-            .is_empty());
     }
 
     #[test]

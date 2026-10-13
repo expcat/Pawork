@@ -1,7 +1,7 @@
 //! 上下文预算与用量（S5，自 V1 `context-engine` 迁入）。
 //!
 //! 迁移范围刻意收窄为四个文件：预算（`budget`）、压缩触发判定（`compaction`）、
-//! token 估算口径（`token`）、tool result 分级裁剪（`tool_result_trim`）。
+//! token 估算口径（`token`）、请求侧观测图像裁剪（`tool_result_trim`）。
 //! V1 的 14 源 `ContextBuilder`（`resources.rs` / `source.rs` / `builder.rs`）
 //! **不迁移**：资源注入走 [`TurnContext::injected_layers`]（S9 波 C），
 //! 由宿主把 `ResourceBundle.instructions` 映射为中性文本层。
@@ -20,9 +20,7 @@ pub use compaction::{
 pub(crate) use token::reply_primer_tokens;
 pub use token::{HeuristicEstimator, TokenEstimator, ToolSchema};
 pub use tool_result_trim::{
-    byte_len_of_tool_result, observation_image_budget_bytes, trim_observation_images,
-    trim_tool_result, trim_tool_result_with, ObservationImageTrim, ResultSize, TrimStrategy,
-    TrimThresholds, TrimmedToolResult,
+    observation_image_budget_bytes, trim_observation_images, ObservationImageTrim,
 };
 
 /// 单轮上下文限制：输入硬预算 + 历史软限。

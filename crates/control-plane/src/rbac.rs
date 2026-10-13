@@ -170,18 +170,6 @@ impl PermissionProfile {
     }
 }
 
-/// Audit 导出策略（deny-first）：`TenantPolicy.audit_export = None` 或
-/// `enabled = false` 一律拒绝导出；目标必须在 `allowed_destinations` 内。
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AuditExportPolicy {
-    /// 是否启用导出（默认关闭）。
-    #[serde(default)]
-    pub enabled: bool,
-    /// 允许的导出目标（空列表 = 无任何目标可导出）。
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub allowed_destinations: Vec<String>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
