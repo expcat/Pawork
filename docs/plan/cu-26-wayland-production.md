@@ -1,6 +1,6 @@
 # CU-26 · Wayland 隔离后台生产后端
 
-> 状态：进行中。切片 1（guest 侧专用 seat 客户端与 compositor 权威身份）已落地：有离线定向回归，并在本机 headless Sway 1.10.1 做了真实 smoke。切片 2 的代码已实现、离线替身回归已通过：guest 帧协议加了 capture / input，`computer_guest --wayland` 提供服务，Host 侧新增 `WaylandSurface` 与按截图租约派发的点击 / 按键。切片 3 已接线、离线回归已通过：`computer_native` 工具暴露 `observed_click` / `observed_keys`，App 新增 `ComputerNativeMode::Wayland` 并选用 `NativeHost::wayland()`，CLI 接受 `--computer-native wayland`；默认入口未改，仍是 `host`。还没有任何真实环境证据：专用容器无法建立，本机经 Host 链路的 smoke 也没跑通。更新：2026-10-13。
+> 状态：进行中。切片 1（guest 侧专用 seat 客户端与 compositor 权威身份）已落地：有离线定向回归，并在本机 headless Sway 1.10.1 做了真实 smoke。切片 2 的代码已实现、离线替身回归已通过：guest 帧协议加了 capture / input，`computer_guest --wayland` 提供服务，Host 侧新增 `WaylandSurface` 与按截图租约派发的点击 / 按键。切片 3 已接线、离线回归已通过：`computer_native` 工具暴露 `observed_click` / `observed_keys`，App 新增 `ComputerNativeMode::Wayland` 并选用 `NativeHost::wayland()`，CLI 接受 `--computer-native wayland`；默认入口未改，仍是 `host`。本机经 Host 链路的 smoke 已在独立 user + network namespace 内通过（`wayland_host_probe` → `NativeHost::wayland()` → 5907 → `computer_guest --wayland` → headless Sway，见下文「本机 Host 链路 smoke 复试」）；它不是专用容器，探针 grant 代替 GUI 审批，也没有经过正式 `pawork --computer-native wayland` 进程，完成条件仍未满足。专用容器无法建立。更新：2026-10-13。
 
 [返回 ROADMAP](../ROADMAP.md#未完成任务)
 
@@ -68,10 +68,35 @@
 - **NativeHost 接线**（`src/native_host.rs`、`src/target/registry.rs`）：新增 `NativeRequest::ObservedClick { observation, x, y }` 与 `ObservedKeys { observation, input }`。链路与窗口移动一致：先在锁内做账本检查和能力闸，`admit_observed` 在花费任何租约 / 授权之前做载荷闸（默认拒绝，所以 macOS / X11 表面在消费前就拒绝），再在锁外读事实。`consume_observation_dispatch_with` 消费截图租约（树观测拒绝），并在花费前先完成坐标映射与越界判断，越界不烧租约。随后铸造并 armed 单次凭证，派发期间监视撤销、关闭与取消，动作后取新观测。结果为 `ObservedOutcome::{Dispatched, Partial, UnknownEffect}`，Partial 和 UnknownEffect 都保留派发事实、不自动重试。焦点缺失映射为 NotFocused；文本需先通过 `TargetedInput::validate`，再满足 keymap 只覆盖可打印 ASCII 的限制。
 - **人工验收入口** `examples/wayland_host_probe.rs`：bind（未授权 / 授权后）→ 截图 → 中心点击 → 旧租约按键 → 文本 → Return → 撤销后截图，输出 JSON 行与 JPEG。不是产品路径；探针里的 grant 代替 GUI 审批。
 
-本机经 Host 链路的 smoke（2026-10-13，**未跑通**，不构成证据）：
+本机经 Host 链路的 smoke 首轮（2026-10-13，**未跑通**，不构成证据；复试已通过，见下节）：
 
 - 本沙箱的 x11vnc 服务占用了 `127.0.0.1:5900–5909`，固定端口 5907 已被占，guest 报 `Address already in use`，Host 侧解析如实失败（`no installed application resolves this bundle id`）。没有动这些进程。
 - 改用 `unshare -rn` 在独立 user + network namespace 里同时运行 guest 与探针后，guest 成功监听 5907；但后两次启动的 headless Sway 1.10.1 没有在 `XDG_RUNTIME_DIR` 下生成 IPC socket（`SWAYSOCK` 为空），guest 无法连上 Sway，Host 同样如实失败。按本会话的环境探测限额停止排查，原因未定位。日志在本机 `/tmp/cu26s2/`，不检入仓库。
+
+## 本机 Host 链路 smoke 复试（2026-10-13，通过）
+
+代码为 HEAD `9f9ef19e`，源码与端口都没有改动。5907 是常量 `WAYLAND_GUEST_PORT` / `WAYLAND_ENDPOINT`，不可配置；独立 netns 内端口空闲，所以不需要改。环境同切片 1：x86_64 Linux 6.12，Sway 1.10.1 headless + pixman，唯一输出 HEADLESS-1 640×480，`WLR_LIBINPUT_NO_DEVICES=1`，`xwayland disable`；目标为 foot，`app_id=cu26target`，目标脚本开启 X10 鼠标上报，读 12 字节点击后再读一行文本写入 `typed.txt`。
+
+命令：`timeout 150 unshare -rn /tmp/cu26s3/smoke.sh`。该脚本在同一个独立 user + network namespace（namespace 内 uid 映射为 0）里依次执行：拉起 lo；后台启动 headless Sway（`XDG_RUNTIME_DIR=/tmp/cu26s3/run`），轮询等到 `sway-ipc.0.<pid>.sock` 与 `wayland-1` 出现；用每轮随机生成、不写日志的 token 启动 `target/debug/computer_guest --wayland`，确认 netns 内 `0.0.0.0:5907` 由 computer_guest 监听；运行 `target/debug/examples/wayland_host_probe guest.wayland.cu26target /tmp/cu26s3/out 'Pawork CU-26 host {ok}'`；最后用 `swaymsg` 读 tree / inputs / outputs，再结束 guest 与 Sway。首轮的 Sway 是在宿主 namespace 里由单独一次 shell 调用以 `nohup … &` 启动的；本轮三者放在同一个前台脚本里，两轮 IPC socket 都在首次轮询时就已出现。首轮没有生成 socket 的确切原因仍未定位。宿主 netns 中 x11vnc（display `:7`，pid 66283）在 5907 上的监听前后不变，没有动它。
+
+两轮（run1 / run2）结果逐阶段一致：
+
+| 阶段 | Host 结果 | 外部事实 |
+| --- | --- | --- |
+| 未授权 bind | NotAuthorized | — |
+| bind（探针以 ForRun grant 代替 GUI 审批） | 通过，返回窗口句柄 | Sway tree 中唯一 xdg_shell con 为 `cu26target`，pid 是 foot，处于 focused |
+| 截图 | 通过，签发截图租约 | `before.jpg` 是 640×455 的窗口裁剪区（输出 640×480 减去 25px 标题栏），内容为目标就绪提示 |
+| 图像中心点击 | dispatched，返回新观测 | `click.bin` = `27 91 77 32 86 50 27 91 77 35 86 50`（左键按下 / 释放，列 54 行 18，与切片 1 的中心点一致） |
+| 用已花费的首个租约发文本 | StaleHandle | `typed.txt` 中没有 `stale` |
+| 文本 `Pawork CU-26 host {ok}`，再按 Return | 均为 dispatched，各返回新观测 | `typed.txt` = `Pawork CU-26 host {ok}`；`after_return.jpg` 显示目标 shell 回显 `GOT:Pawork CU-26 host {ok}` |
+| 撤销后截图 | NotAuthorized | — |
+| 输入设备 | — | `get_inputs` 在动作前为空，动作后只有 `0:0:wlr_virtual_keyboard_v1` 与 `0:0:wlr_virtual_pointer_v1` |
+
+负向对照：同一类 netns 里不启动 guest 时，探针两次 bind 都报 `no installed application resolves this bundle id`，exit 1，没有回退到其它表面（`/tmp/cu26s3/neg/no-guest.log`）。
+
+证据在本机 `/tmp/cu26s3/run1/` 与 `run2/`（各含 `smoke.log`、`sway.log`、`guest.log`，以及 `out/` 下的 `probe.jsonl`、`before.jpg` / `after_click.jpg` / `after_return.jpg`、`click.bin`、`typed.txt`、`tree-before.json` / `tree-after.json`、`inputs-before.json` / `inputs-after.json`、`outputs.json`）；脚本为 `/tmp/cu26s3/{smoke.sh,sway.cfg,target.sh}`，构建日志为 `/tmp/cu26s3/build.log`。均不检入仓库。
+
+边界：这是本机 user + netns 内经 `NativeHost::wayland()` 的 Host 链路 smoke，证明 guest 帧协议、`WaylandSurface`、截图租约、单次派发、过期租约拒绝与撤销拒绝在真实 Sway 上闭合。它**不**满足完成条件：不是 CU-23 规格的专用容器（rootfs 可写、未 CapDrop、Host 与 guest 同处一个 netns，而不是经 loopback 端口发布）；探针 grant 代替了 GUI 审批；没有经过正式 `pawork --computer-native wayland` 进程、`computer_native` 工具、真实 Provider Run 或持久 ObservationList / ObservationImageRead。取消、断线、接管与回执丢失仍只有离线替身证据。
 
 ## 切片 3 记录（2026-10-13，工具 / App / CLI 接线）
 
@@ -96,8 +121,8 @@
 ## 阻塞与剩余（切片 3 之后）
 
 - **专用容器环境缺失**：本机没有 Docker / Podman，CU-23 规格的专用 Wayland 容器（只读 rootfs、network none、CapDrop=ALL、无宿主 bind）无法建立，也无法验证「容器只把 5907 发布到宿主 loopback」这一部署形态。network none 与「发布端口」本身互相冲突，需要在部署设计中改为仅 loopback 的端口发布（同 CU-21），或改用 Unix socket 挂载，并重新评审。完成条件里的真实环境验收全部待此项。
-- **本机 Host 链路 smoke 未完成**：见切片 2 记录。需要空闲的 5907（或独立 netns）以及能稳定生成 IPC socket 的 headless Sway。切片 3 之后，这条 smoke 应改为经正式 `pawork --computer-native wayland` 进程与 GUI 目标审批完成，而不只是 `wayland_host_probe`。
-- **正式工具链只有离线证据**：切片 3 已把工具、App、CLI 接通，但没有 `PAWORK_CU21_ISOLATED` 那样的 Wayland live 测试，也没有真实 Provider（`glm-coding / glm-5.3` 或 `xai / grok-4.7`）驱动的 Run、持久 ObservationList / ObservationImageRead 证据或真窗口审批。这些都要等专用容器或本机 smoke 打通后再做。
+- **本机 Host 链路 smoke 只到探针层**：2026-10-13 复试已在独立 user + netns 内经 `wayland_host_probe` 通过（见「本机 Host 链路 smoke 复试」）。下一步应在同样的 netns 做法下，改为经正式 `pawork --computer-native wayland` 进程与 GUI 目标审批完成，而不只是 `wayland_host_probe`。
+- **正式工具链只有离线证据**：切片 3 已把工具、App、CLI 接通，但没有 `PAWORK_CU21_ISOLATED` 那样的 Wayland live 测试，也没有真实 Provider（`glm-coding / glm-5.3` 或 `xai / grok-4.7`）驱动的 Run、持久 ObservationList / ObservationImageRead 证据或真窗口审批。探针层 smoke 已打通，这些现在只差正式进程、Provider 与 GUI 审批的组合验收。
 - **`AppFamily` 没有 Wayland 取值**：`WaylandSurface` 沿用 CU-21 guest 的 `Browser` 标签，只作身份字段，能力闸不看族；网站目标在这里因 `current_origin` 恒为 None 而 fail-closed。新增族会改 app / desktop 的穷举映射与 GUI 展示，留给后续。
 - **seat 级权限的固有限制**：三条协议的权限来自 socket 可达性，guest 内任何能连上 socket 的客户端（包括目标应用本身）都能截图或注入输入。`require_dedicated` 只能在调用时发现非虚拟设备或多余输出 / seat，无法阻止同 guest 内其它客户端创建虚拟设备。因此部署必须保证 guest 内只有 Pawork guest 服务和获批目标，sway 配置不带任何按键绑定。
 - 撤销、接管、断线、取消的真实环境证据，以及 AT-SPI、其它应用、其它 compositor、共享用户 seat、portal 许可、非 ASCII 文本（当前 keymap 只覆盖可打印 ASCII）均未验证。
