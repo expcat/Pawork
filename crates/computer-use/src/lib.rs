@@ -17,28 +17,13 @@ pub mod target;
 
 pub use native_host::{
     AppSnapshot, CapturedFrame, HostSurface, NativeControl, NativeHost, NativeOutput,
-    NativePerform, NativeRequest, NativeSurface, ProbeSnapshot, WindowSnapshot,
+    NativePerform, NativeRequest, NativeSurface, WindowSnapshot,
 };
 
 /// macOS native backend (CU-03): application/window discovery, window
 /// generation tracking and activation-free launching by bundle identity.
 #[cfg(target_os = "macos")]
 pub mod macos;
-
-/// CU-17: the host's boxed native probe. macOS uses the real backend;
-/// every other platform gets the fail-closed [target::UnsupportedProbe],
-/// so the registry is constructible everywhere but never passes a
-/// liveness check off macOS.
-pub fn platform_probe() -> Box<dyn target::NativeProbe> {
-    #[cfg(target_os = "macos")]
-    {
-        Box::new(macos::MacosNative::new())
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Box::new(target::UnsupportedProbe)
-    }
-}
 
 pub const MAX_IMAGE_BYTES: usize = 512 * 1024;
 pub const MAX_IMAGE_EDGE: u32 = 1280;

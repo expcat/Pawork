@@ -1,8 +1,9 @@
-//! Website-origin normalization mirroring the CU-16 target contract:
-//! lower-case scheme + host, default ports elided, no userinfo, path,
-//! query or fragment; hostname limited to domain characters with at least
-//! one letter or digit; IPv4 hosts are accepted in canonical form (CU-16
-//! admits them through the same character set), IPv6 literals fail closed.
+//! Website-origin normalization for extension-reported URLs: lower-case
+//! scheme + host, default ports elided, path / query / fragment dropped,
+//! userinfo rejected; hostname limited to domain characters with at least
+//! one letter or digit; IPv4 hosts are accepted in canonical form, IPv6
+//! literals fail closed. Unlike the CU-16 approval identity, explicit
+//! default ports are elided and URLs with paths are accepted.
 
 use std::fmt;
 

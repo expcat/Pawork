@@ -12,8 +12,8 @@
 | --- | --- |
 | `src/lib.rs` | `BrowserState`、地址规范化、公开 facade、非 macOS 不支持分支与定向测试 |
 | `src/external.rs` | 显式读取 Chrome/Edge 当前页的有界只读快照 |
-| `src/ext/mod.rs` | 外部控制通道入口：`BrowserKind`、`default_data_dir()`（`PAWORK_DATA_DIR` 覆盖） |
-| `src/ext/origin.rs` | origin 归一化（镜像 CU-16：小写 scheme/host、去默认端口、拒 userinfo/path/query/IPv6）与测试 |
+| `src/ext/mod.rs` | 外部控制通道入口：`BrowserKind`、`default_data_dir()`（桥进程由浏览器拉起、无法继承 Desktop 路径，故自行解析：`PAWORK_DATA_DIR` 覆盖 → `$HOME/.pawork` → 临时目录；与 pawork-app / Desktop 的差异：无 Windows `LOCALAPPDATA`、空 `HOME` 视为缺失、无降级事件。桥为 `cfg(unix)`，Windows 分支当前无消费者；本包无内部依赖，不得改为依赖 app） |
+| `src/ext/origin.rs` | 扩展 `location.origin` 归一化：`url::Url` 解析，小写 scheme/host、省略 80/443、丢弃路径 / 查询 / 片段，拒非 http(s)、userinfo、IPv6 与非法端口。与 computer-use CU-16 `approval` 的网站身份不同（后者保留显式端口并拒绝带路径输入），两者服务不同调用，不合并 |
 | `src/ext/protocol.rs` | 帧编解码（u32 LE 长度前缀 + JSON，1 MiB 上限）、桥代际、`xt-` 句柄 wrap/unwrap、token 生成与测试 |
 | `src/ext/discovery.rs` | 发现目录 `<data>/external-browser/` 的 `<browser>-<pid>.json` 原子读写（0600/0700）与扫描 |
 | `src/ext/host.rs` | 桥进程服务器：stdio（扩展侧）+ unix socket（Desktop 侧）、token 鉴权、enabled 门、站点绑定、串行中继与 15s 保活 ping |

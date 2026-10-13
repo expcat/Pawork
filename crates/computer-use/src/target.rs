@@ -1098,26 +1098,6 @@ pub trait NativeProbe: Send + Sync {
     fn window_size(&self, instance: &ProcessInstance, window_id: u64) -> Option<(f64, f64)>;
 }
 
-/// Boxed probes stay usable behind a lock (the host keeps one registry
-/// behind a mutex) without naming a concrete backend type.
-impl NativeProbe for Box<dyn NativeProbe> {
-    fn process_instance_alive(&self, instance: &ProcessInstance) -> bool {
-        (**self).process_instance_alive(instance)
-    }
-    fn window_generation(&self, instance: &ProcessInstance, window_id: u64) -> Option<u64> {
-        (**self).window_generation(instance, window_id)
-    }
-    fn tree_revision(&self, window: &WindowIdentity) -> Option<u64> {
-        (**self).tree_revision(window)
-    }
-    fn current_origin(&self, window: &WindowIdentity) -> Option<String> {
-        (**self).current_origin(window)
-    }
-    fn window_size(&self, instance: &ProcessInstance, window_id: u64) -> Option<(f64, f64)> {
-        (**self).window_size(instance, window_id)
-    }
-}
-
 /// Fail-closed probe for hosts without a native backend: every liveness
 /// check denies, so the registry still records grants and bindings but no
 /// gated operation can pass. (CU-17: the GUI path never probes; this only
@@ -4157,16 +4137,6 @@ mod tests {
             registry.grant(&unopened, &notes, GrantKind::ForRun),
             Err(TargetError::ScopeClosed)
         ));
-    }
-
-    #[test]
-    fn boxed_probe_forwards_every_call() {
-        let probe: Box<dyn NativeProbe> = Box::new(FakeProbe::new());
-        assert!(probe.process_instance_alive(&instance()));
-        assert_eq!(probe.window_generation(&instance(), 42), Some(1));
-        assert_eq!(probe.tree_revision(&window_identity()), Some(7));
-        assert_eq!(probe.current_origin(&window_identity()), None);
-        assert_eq!(probe.window_size(&instance(), 42), Some((2560.0, 1440.0)));
     }
 
     #[test]

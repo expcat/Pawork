@@ -20,9 +20,11 @@ pub mod host;
 pub mod origin;
 pub mod protocol;
 
-/// Mirror pawork-app / Desktop data-dir resolution so the bridge, the CLI
-/// host and Desktop agree on the discovery directory on the same machine:
-/// `PAWORK_DATA_DIR` overrides, else `$HOME/.pawork`.
+/// Data-dir resolution for the bridge (spawned by the browser, so it cannot
+/// inherit a path from Desktop): `PAWORK_DATA_DIR` overrides, else
+/// `$HOME/.pawork`, else the temp dir. Matches pawork-app / Desktop only on
+/// Unix with a non-empty `HOME`: no Windows `LOCALAPPDATA`, an empty `HOME`
+/// counts as missing, and no degrade event is emitted.
 pub fn default_data_dir() -> std::path::PathBuf {
     if let Ok(dir) = std::env::var("PAWORK_DATA_DIR") {
         let trimmed = dir.trim();
