@@ -15,7 +15,7 @@
 | --- | --- | --- |
 | `src/lib.rs` | ~30 | 门面：12 个私有模块 + re-export（十工具、`NoopToolEventSink`、registry/scheduler 全家）。包外只使用这些 re-export；`common`（含 `atomic_write`）不在公开面。 |
 | `src/computer.rs` | — | `ComputerTool`：进程共享隔离桌面会话、按动作必填的 JSON 参数、跨 run 观察隔离、阻塞工作取消、JPEG → canonical Image、动作+新观测同调用闭环（CU-10，20s 预算覆盖输入+捕获串行）、Run 终态 `release_shared` 释放占用；复用 Policy / 审批。 |
-| `src/computer_native.rs` | — | `NativeComputerTool`：注入当前 Core 共享的 NativePerform，模型回传 Host 句柄 / bundle id；native 一次动作 + 新观测、终态与后置失败、JPEG → canonical Image，不持授权副本。 |
+| `src/computer_native.rs` | — | `NativeComputerTool`：注入当前 Core 共享的 NativePerform，模型回传 Host 句柄 / bundle id；native 一次动作 + 新观测、终态与后置失败、JPEG → canonical Image，不持授权副本。CU-26 `wayland()` 构造器暴露截图租约的 `observed_click` / `observed_keys`。 |
 | `src/common.rs` | ~314 | 公共层：`BuiltinToolError` 与 → `ToolError` 集中映射；取参 `require_str`/`opt_str`/`opt_u64`/`opt_bool`（opt_* 缺省或 `null` → None，类型不符报 InvalidField）；`workspace_roots`；`resolve_write_rel`（包 `resolve_workspace_path`）；`atomic_write`（同目录临时文件经 `create_new` **独占创建**——同名路径已存在（含预置 symlink）即换名重试、不跟随——+ rename，覆盖保留既有 Unix mode）。 |
 | `src/read_file.rs` | ~500（逻辑 ~260 + 测试） | `ReadFileTool`：行号视图、offset/limit、编码探测（chardetng + encoding_rs）、二进制检测（NUL + 控制字节占比）、4 MiB 读上限 / 256 KiB 输出上限。 |
 | `src/list_directory.rs` | ~440（逻辑 ~300 + 测试） | `ListDirectoryTool`：路径解析与目录扫描均在 `spawn_blocking` 内；目录优先字典序、BinaryHeap 单扫描取 offset+limit 窗口（内存 O(offset+limit)）、entry kind/size/mtime/symlink 目标（目标相对化，越 root 省略）。 |
@@ -75,6 +75,12 @@
 结果为普通 Text + 可选 Base64 JPEG：Text 首行与 metadata 共用 environment=native_background、input_dispatched、observation、window_id、element_id、outcome、observation_failure；其后保留 `NativeOutput.detail`，包括应用发现结果、bundle 身份及有界 AX 节点 / 截断标志，树的行列表上限 512 KiB，超限如实标记 listing truncated。JPEG 仍位于 content index 1，不另造消息或图像通路。Dispatched / Partial / UnknownEffect 不等于 UI 接受；Host 在派发后授权不足（含 Once 已消费）、取消或捕获失败时保留派发事实与失败，不续 grant、不重试。工具不落盘，结果沿 Engine 既有消息 / 事件链持久化；取消批次保留成功或严格布尔 `input_dispatched=true` 的事实，配齐结果后再结束为 Cancelled，语义见 [engine](engine.md#43-取消传播)。真实平台边界待 [ENV-08](../../plan/env-08-macos-real-system.md)。
 
 显式 CLI `--gui-host` 模式借用已有 Host，`computer_native bind/launch` 的目标等批由 app 在 scheduler 前完成，不计入原工具 25s 工作预算；request/discover 不等待。本工具仍只消费实际 grant，不自批、不续授权。
+
+#### CU-26 Wayland guest seat 表面
+
+`NativeComputerTool::wayland(Arc<dyn NativePerform>)` 只在 app 显式选择 `ComputerNativeMode::Wayland` 时装配，注入的必须是 `shared_wayland_host()`，不能是 X11 隔离桌面。工具名、descriptor 属性、预算与 CU-11 门控都与 `new` 相同；说明与 schema 独立：动作只有 discover、request、bind、screenshot(window)、`observed_click(observation, x, y)`（截图图像像素，左上角原点，左键单击）和 `observed_keys(observation, text)` 或 `observed_keys(observation, key, modifiers)`（key 与 modifier 使用既有 targeted 枚举）。一张截图最多授权一次动作，文本 / 按键要求目标窗口已有 compositor 焦点，partial / unknown_effect / observation_failure 时提示模型重新截图而不是重试。
+
+解析对所有表面同一套规则，并在触达 Host 前完成：text 与 key 必须恰好一个，modifiers 只能配 key，文本先过 `TargetedInput::validate`，否则报 InvalidInput。`new` 构造的本机 / X11 隔离 descriptor 不列 `observed_*`；臆造调用由 Host 的 `admit_observed` 在派发和租约花费前拒绝（ExecutionFailed）。Wayland 实例不调用 `Computer::claim_shared`，不与 raw `computer` 的 X11 桌面互斥；同目标并发仍由 NativeHost 的占用与单次凭证约束。结果 metadata 与 native 其它动作相同（environment=`isolated_desktop`、input_dispatched、outcome、observation / observation_failure）。只有离线替身回归，见 [CU-26](../../plan/cu-26-wayland-production.md)。
 
 ### 3.3 公共层（common）
 
@@ -174,6 +180,8 @@ CU-21 沿用 `native_host_action_returns_one_observation_and_rejects_closed_path
 `computer_native.rs` 既有四项定向回归：`native_host_action_returns_one_observation_and_rejects_closed_paths` 经真实 Host / Tool / Scheduler 验证门控零后台访问、请求不自批、scope 隔离、接管让出与一次动作新图，并核对应用发现及 AX 节点 / 截断进入普通 Text；`for_run_move_reports_capture_failure_without_retry` 验证后置失败保派发事实且不重试；`revoke_during_element_tree_revision_is_not_authorized_before_dispatch` 验证阻塞 tree_revision 时 revoke 可落地、恢复后无 semantic 派发；`user_active_during_tree_revision_keeps_once_then_regrant_misses_armed_permit` 验证长探测后的活动让出、Once 未提前消耗，以及 armed 后撤销 / 重授不放行旧调用。
 
 CU-01 模拟验收补两项：`same_target_operating_stops_inflight_action_and_idle_clears_only_the_pause` 在正式 `NativeHost::execute` 派发期间注入同目标活动，核动作零派发、持续让出、Idle 只恢复活动暂停；`inflight_cancel_does_not_pause_and_idle_does_not_restore_revoke` 验证在途取消与显式撤销，Idle 不恢复撤销授权。复用现有平台替身，仅替代 OS 边界，不新增生产逻辑。定向命令 `cargo test -p pawork-tools --offline --lib computer_native::tests::`。
+
+CU-26 补五项（离线替身，不是真实 Sway / 容器证据）：`observed_actions_parse_strictly_before_any_dispatch` 覆盖 observed 动作的合法形态与九种畸形输入均报 InvalidInput；`wayland_tool_dispatches_one_seat_action_per_screenshot` 经真实 Tool / Scheduler / `NativeHost` 与 seat 替身核对 descriptor 动作集与审批属性、未授权 bind 拒绝、read_tree 拒绝、越界点击不烧租约、坐标映射、一张截图只放行一次动作、Once 只覆盖截图；`wayland_tool_keys_follow_a_fresh_screenshot_and_revoke_stops_input` 核对 ForRun 文本后返回新观测、跨 Run 不能花费租约、组合键派发、撤销后零输入；`non_seat_surfaces_reject_observed_input_without_dispatch_or_lease_spend` 核对非 seat 表面不列 `observed_*`，臆造调用零派发；`wayland_tool_does_not_take_the_x11_desktop_claim` 核对 X11 桌面被占用时 Wayland 实例照常执行。
 
 CU-03 再补两项：`multi_window_bind_returns_handles_and_screenshot_follows_the_choice` 经正式 Tool / Scheduler / NativeHost 验证多窗口句柄、重复绑定、明确选择截图及所选窗口动作后的新观测；`closed_window_handle_from_a_multi_window_bind_is_replaced_before_capture` 验证关闭旧句柄零 capture、幸存窗口可用及 Once 在列举期间撤销后的复用拒绝。替身 JPEG 是哨兵，仅证明 canonical Image 通路。
 

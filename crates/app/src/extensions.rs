@@ -85,7 +85,7 @@ impl AppCore {
         workspaces: &WorkspaceService,
     ) -> Result<(), AppError> {
         let native: Arc<dyn pawork_computer_use::NativePerform> = self.native.clone();
-        let registry = builtin_registry(workspaces, native)?;
+        let registry = builtin_registry(workspaces, native, self.computer_native)?;
         self.replace_registry(registry);
         Ok(())
     }
@@ -142,13 +142,14 @@ impl AppCore {
         };
         let runtime = stdio_runtime(&workspace.roots, self.workspace_trusted());
         let native: Arc<dyn pawork_computer_use::NativePerform> = self.native.clone();
-        let mut registry = match builtin_registry(&self.extensions.workspaces, native) {
-            Ok(registry) => registry,
-            Err(error) => {
-                tracing::warn!(error = %error, "rebuild builtin registry for MCP failed");
-                return;
-            }
-        };
+        let mut registry =
+            match builtin_registry(&self.extensions.workspaces, native, self.computer_native) {
+                Ok(registry) => registry,
+                Err(error) => {
+                    tracing::warn!(error = %error, "rebuild builtin registry for MCP failed");
+                    return;
+                }
+            };
         let mut slots = Vec::new();
         let mcp_backend = mcp_secret_backend();
         for (name, server) in &config.servers {
@@ -276,7 +277,8 @@ impl AppCore {
         }
         let config = mcp_config_from_pawork(&self.config)?;
         let native: Arc<dyn pawork_computer_use::NativePerform> = self.native.clone();
-        let mut registry = builtin_registry(&self.extensions.workspaces, native)?;
+        let mut registry =
+            builtin_registry(&self.extensions.workspaces, native, self.computer_native)?;
         let mut reregister_failed = Vec::new();
         for slot in &self.extensions.mcp_servers {
             // 仅重建此前确实注册进 registry 的工具（descriptors 为准）：
@@ -435,7 +437,13 @@ impl AppCore {
 fn builtin_registry(
     workspaces: &WorkspaceService,
     native: Arc<dyn pawork_computer_use::NativePerform>,
+    mode: crate::ComputerNativeMode,
 ) -> Result<ToolRegistry, AppError> {
+    let native_tool = if mode == crate::ComputerNativeMode::Wayland {
+        pawork_tools::NativeComputerTool::wayland(native)
+    } else {
+        pawork_tools::NativeComputerTool::new(native)
+    };
     let mut registry = ToolRegistry::new();
     registry.extend([
         Arc::new(ReadFileTool::new(workspaces.clone())) as Arc<dyn pawork_domain::AgentTool>,
@@ -447,8 +455,7 @@ fn builtin_registry(
         Arc::new(ApplyPatchTool::new(workspaces.clone())) as Arc<dyn pawork_domain::AgentTool>,
         Arc::new(RunCommandTool::new(workspaces.clone())) as Arc<dyn pawork_domain::AgentTool>,
         Arc::new(pawork_tools::ComputerTool::default()) as Arc<dyn pawork_domain::AgentTool>,
-        Arc::new(pawork_tools::NativeComputerTool::new(native))
-            as Arc<dyn pawork_domain::AgentTool>,
+        Arc::new(native_tool) as Arc<dyn pawork_domain::AgentTool>,
     ])?;
     Ok(registry)
 }

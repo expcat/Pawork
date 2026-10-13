@@ -1,6 +1,6 @@
 # CU-26 · Wayland 隔离后台生产后端
 
-> 状态：进行中。切片 1（guest 侧专用 seat 客户端与 compositor 权威身份）已落地：有离线定向回归，并在本机 headless Sway 1.10.1 做了真实 smoke。切片 2 的代码已实现、离线替身回归已通过：guest 帧协议加了 capture / input，`computer_guest --wayland` 提供服务，Host 侧新增 `WaylandSurface` 与按截图租约派发的点击 / 按键。还没有任何真实环境证据：本机经 Host 链路的 smoke 没跑通，专用容器、工具暴露与 App 接线也未做。更新：2026-10-13。
+> 状态：进行中。切片 1（guest 侧专用 seat 客户端与 compositor 权威身份）已落地：有离线定向回归，并在本机 headless Sway 1.10.1 做了真实 smoke。切片 2 的代码已实现、离线替身回归已通过：guest 帧协议加了 capture / input，`computer_guest --wayland` 提供服务，Host 侧新增 `WaylandSurface` 与按截图租约派发的点击 / 按键。切片 3 已接线、离线回归已通过：`computer_native` 工具暴露 `observed_click` / `observed_keys`，App 新增 `ComputerNativeMode::Wayland` 并选用 `NativeHost::wayland()`，CLI 接受 `--computer-native wayland`；默认入口未改，仍是 `host`。还没有任何真实环境证据：专用容器无法建立，本机经 Host 链路的 smoke 也没跑通。更新：2026-10-13。
 
 [返回 ROADMAP](../ROADMAP.md#未完成任务)
 
@@ -73,11 +73,31 @@
 - 本沙箱的 x11vnc 服务占用了 `127.0.0.1:5900–5909`，固定端口 5907 已被占，guest 报 `Address already in use`，Host 侧解析如实失败（`no installed application resolves this bundle id`）。没有动这些进程。
 - 改用 `unshare -rn` 在独立 user + network namespace 里同时运行 guest 与探针后，guest 成功监听 5907；但后两次启动的 headless Sway 1.10.1 没有在 `XDG_RUNTIME_DIR` 下生成 IPC socket（`SWAYSOCK` 为空），guest 无法连上 Sway，Host 同样如实失败。按本会话的环境探测限额停止排查，原因未定位。日志在本机 `/tmp/cu26s2/`，不检入仓库。
 
-## 阻塞与剩余（切片 2 之后）
+## 切片 3 记录（2026-10-13，工具 / App / CLI 接线）
+
+已实现（代码 + 离线回归；未经任何真实环境验收）：
+
+- **工具**（`crates/tools/src/computer_native.rs`）：新增构造器 `NativeComputerTool::wayland(host)`，`new(host)` 不变。Wayland 实例的 descriptor 使用独立说明与 schema，动作只有 discover / request / bind / screenshot / `observed_click(observation, x, y)` / `observed_keys(observation, text | key + modifiers)`。说明里写明：这是专用 guest seat，不是本机，也不是 X11 隔离桌面；一张截图最多授权一次动作；文本或按键要求目标窗口已有 compositor 焦点；partial / unknown_effect 时不要盲目重试。解析在派发前完成，且对所有表面同一套规则：text 与 key 必须恰好一个，modifiers 只能配 key，key 和 modifier 使用既有枚举，文本先过 `TargetedInput::validate`。非 seat 表面（本机、X11 隔离桌面）的 descriptor 不列 `observed_*`；模型臆造这类调用时，Host 的 `admit_observed` 在任何派发或租约花费之前拒绝（ExecutionFailed）。Wayland 实例不占用 X11 RFB 共享桌面（`Computer::claim_shared`），两者是不同 seat；同目标的并发仍由 NativeHost 的占用与单次凭证约束。descriptor 的审批、untrusted 禁用、预算与 CU-11 视觉门控都不变。
+- **App**（`crates/app/src/app_core.rs`、`extensions.rs`）：`ComputerNativeMode` 增加 `Wayland`，默认仍是 `Host`。`AppCore` 记录本次选用的表面，`select_computer_native` 在 `load_with` 中先于 `attach_workspace` 调用：Wayland 时换装进程共享的 `shared_wayland_host()`，装配 `NativeComputerTool::wayland`。工作区挂载、MCP 启动和 MCP 移除三处重建内建工具表时都沿用同一表面。不写配置，GUI wire、domain 事件与存储 schema 都不变；环境名沿用 `isolated_desktop`，`AppFamily` 仍是 `Browser`。
+- **CLI**（`crates/cli/src/lib.rs`）：`--computer-native` 接受 `host` / `isolated` / `wayland`（区分大小写），默认 `host`，其它值报 Usage 错误。只覆盖本次 Host 装配；共享 `--gui-host` 的客户端沿用已连接 Host 的选择。
+
+默认入口未改：不带参数的 `pawork` 与 GUI Host 仍选本机后台，只有显式传 `--computer-native wayland` 才会连接 guest 的 5907 端口。
+
+切片 3 Validated:
+
+- `bash scripts/test.sh tools app cli`（即 `cargo test --offline --tests -p pawork-tools -p pawork-app -p pawork-cli --features pawork-app/ui-fixture`）：app lib 311 通过 / 2 失败，Cargo 随即停止，未跑到 cli 和 tools。两项失败是 `gateway_tests::gateway_models_purpose_filter_and_multimodal_gates` 与 `gui_host::tests::run::run_start_with_provider_does_not_silently_keep_same_model_id`，原因是本沙箱设置了 `PAWORK_API_KEY_OPENCODE_GO`，模型目录因此混入 `opencode-go/*`，与 CU-26 无关。
+- `env -u PAWORK_API_KEY_OPENCODE_GO cargo test --offline --no-fail-fast --tests -p pawork-tools -p pawork-app -p pawork-cli --features pawork-app/ui-fixture`：app lib 313 通过 / 1 ignored，`timeline_projection_host` 2 通过，`ui_fixture_projection` 1 通过，cli lib 54 通过；tools lib 98 通过 / 6 失败，全部是 `run_command::tests::*`。原因是本沙箱内 bwrap 无法创建 user namespace（`Creating new namespace failed: Resource temporarily unavailable`），此前会话已有同样记录，本切片也没有改动 `run_command.rs` / `pawork-exec`。`computer_native::tests` 20 项全部通过。
+- 改动文件 `rustfmt --edition 2021 --check` 干净。
+
+切片 3 Targeted regressions: 7 项。`pawork-tools` 5 项：`observed_actions_parse_strictly_before_any_dispatch`（缺字段、类型错误、text 与 key 同时出现、text 带 modifiers、未知键 / 修饰、空文本都报 InvalidInput）；`wayland_tool_dispatches_one_seat_action_per_screenshot`（经真实 Tool / Scheduler / `NativeHost` 与 seat 替身：descriptor 动作集与审批属性、未授权 bind 拒绝、read_tree 拒绝、越界点击不烧租约、半比例坐标映射、一张截图只放行一次动作、Once 授权只覆盖截图）；`wayland_tool_keys_follow_a_fresh_screenshot_and_revoke_stops_input`（ForRun 文本后返回新观测，跨 Run 不能花费租约，Return + control 派发，撤销后零输入）；`non_seat_surfaces_reject_observed_input_without_dispatch_or_lease_spend`（非 seat 表面不列 `observed_*`，臆造调用零派发、零后端访问）；`wayland_tool_does_not_take_the_x11_desktop_claim`（X11 桌面被其它 Run 占用时 Wayland 实例照常工作）。`pawork-app` 1 项：`wayland_computer_native_is_selected_only_explicitly`（默认 Host 不含 `observed_*`；显式 Wayland 换装进程共享的 `shared_wayland_host()`，动作集精确，MCP 移除重建工具表后仍保持）。`pawork-cli` 1 项：`computer_native_defaults_to_host_and_wayland_is_explicit`（默认 host，`wayland` / `isolated` 显式解析，`Wayland` / `x11` / 空串报 Usage）。
+
+这些回归只替代 guest 与 seat 边界，不证明真实 Sway、专用容器、真实 Provider、GUI 真窗口审批或持久观测。
+
+## 阻塞与剩余（切片 3 之后）
 
 - **专用容器环境缺失**：本机没有 Docker / Podman，CU-23 规格的专用 Wayland 容器（只读 rootfs、network none、CapDrop=ALL、无宿主 bind）无法建立，也无法验证「容器只把 5907 发布到宿主 loopback」这一部署形态。network none 与「发布端口」本身互相冲突，需要在部署设计中改为仅 loopback 的端口发布（同 CU-21），或改用 Unix socket 挂载，并重新评审。完成条件里的真实环境验收全部待此项。
-- **本机 Host 链路 smoke 未完成**：见上节。需要空闲的 5907（或独立 netns）以及能稳定生成 IPC socket 的 headless Sway。
-- **工具与 App 未接线**：`pawork-tools` 的 `computer_native` 还没有暴露 `observed_click` / `observed_keys`；App 也没有构造或选择 `NativeHost::wayland()`（不改变任何默认入口）。所以「经正式工具链完成」尚未成立，需要单独授权去改 tools / app 写入集与对应 Spec。
+- **本机 Host 链路 smoke 未完成**：见切片 2 记录。需要空闲的 5907（或独立 netns）以及能稳定生成 IPC socket 的 headless Sway。切片 3 之后，这条 smoke 应改为经正式 `pawork --computer-native wayland` 进程与 GUI 目标审批完成，而不只是 `wayland_host_probe`。
+- **正式工具链只有离线证据**：切片 3 已把工具、App、CLI 接通，但没有 `PAWORK_CU21_ISOLATED` 那样的 Wayland live 测试，也没有真实 Provider（`glm-coding / glm-5.3` 或 `xai / grok-4.7`）驱动的 Run、持久 ObservationList / ObservationImageRead 证据或真窗口审批。这些都要等专用容器或本机 smoke 打通后再做。
 - **`AppFamily` 没有 Wayland 取值**：`WaylandSurface` 沿用 CU-21 guest 的 `Browser` 标签，只作身份字段，能力闸不看族；网站目标在这里因 `current_origin` 恒为 None 而 fail-closed。新增族会改 app / desktop 的穷举映射与 GUI 展示，留给后续。
 - **seat 级权限的固有限制**：三条协议的权限来自 socket 可达性，guest 内任何能连上 socket 的客户端（包括目标应用本身）都能截图或注入输入。`require_dedicated` 只能在调用时发现非虚拟设备或多余输出 / seat，无法阻止同 guest 内其它客户端创建虚拟设备。因此部署必须保证 guest 内只有 Pawork guest 服务和获批目标，sway 配置不带任何按键绑定。
 - 撤销、接管、断线、取消的真实环境证据，以及 AT-SPI、其它应用、其它 compositor、共享用户 seat、portal 许可、非 ASCII 文本（当前 keymap 只覆盖可打印 ASCII）均未验证。

@@ -18,7 +18,7 @@ Computer use 的目标是：用户继续使用本机键鼠时，Agent 能在后�
 | 未实现；仅 `UnsupportedProbe` fail-closed 拒绝回归在位；阻塞：缺独立 Windows 会话 / VM | [CU-22 · Windows 独立会话 / VM 后台能力](plan/cu-22-windows-isolation.md) | 在独立 Windows 会话或 VM 内实现 UIA / 截图 / 定向输入，不使用用户主桌面前台输入。 |
 | 设计与契约拒绝回归完成；特权组件未实施；阻塞：用户未启用并裁决特权方案，安装与锁屏序列需真实 macOS | [CU-24 · macOS 锁屏使用独立设计与验证](plan/cu-24-macos-locked-use.md) | 锁屏下的受限后台操作，不把普通 AX 后台操作等同锁屏支持。 |
 | 设计完成，本地可做部分已尽；采集与模型音频未实现；阻塞：用户未显式开启音频场景，采集需真实桌面环境 | [CU-25 · 显式授权的目标音频采集](plan/cu-25-audio.md) | 目标音频录制或模型使用链路，并明确二者的能力边界。 |
-| 进行中；guest 侧 seat 客户端与身份层已落地并经本机 headless Sway 真实 smoke；Host 接线（guest 协议、`WaylandSurface`、截图租约点击 / 按键）已实现并通过离线替身回归，无真实环境证据；工具 / App 接线与专用容器验收未完成 | [CU-26 · Wayland 隔离后台生产后端](plan/cu-26-wayland-production.md) | 把 Sway / wlroots 专用 seat 的截图、指针与键盘接入正式 Host 后端。 |
+| 进行中；guest 侧 seat 客户端与身份层已落地并经本机 headless Sway 真实 smoke；Host 接线（guest 协议、`WaylandSurface`、截图租约点击 / 按键）与工具 / App / CLI 接线（`observed_click` / `observed_keys`、显式 `--computer-native wayland`，默认仍为 `host`）已实现并通过离线回归，无真实环境证据；阻塞：专用容器无法建立，本机经 Host 链路的 smoke 未跑通 | [CU-26 · Wayland 隔离后台生产后端](plan/cu-26-wayland-production.md) | 把 Sway / wlroots 专用 seat 的截图、指针与键盘接入正式 Host 后端。 |
 
 ## 环境待验
 

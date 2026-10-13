@@ -48,12 +48,14 @@ use crate::services;
 use pawork_policy::ApprovalMode;
 
 /// 本次 Host 进程选用的 computer_native 表面。
-/// 默认本机后台。isolated 只在启动时显式选择，不写入用户配置，也不改协议。
+/// 默认本机后台。isolated / wayland 只在启动时显式选择，不写入用户配置，也不改协议。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ComputerNativeMode {
     #[default]
     Host,
     Isolated,
+    /// CU-26：专用 Wayland guest seat（`NativeHost::wayland()`）。
+    Wayland,
 }
 
 /// 从配置文件与 CLI 覆盖构造 [`AppCore`] 的选项。
@@ -420,6 +422,8 @@ pub struct AppCore {
     /// CU-10：GUI、本进程工具和子 Run 共用的原生目标宿主。
     /// 授权、占用、接管、句柄和待审批请求都在这一份登记里。
     pub(crate) native: Arc<dyn NativeControl>,
+    /// `native` 对应的表面；决定 computer_native 工具的动作集。
+    pub(crate) computer_native: ComputerNativeMode,
 }
 
 /// 把 engine 的完整估算器桥接到 session 侧窄口 trait（依赖倒置的宿主实现）。
@@ -488,9 +492,7 @@ impl AppCore {
             allow_pending,
         )
         .await?;
-        if options.computer_native == ComputerNativeMode::Isolated {
-            core.native = pawork_computer_use::isolated::shared_host();
-        }
+        core.select_computer_native(options.computer_native);
         core.configure_approval(
             approval_mode,
             trusted,
@@ -722,7 +724,22 @@ impl AppCore {
             next_message: AtomicU64::new(1),
             instance_ownership: None,
             native: Arc::new(NativeHost::host()) as Arc<dyn NativeControl>,
+            computer_native: ComputerNativeMode::Host,
         }
+    }
+
+    /// 换装本进程的原生目标宿主；须在装配内置工具（attach_workspace）之前调用。
+    pub(crate) fn select_computer_native(&mut self, mode: ComputerNativeMode) {
+        match mode {
+            ComputerNativeMode::Host => {}
+            ComputerNativeMode::Isolated => {
+                self.native = pawork_computer_use::isolated::shared_host();
+            }
+            ComputerNativeMode::Wayland => {
+                self.native = pawork_computer_use::wayland_surface::shared_wayland_host();
+            }
+        }
+        self.computer_native = mode;
     }
 
     /// CU-17：目标状态快照（grants ∪ 绑定，按 anchor 附加占用与暂停）。
