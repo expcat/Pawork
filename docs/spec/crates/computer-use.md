@@ -6,6 +6,8 @@
 
 CU-21 增加显式隔离应用表面：容器内 Rust `computer_guest` 经 X11 / D-Bus / AT-SPI 识别 Firefox，Host 的 `GuestSurface` 复用现有 NativeHost / TargetRegistry / 审批与句柄，图像仍由同一 RFB 连接裁剪。身份为 `guest.browser.firefox`、应用族 Browser，不把 GTK 标为 AppKit。默认本机 Host 不改变；部署见 [README](../../../crates/computer-use/README.md)。
 
+CU-26 切片 1 新增 Linux-only 的 `wayland` 模块：guest 侧专用 Sway / wlroots seat 客户端。它是纯 Rust 的 Wayland wire 实现，只绑定 CU-23 证实的 `zwlr_screencopy_manager_v1`（整输出截图）、`zwlr_virtual_pointer_manager_v1`（点击）和 `zwp_virtual_keyboard_manager_v1`（按键 / 文本），另用 Sway IPC 取 compositor 权威的窗口身份（pid 来自客户端凭证、con id、代际）并校验 seat 专用。它**尚未接入 NativeHost / guest 帧协议 / 工具链**，不改变任何生产入口；Host 接线与专用容器验收见 [CU-26](../../plan/cu-26-wayland-production.md)。
+
 纯 Rust 通过 RFB 3.8 操作专用容器内的 Xvnc 虚拟桌面。所有截图和输入都在独立显示器，不接触本机 HID、屏幕、焦点或剪贴板；不存在 macOS 回退实现。应用须运行于该环境，不能直接控制宿主已有应用。无 Pawork 内部依赖、GPUI、Provider、shell、自有 JS Runtime 或模型指定的路径/网络端点。容器需显式启动，库不管理 Docker 进程。
 
 CU-02 起新增 `target` 模块：本机后台目标、观测与动作能力的有类型契约（纯数据类型与校验逻辑，不触平台 API、不触网）。本机探针与动作派发由 CU-03+ 落地，CU-10 native 接线见下文；GUI 不直接访问。
@@ -33,6 +35,8 @@ CU-17 起本包进入 App 生产依赖图；CU-10 native 将旧 GUI-only 注册�
 ## 2. 模块树
 
 CU-21 新增 `src/guest.rs`（受控帧与客户端）、`src/isolated.rs`（GuestSurface / 共享 Host）、Linux bin `src/bin/computer_guest.rs`（X11 / AT-SPI 服务），以及 `desktop/Dockerfile.guest`、`compose.cu21.yaml`、`start-guest.sh`、`cu21.html` 独立部署与验收页。既有 RFB 部署与本机后端保留。
+
+CU-26 新增 `src/wayland/`（cfg 仅 Linux）：`mod.rs`（~743 行）放 `SeatError`、`display_socket`、`select_globals` 全局协商、`WaylandSeat`（连接 / 截图 / 点击 / 按键 / 文本）、`SeatFrame` JPEG 预算、shm 像素转换与 buffer 边界；`wire.rs`（~320 行）放消息编解码与 SCM_RIGHTS 收发；`keymap.rs`（~205 行）放固定 XKB keymap、`SeatKey` / `SeatModifiers`；`sway.rs`（~341 行）放 Sway IPC、`CompositorInstance`、窗口解析、`check_dedicated` 与 `WindowLedger`；`tests.rs`（~528 行）为定向回归。`examples/wayland_seat_probe.rs` 为人工验收入口（`windows` / `smoke`），不是产品路径。
 
 `src/lib.rs` 定义 Action / Input / Backend / Computer、观察身份、坐标转换、桌面会话所有权（CU-09：单 Run 占用、Conflict 可见冲突、取消/超时/后端错误叠加取消释放、60 秒空闲失拥有、release 宿主钩子（推进 generation，在途操作不重新认领））、取消与定向测试。`src/rfb.rs` 为固定 `127.0.0.1:5905` 的 RFB 客户端、raw framebuffer → JPEG、虚拟键鼠事件。`src/target/` 为 CU-02 本机后台契约目录模块，纯数据 + 校验，单元测试用 fake probe。`mod.rs`（405 行）放目标身份（AppIdentity / ProcessInstance / WindowIdentity / Scope）、观测几何与坐标换算（CU-04 起观测记录捕获时窗口尺寸，缩放后旧观测按 StaleHandle 失效）、`TargetError` 拒绝语义、`NativeProbe` 宿主接缝与 `UnsupportedProbe`（存活恒 false、其余接缝恒 None 的 fail-closed 空后端）。`ax_tree.rs`（423 行）放 CU-05 有界无障碍树类型（`AxTreeBounds` / `AxTreeNode` / `AxTreeTruncation` / `AxTreeRead` / `ax_tree_revision` 指纹）、元素查找（`ElementQuery` / `ElementLookup` / `lookup_element`）与 `NativeActionKind` 后台能力矩阵。`actions.rs`（313 行）放语义动作、定向输入与指针 / 窗口移动契约（`SemanticAction` / `TargetedInput` / `PointerAction` / `WindowMove` / `ActivityProof`）。`registry.rs`（1112 行）放宿主句柄注册表 `TargetRegistry`（CU-16 起内置 `TargetAuthorizer`，授权闸接入全部 gated 路径）与 CU-17 `TargetState` 视图及 `TargetRegistry::target_states()`（grants ∪ 窗口绑定聚合，占用 / 暂停按 anchor 归并，确定性排序）。`tests.rs`（1913 行）为契约单测。`src/approval.rs` 为 CU-16 目标审批契约：`TargetIdentity`（整应用或单源网站）、`GrantKind`（once / for-run）、`TargetAuthorizer`（授权台账、受保护 bundle、撤销；CU-17 起增 `grants()` 只读迭代——GUI 目标列表对台账的唯一只读窗口）；同为纯数据 + 校验。`src/macos/` 为 CU-03 macOS 原生后端目录模块（cfg 仅 macOS）。`mod.rs`（1456 行）为 `MacosNative`：实现 `NativeProbe`（进程实例 = sysctl 启动令牌 + NSRunningApplication 终止态；CU-04 起 `window_size` 实时尺寸，CU-05 起 `tree_revision` 同边界重走窗口 AX 子树取指纹，任何失败 None fail-closed），并提供 `list_applications` 元数据发现（不读标题 / AX 树）、`list_windows` 授权闸后窗口列举、`resolve_identity` 身份解析、`launch_authorized` 受控启动、`permissions` 系统权限预检（永不发起请求），以及 `capture_window` / `read_ax_tree` 入口。`discovery.rs`（340 行）放进程实例、受控启动、应用族分类与窗口服务器枚举。`ax.rs`（522 行）放 AXWindows 交叉验证（窗口代际账本锁内同步，`_AXUIElementGetWindow` 精确 id 对应优先、帧组闭合兜底）与 `AxWindowRef` / `ReadBudget`（`ax_window_list` 抽出 retain 元素，`ax_windows` 为其映射包装）。`ax_tree.rs`（671 行）放 CU-05 有界树读取（门序 = 台账授权 → 进程实例 → 身份绑定 → Accessibility preflight → 存活 + 代际 → 遍历缝；Chromium 族读使能 `ax_enable_full_tree` 先设 AXManualAccessibility；`TreeWalk` 有界前序遍历，角色 / 子列表 / 动作失败整读失败，可选属性降级 None，每次 AX 调用以该次调用开始时的剩余预算为逐元素 messaging timeout、返回后复核时钟；`resolve_window_element` 复用精确 id / 帧组闭合双模式）。`actions.rs`（284 行）放 CU-06 语义动作派发辅助（`resolve_element_by_path`、`refuse_secure_write`、`semantic_action_result`）。`input.rs`（475 行）放 CU-07 定向后台输入（`targeted_event_plan`、`post_targeted_plan`）。`capture.rs`（500 行）放 CU-04 窗口截图（ScreenCaptureKit，内嵌 sck 子模块 dlopen 驱动，含 BGRA→RGB 转换与 JPEG 预算编码）。`tests.rs`（1765 行）为后端簿记与拒绝语义单测。`src/target/mod.rs` 的 `TargetError` 增第十四变体 `PermissionMissing` 与第十五变体 `ProbeUnavailable`；CU-09 增第十六变体 `TargetOccupied` 与第十七变体 `UserActive`，并在 `src/target/registry.rs` 的 `TargetRegistry` 上落地占用台账与 `pause_dispatch` / `resume_dispatch` / `release_scope`；CU-17 审查修复增第二十变体 `ScopeClosed` 与活跃 scope 登记（审查二轮：`open_scope` 在 run 起始登记，grant 只接受已 open 的 scope；`close_scope` 终态关闭 = 清台账 + 释放占用 + 移除活跃登记——已关闭-未摘除窗口内的 late grant 仍按 `ScopeClosed` 拒绝，且不保留任何终态记录，幂等）。`desktop/` 提供独立桌面的 Dockerfile / compose / 启动脚本；`examples/isolated_probe.rs` 为隔离桌面人工 JSON 验收入口；`examples/macos_background_probe.rs` 为 CU-01 本机后台可行性人工探针（macOS-only，公开 API：ScreenCaptureKit / AX / CGEventPostToPid）；`examples/macos_target_probe.rs` 为 CU-03 发现 / 启动 / 生命周期、CU-04 截图与 CU-05 树读取验收人工探针（macOS-only，CU-04 起增 `capture` / `obsflow` / `capturegone` / `axunminimize`，CU-05 起增 `axtree` / `axfind` / `axstale` 命令），不参与产品路径。
 
@@ -65,6 +69,8 @@ B22 按既有分节把两个大文件拆成目录模块，只移动代码，公�
 ## 3. 对外 API 面
 
 CU-21 的 `guest` 提供固定端点、有界 JSON 帧、客户端 token 校验、窗口元数据/树/按压查询与回执；`isolated` 提供 `GuestSurface` 与 `shared_host()`。`NativeHost::isolated()` 显式构造该表面；`NativeSurface::observation_environment` 与 `NativePerform::{environment_name, background_matrix, isolated_desktop}` 报告所选环境。`Computer::claim_shared(scope)` 与原始隔离工具共用桌面所有权槽，`capture_frame` 裁剪同一 RFB framebuffer，不另开控制客户端。
+
+CU-26 `wayland` 对外面（Linux，尚无生产消费者）：`display_socket(display, runtime_dir)` 按 `WAYLAND_DISPLAY` / `XDG_RUNTIME_DIR` 解析 socket，未设置即 `NoDisplay`，不默认 `wayland-0`。`WaylandSeat::connect(socket, settle)` / `connect_from_env(settle)` 先完成 registry 往返与协商：wl_shm、wl_seat、wl_output、screencopy、virtual pointer、virtual keyboard 必须各恰好一个，版本取 min(公告值, 已知值)，缺失或重复返回 `Globals`，此时尚未 bind 任何对象；输出须有当前 mode 且 scale=1、transform=normal。随后为该 seat 创建一次虚拟指针与虚拟键盘、上传 keymap，并等待 `settle`（`DEVICE_SETTLE` 1 秒，CU-23 实测设备新出现后早发事件会丢）。`output_size()` 是指针坐标空间。`capture() -> SeatFrame { width, height, rgb }`；`SeatFrame::jpeg()` 输出最长边 ≤1280、≤512KiB 的 JPEG。`click(x, y, PointerButton, cancelled)`、`key(SeatKey, SeatModifiers, cancelled)`、`type_text(text, cancelled)` 返回 `InputOutcome::{Dispatched, Partial { steps_sent }}`。`sway::SwayIpc::{connect, connect_from_env, compositor, request, windows, require_dedicated}`，`require_dedicated` 返回实际检查过的输入设备 identifier；`sway::{SwayWindow, SwayRect, CompositorInstance, WindowLedger, process_start}`。`SeatError` 区分 NoDisplay / Io / Protocol / Compositor / Globals / NotDedicated / Capture / Input / Ipc / Cancelled。
 
 `Computer::isolated()` 惰性连接专用桌面（CU-09 起全部实例共享一个桌面会话所有权槽）；`new(Arc<dyn Backend>)` 供宿主自定义（其隔离与所有权边界由宿主保证，各自私有会话）。`execute(scope, action, cancelled)` 为同步调用，scope 即所有权键：非拥有 Run 一律 `Error::Conflict(owner)` 拒绝且零后端访问，取消/超时释放占用并作废待用观测，空闲超 `OWNERSHIP_TTL` 自动失拥有；`Computer::release(scope)` 为宿主 Run 终止钩子：释放推进 generation，在途截图 / 输入只验证原所有权（空槽 Cancelled、新拥有者 Conflict），不重新认领；在途输入经 backend 取消谓词感知撤销（剩余事件停止发送），在途截图核对原代际（同 scope 重认领后 Stale）。`status` 返回连接的 capture/input 可用性；`screenshot` 返回 Observation（id、连接 session_id、虚拟宽高、图像宽高）和 JPEG。输入动作携带 observation_id：click、move、drag、scroll、type_text、key；CU-10 起输入派发成功后同一调用返回新 Observation 与 JPEG（`input_dispatched=true`），后置观测失败时观测缺席、`observation_failure` 记录原因且不自动重试。受限键名与 command/shift/control/option；Linux 快捷键用 control，command=Super，option=Alt。scroll 正值右/下，每 40 像素换算一步滚轮。
 
@@ -102,11 +108,20 @@ CU-05 有界树读取沿用同一诚实性纪律。读树门序固定为台账�
 
 CU-21 将 `serde_json` 用于生产 guest 帧；Linux target-gated `zbus = 5.19.0`（async-io / blocking-api）与 `async-io` 提供 AT-SPI D-Bus 和整读 deadline。macOS 构建不引入 Linux 依赖；仍无 `pawork-*` 依赖或自有 JS Runtime。独立 guest 运行镜像为 Debian bookworm / Firefox ESR，glibc 二进制与 runtime 对齐；既有 Alpine / RFB 部署保留。
 
+CU-26 在 Linux target 依赖中加入 `libc = "0.2"`（workspace 已锁定版本，Cargo.lock 不变），用于 SCM_RIGHTS、memfd 和 SO_PEERCRED。不引入 libwayland、wayland-rs 或 xkbcommon：keymap 是文本，由 compositor 和目标客户端各自编译。运行时需要 guest 内的 Sway / wlroots；本机 smoke 使用 Sway 1.10.1。
+
 
 serde / thiserror / image（仅 JPEG，已有 workspace lock 版本）；网络为 std::net。无 `pawork-*` 依赖。独立 Cargo 元数据不继承 workspace；`publish=false`，License 待定。隔离桌面运行依赖 Docker / Xvnc，不改变 CLI / Desktop 的纯 Rust 构建链。CU-03 起 macOS 原生后端是库本体的一部分：objc / core-foundation / core-graphics（elcapitan feature）/ libc 为 `[target.'cfg(target_os = "macos")'.dependencies]` target-gated 正式依赖（均复用 workspace 已锁定版本），仅 macOS 目标编译，非 macOS 目标仍无任何平台框架；cocoa 留 target-gated dev-dependencies，仅供 CU-01 / CU-03 人工探针 examples（非产品路径）；CU-04 起 `block` 由 dev 提为 target-gated 正式依赖（ScreenCaptureKit completion handler 回调所需，复用 workspace 已锁定版本）。crate 级 `[lints.rust] unexpected_cfgs` 保持 warn：check-cfg 把 objc 0.2 宏展开引用的 `cargo-clippy` cfg 声明为已知值使其不再触发，其余未知 cfg 照常告警。
 ## 6. 红线与不变量
 
 CU-21 Host 固定连接 `127.0.0.1:5906`，guest 在容器内监听 `0.0.0.0:5906`，compose 仅发布到宿主 loopback；RFB 连接保持 `127.0.0.1:5905`。`PAWORK_ISOLATED_GUEST_TOKEN` 至少 16 个非空白字节。token 仅校验客户端共享秘密，不证明双向认证，容器隔离与 loopback 部署仍是前置。发现元数据不含标题或 AT-SPI 树；目标内容读取须经原授权闸。窗口身份包含 PID / 启动令牌、窗口代际和 guest 进程/连接代次；读树以具体窗口为根，元素沿用树版本与子路径。捕获裁剪前后复核身份、几何与遮挡，无法归属到该窗口时拒绝。已发送按压请求后回执丢失保留 UnknownEffect，不自动重试；真实拒绝与停止证据见本项计划。
+
+CU-26 seat 客户端不变量：
+- 只连专用 seat，不碰宿主主 seat，不回退 XTEST，不走 portal。
+- 三条协议的权限来自 socket 可达性、作用于整个 seat。`require_dedicated` 要求恰好一个 `HEADLESS-*` 输出、一个 seat，输入设备只允许 `0:0:wlr_virtual_pointer_v1` / `0:0:wlr_virtual_keyboard_v1`；客户端侧另拒多 seat、多输出。它只能在调用时发现问题，无法阻止同 guest 内其它客户端用同一 socket，所以部署必须独占 guest，sway 配置不带按键绑定。
+- 窗口身份只取 compositor 数据：pid 来自 Wayland 客户端凭证，进程实例 = pid + `/proc` 启动时间，代际按 (compositor 实例, con id) 记账；compositor 重启后旧代际全部失效。Xwayland 窗口与缺 pid / app_id 的 toplevel 一律拒绝。
+- 截图每次都是新 shm buffer 的完整帧，`failed`、未知像素格式或越界尺寸都返回错误，不返回旧帧或残帧。
+- 文本整段先校验，越出 keymap（非 ASCII、控制字符）时零事件拒绝。按下之后必定发送释放，修饰键状态在按键后清零。sync 往返只证明事件已送达 seat，不证明目标效果。
 
 遮挡枚举不以窗口尺寸或 WM_CLASS 过滤；属性 / 树读取失败、枚举超过 4096 个窗口时拒绝，几何不明保守拒绝。QueryTree 的 parent 字段与 root 分开解析，短 children 回包拒绝。Host 沿实际父链排除目标自身的框架与内容，下降遇其它获准 client 或已知 stacking 的 rejected client 停止；非自身重叠窗口任一侧 stacking 未知时拒绝。已发送 `DoAction` 的 NoReply、I/O、Timeout、Disconnected 或无效回执保留 UnknownEffect；明确 false、未知方法 / 接口、不支持、参数及访问拒绝不当作回执丢失。
 
@@ -135,6 +150,15 @@ CU-08 指针与窗口移动不变量：指针动作（点击 / 滚动 / 拖动�
 CU-21 的 guest 帧、客户端身份校验与窗口代际回归位于 `guest.rs` 和 `src/bin/computer_guest.rs`；`isolated.rs` 的定向替身只替代外部 guest / RFB 边界。正式产品集成经 app 的 `cu21_isolated_firefox` 验证，Linux guest 必须另在 glibc 构建环境编译，macOS 类型检查不能覆盖其 Linux 专用 AT-SPI 代码。
 
 初审修复使用现有 `unconfirmed_overlap_and_lost_action_receipt_are_not_clean_failures` 核小窗 / 无 class、未知 stacking 与共享框架的其它 client；Linux 的 `typed_loss_stays_lost_and_unknown_method_stays_declined`、`query_tree_parent_is_not_the_root_and_a_short_child_list_is_rejected` 分别核 typed-error 分类与 X11 wire 解析。替身回归与正式 Firefox 集成分别记账。
+
+CU-26 `src/wayland/tests.rs` 16 项回归（Linux）：
+- wire：编解码往返，畸形头 / 未终止字符串 / 超长消息报错；SCM_RIGHTS 传 fd 后对端能读到 memfd 内容。
+- 协商与连接：全局协议缺失或重复时拒绝；替身 compositor 证明缺键盘协议时只收到 get_registry + sync、零 bind；`wl_display.error` 原样上报；socket 不存在或未设置 display 时为 NoDisplay。
+- 截图：buffer 边界、XRGB / XBGR 通道顺序与 y_invert、未知格式拒绝；JPEG 预算。
+- 输入：文本先校验（空 / 非 ASCII / 控制字符 / 超 4096 拒绝）；keymap 每个 keycode 唯一且恰好定义一次，修饰键掩码正确。
+- Sway：IPC 帧往返与 magic / 类型 / 超长拒绝；窗口解析与 Xwayland / 缺 app_id 拒绝；专用 seat 拒绝物理 / 嵌套 / 多输出、多 seat、libinput 设备；`/proc/<pid>/stat` 在含括号进程名下也能解析；代际账本消失即遗忘、compositor 重启全部换代。
+
+本机真实 smoke（2026-10-13，Sway 1.10.1 headless、foot 目标）完成截图、点击（目标终端鼠标上报字节）、文本 + Return（目标 shell 写出的文件）以及无 display / 双输出拒绝。这只是本机 headless 会话的 seat 客户端证据，不是专用容器内经正式 Host 链路的验收，详见 [CU-26](../../plan/cu-26-wayland-production.md)。另记：既有的 `guest::tests::bad_or_missing_token_is_rejected_and_the_connection_is_dropped` 在本 Linux 环境的干净 HEAD 上失败（服务端拒绝后仍读到客户端已发出的 hello 字节），与 CU-26 无关，尚未处理。
 
 CU-09（2026-10-09）扩展现有 `examples/isolated_probe.rs`：bare action 默认 scope 保留，增加指定 scope / release / 取消时点、`conflict_during_type` 与 `release_during_type` 两条并发入口；输出 owner 完整回执与 JPEG，JPEG 写失败显式报错。真实隔离 Xvnc / RFB 验证 Conflict、跨 Run/旧观测拒绝、释放与取消后的再使用；R2 只证明调用在途释放，首字符与逐事件中止未在真桌面重证。库内 Fake / wire、正式 Tool/Host 与 App 连接/持久化使用同版日志复用。
 

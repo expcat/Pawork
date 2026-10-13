@@ -44,7 +44,7 @@ Policy 输出固定为 `Allow`、`Deny`、`AskUser`、`AllowWithConstraints`。�
 
 ### 3.2 工具与终端
 
-CU-21 的显式隔离 GuestSurface 与 raw `computer` 共用桌面占用，仍经原 Policy / 显式工具审批和 GUI 目标批准。guest 仅发布 `127.0.0.1:5906`；`PAWORK_ISOLATED_GUEST_TOKEN` 至少 16 个非空白字节，仅校验客户端共享秘密，不证明双向认证，也不代替部署隔离。授权前仅读窗口身份元数据，内容树与图像受目标授权约束；进程/窗口/连接代次、树版本和子路径共同约束元素。请求已发出而回执丢失保留 UnknownEffect，撤销不抹掉已派发事实，也不自动重试。只承诺专用容器的 Firefox 截图、读树、按压切片；不推广为本机应用或 Wayland / Windows 支持。运行部署见 [computer-use README](../../crates/computer-use/README.md)。
+CU-21 的显式隔离 GuestSurface 与 raw `computer` 共用桌面占用，仍经原 Policy / 显式工具审批和 GUI 目标批准。guest 仅发布 `127.0.0.1:5906`；`PAWORK_ISOLATED_GUEST_TOKEN` 至少 16 个非空白字节，仅校验客户端共享秘密，不证明双向认证，也不代替部署隔离。授权前仅读窗口身份元数据，内容树与图像受目标授权约束；进程/窗口/连接代次、树版本和子路径共同约束元素。请求已发出而回执丢失保留 UnknownEffect，撤销不抹掉已派发事实，也不自动重试。只承诺专用容器的 Firefox 截图、读树、按压切片；不推广为本机应用或 Wayland / Windows 支持。CU-26 的 Linux `wayland` seat 客户端尚未接入 Host：screencopy / 虚拟指针 / 虚拟键盘的权限来自 socket 可达性、作用于整个 seat，客户端只在单 seat、单 headless 输出、仅 wlroots 虚拟输入设备时工作，否则拒绝；它阻止不了同 guest 内其它客户端使用同一 socket，因此部署必须独占 guest。运行部署见 [computer-use README](../../crates/computer-use/README.md)。
 
 窗口裁剪不跳过小窗或无 WM_CLASS 的窗口；枚举失败、几何不明、重叠且 stacking 不可确认时拒绝。自身框架排除沿真实 parent 链，遇其它 client 停止。`DoAction` 派发后的 NoReply、I/O / 断线等回执丢失同超时一样保留 UnknownEffect，确定拒绝单独报告。
 

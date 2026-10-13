@@ -25,6 +25,12 @@ pub use native_host::{
 #[cfg(target_os = "macos")]
 pub mod macos;
 
+/// Dedicated Sway / wlroots seat client for the controlled guest (CU-26):
+/// screencopy, virtual pointer / keyboard and compositor-authoritative
+/// window identity. Not wired into NativeHost yet.
+#[cfg(target_os = "linux")]
+pub mod wayland;
+
 pub const MAX_IMAGE_BYTES: usize = 512 * 1024;
 pub const MAX_IMAGE_EDGE: u32 = 1280;
 /// How long a run holds the desktop after its last call. Matches the

@@ -17,7 +17,7 @@ Computer use 的目标是：用户继续使用本机键鼠时，Agent 能在后�
 | 未实现；当前 `UnsupportedProbe` 拒绝回归在位；缺 Windows 客户机 | [CU-22 · Windows 独立会话 / VM 后台能力](plan/cu-22-windows-isolation.md) | 在独立 Windows 会话或 VM 内实现 UIA / 截图 / 定向输入，不使用用户主桌面前台输入。 |
 | 设计与契约拒绝完成；特权组件未实现，需用户启用后安装验证 | [CU-24 · macOS 锁屏使用独立设计与验证](plan/cu-24-macos-locked-use.md) | 锁屏下的受限后台操作，不把普通 AX 后台操作等同锁屏支持。 |
 | 设计完成；采集与模型音频未实现 | [CU-25 · 显式授权的目标音频采集](plan/cu-25-audio.md) | 目标音频录制或模型使用链路，并明确二者的能力边界。 |
-| 未开始；CU-23 可行性已证实 | [CU-26 · Wayland 隔离后台生产后端](plan/cu-26-wayland-production.md) | 把 Sway / wlroots 专用 seat 的截图、指针与键盘接入正式 Host 后端。 |
+| 进行中；guest 侧 seat 客户端与身份层已落地并经本机 headless Sway 真实 smoke；Host 接线与专用容器验收未完成 | [CU-26 · Wayland 隔离后台生产后端](plan/cu-26-wayland-production.md) | 把 Sway / wlroots 专用 seat 的截图、指针与键盘接入正式 Host 后端。 |
 
 ## 环境待验
 
