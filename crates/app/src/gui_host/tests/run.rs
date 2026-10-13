@@ -914,7 +914,7 @@ async fn run_start_unapproved_plan_rejects_synchronously() {
                 session.clone(),
                 RunId::from("run-plan-seed"),
                 pawork_domain::EventSequence::new(1),
-                now_timestamp(),
+                Timestamp::now(),
                 AgentEvent::Plan(pawork_domain::PlanEvent::Created {
                     plan_id: pawork_domain::PlanId::from("plan-gate"),
                     version: pawork_domain::PlanVersionId::from("plan-gate-v1"),
@@ -998,7 +998,7 @@ async fn run_terminal_gate_persists_run_failed_before_broadcast() {
                 session.clone(),
                 run.clone(),
                 pawork_domain::EventSequence::new(1),
-                now_timestamp(),
+                Timestamp::now(),
                 AgentEvent::RunStarted {
                     trigger_message_id: MessageId::from("msg-gate-seal"),
                 },

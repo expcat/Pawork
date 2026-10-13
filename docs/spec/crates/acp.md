@@ -10,7 +10,7 @@
 
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
-| `src/lib.rs` | ~35 | ACP 子系统 re-export 与 `now_timestamp` |
+| `src/lib.rs` | ~30 | ACP 子系统 re-export |
 | `src/host.rs` | ~2200 | `AcpHost` + `AcpActor`：单 actor 循环独占全部状态（occupancy / run_sessions / pending prompts / permissions / outbox / held_events）；普通信箱 + 紧急信箱；`OutboxItem`（Frame / FlushBarrier）；attach / reattach / disconnect 的 ownership 校验 |
 | `src/adapter.rs` | ~660 | `AcpClientAdapter`（`ClientAdapter` 实现，纯翻译无状态）与 `AcpClientAdapterFactory`（能力协商：白名单外显式降级）；`CwdResolver` / `SessionResolver` port；registry `acp` 列准入门 `admit_acp_command` |
 | `src/command_host.rs` | ~25 | `AcpCommandHost` trait（dispatch / query / subscribe）与 `AcpHostError`——ACP 触达 Core 的唯一执行面 |
@@ -38,7 +38,7 @@
 
 ## 6. 红线与不变量
 
-ACP `PROTOCOL_VERSION = 1`；v2、未知方法和除 `_meta` 外未知参数明确拒绝。命令只经 protocol registry 的 ACP 准入列进入 Core。Resume 必须由权威 SessionRegistry 校验所有权；取消不能被 prompt 阻塞；审批默认 fail-closed。迁包保留全部 JSON golden 字节，不增加新 wire。
+ACP `PROTOCOL_VERSION = 1`；v2、未知方法和除 `_meta` 外未知参数明确拒绝。命令只经 protocol registry 的 ACP 准入列进入 Core。Resume 必须由权威 SessionRegistry 校验所有权；取消不能被 prompt 阻塞；审批默认 fail-closed。持久 `connection_id` 为 `acp-connection-{pid}-{nanos:x}-{seq}`（序号进程级），避免 pid 复用后与旧 registry 记录相撞。JSON-RPC 请求 id 仍沿用客户端 `acp-<request_id>`，不在此改写。迁包保留全部 JSON golden 字节，不增加新 wire。
 
 ## 7. 测试与 golden 资产
 

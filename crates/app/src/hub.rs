@@ -12,8 +12,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
-use pawork_domain::{DegradeEvent, DegradeKind, DegradeSeverity, EventId};
-use pawork_engine::now_timestamp;
+use pawork_domain::{DegradeEvent, DegradeKind, DegradeSeverity, EventId, Timestamp};
 use pawork_protocol::{
     AppEvent, AppEventEnvelope, EventSource, EventStream, GlobalSequence, API_VERSION,
 };
@@ -132,7 +131,7 @@ impl EventHub {
             global_sequence: GlobalSequence(0),
             stream: EventStream::Global,
             stream_sequence: 0,
-            timestamp: now_timestamp(),
+            timestamp: Timestamp::now(),
             source: EventSource::Core,
             payload: AppEvent::from(&degrade),
         };

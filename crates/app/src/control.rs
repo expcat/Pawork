@@ -18,7 +18,7 @@ use pawork_control_plane::{
 };
 use pawork_control_plane::{InMemoryTenantPolicyEngine, TenantPolicyEngine};
 use pawork_domain::{
-    AgentId, EventId, ModelId, ProviderId, RequestId, RunId, SessionId, TokenUsage,
+    AgentId, EventId, ModelId, ProviderId, RequestId, RunId, SessionId, Timestamp, TokenUsage,
 };
 use serde::Serialize;
 
@@ -151,7 +151,7 @@ pub fn usage_record(
         cache_write_tokens: usage.cache_write_tokens,
         cost_micros,
         currency: priced_currency(currency),
-        occurred_at_ms: pawork_engine::now_timestamp().as_unix_millis(),
+        occurred_at_ms: Timestamp::now().as_unix_millis(),
         request_id: Some(request_id.clone()),
         event_id: None,
         upstream_attempt: Some(1),
@@ -312,7 +312,7 @@ pub fn append_audit(
 ) {
     let event = AuditEventV1::new(
         EventId::from(crate::ids::process_unique("aud")),
-        pawork_engine::now_timestamp(),
+        Timestamp::now(),
         default_tenant(),
         default_principal(),
         action,

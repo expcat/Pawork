@@ -1,7 +1,7 @@
 //! Usage 领域服务：usage 对账（overview / session / last run）与费用估算。
 
 use pawork_domain::{
-    AgentEvent, Cost, ModelId, ProviderId, RequestId, RunId, SessionId, TokenUsage,
+    AgentEvent, Cost, ModelId, ProviderId, RequestId, RunId, SessionId, Timestamp, TokenUsage,
 };
 
 use crate::control::{self, ControlPlaneRuntime, UsageOverview};
@@ -52,7 +52,7 @@ impl UsageService {
             &core.provider_id,
             &core.model,
             usage,
-            pawork_engine::now_timestamp().as_unix_millis(),
+            Timestamp::now().as_unix_millis(),
         )
         .await
     }
@@ -347,7 +347,7 @@ mod tests {
     use pawork_domain::{
         AgentEvent, CancellationToken, CanonicalModelRequest, MessageId, ModelDefinition, ModelId,
         ModelProvider, ModelResponseSummary, ProviderError, ProviderId, ProviderStreamEvent,
-        RequestId, ResolvedCredential, RunId, SessionId, StopReason, TokenUsage,
+        RequestId, ResolvedCredential, RunId, SessionId, StopReason, Timestamp, TokenUsage,
     };
     use pawork_models::ModelRegistry;
 
@@ -427,7 +427,7 @@ mod tests {
                 .await
                 .expect("store");
             store
-                .create_session(&session, "reconcile", pawork_engine::now_timestamp())
+                .create_session(&session, "reconcile", Timestamp::now())
                 .await
                 .expect("session");
             let payloads = [

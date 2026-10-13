@@ -141,6 +141,9 @@ pub struct PaworkClient {
     handle: Arc<Mutex<Option<ApiHandle>>>,
     granted: Arc<Mutex<Vec<SdkCapability>>>,
     next_id: AtomicU64,
+    /// 本 client 实例的请求命名空间（构造时取一份）。command_ledger 以
+    /// (tenant, automation, command_id) 持久幂等；裸 `cmd-1` 会跨进程重放。
+    request_namespace: String,
     closed: Arc<AtomicBool>,
 }
 
@@ -167,6 +170,7 @@ impl PaworkClient {
             handle: Arc::new(Mutex::new(None)),
             granted: Arc::new(Mutex::new(Vec::new())),
             next_id: AtomicU64::new(1),
+            request_namespace: crate::new_request_namespace(),
             closed: closed.clone(),
         };
         let reader = tokio::spawn(reader_loop(transport.clone(), router, closed.clone()));
@@ -342,7 +346,7 @@ impl PaworkClient {
 
     fn next_request_id(&self, prefix: &str) -> String {
         let n = self.next_id.fetch_add(1, Ordering::SeqCst);
-        format!("{prefix}-{n}")
+        format!("{prefix}-{}-{n}", self.request_namespace)
     }
 
     // ---------- 高层 API ----------
@@ -760,11 +764,5 @@ fn parse_data<T: serde::de::DeserializeOwned>(
 
 /// Unix epoch 起的当前毫秒时间戳。
 pub fn now_timestamp() -> Timestamp {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    Timestamp::from_unix_millis(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_millis() as u64)
-            .unwrap_or(0),
-    )
+    Timestamp::now()
 }

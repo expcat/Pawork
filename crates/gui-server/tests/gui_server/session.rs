@@ -33,20 +33,13 @@ struct RecordedCommand {
     command: AppCommand,
 }
 
-#[derive(Clone)]
-struct RecordedQuery {
-    query: AppQuery,
-    source: CommandSource,
-    identity: ActorIdentity,
-}
-
 struct MockHost {
     instance_id: CoreInstanceId,
     events: broadcast::Sender<AppEventEnvelope>,
     ring: Mutex<VecDeque<AppEventEnvelope>>,
     ring_capacity: usize,
     commands: Mutex<Vec<RecordedCommand>>,
-    queries: Mutex<Vec<RecordedQuery>>,
+    query_count: AtomicU64,
     timelines: Mutex<Vec<(SessionId, Option<u64>, Option<u32>)>>,
     snapshot_seq: AtomicU64,
     hold_upstream: AtomicBool,
@@ -71,7 +64,7 @@ impl MockHost {
             ring: Mutex::new(VecDeque::new()),
             ring_capacity: ring_capacity.max(1),
             commands: Mutex::new(Vec::new()),
-            queries: Mutex::new(Vec::new()),
+            query_count: AtomicU64::new(0),
             timelines: Mutex::new(Vec::new()),
             snapshot_seq: AtomicU64::new(1),
             hold_upstream: AtomicBool::new(false),
@@ -103,8 +96,8 @@ impl MockHost {
         self.timelines.lock().expect("timelines").clone()
     }
 
-    fn recorded_queries(&self) -> Vec<RecordedQuery> {
-        self.queries.lock().expect("queries").clone()
+    fn recorded_query_count(&self) -> u64 {
+        self.query_count.load(Ordering::SeqCst)
     }
 }
 
@@ -192,11 +185,7 @@ impl GuiHost for MockHost {
             self.upstream_started.notify_one();
             self.upstream_release.notified().await;
         }
-        self.queries.lock().expect("queries").push(RecordedQuery {
-            query: envelope.query.clone(),
-            source: envelope.source.clone(),
-            identity: envelope.identity.clone(),
-        });
+        self.query_count.fetch_add(1, Ordering::SeqCst);
         // 镜像真实 GuiHost::query：SessionGet 带分页参数时由 query 内部执行
         // timeline 分页（R3 波 C 移除了 server 层丢弃结果的预调用）。
         match &envelope.query {
@@ -1193,7 +1182,7 @@ mod unix_tests {
 
         // 授权门在进入 host 之前生效：命令与查询均零记录。
         assert!(harness.host.recorded_commands().is_empty());
-        assert!(harness.host.recorded_queries().is_empty());
+        assert_eq!(harness.host.recorded_query_count(), 0);
     }
 
     #[tokio::test]

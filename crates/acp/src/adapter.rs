@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use pawork_domain::{CommandId, QueryId, WorkspaceId};
+use pawork_domain::{CommandId, QueryId, Timestamp, WorkspaceId};
 use pawork_protocol::adapter::{
     AdapterError, AdapterWireFrame, CanonicalClientRequest, CanonicalCoreFrame, CapabilitySnapshot,
     ClientAdapter, ClientAdapterFactory, ClientCapability, ClientProtocol, ClientSessionId,
@@ -26,7 +26,6 @@ use pawork_protocol::{
 use serde_json::Value;
 
 use crate::map;
-use crate::now_timestamp;
 use crate::wire::{
     Implementation, ParamsExt, SessionCancelParams, SessionCloseParams, SessionNewParams,
     SessionPromptParams, SessionResumeParams, SessionUpdateParams,
@@ -298,7 +297,7 @@ impl AcpClientAdapter {
             },
             expected_revision: None,
             idempotency_key: None,
-            issued_at: now_timestamp(),
+            issued_at: Timestamp::now(),
             command,
         }
     }
@@ -312,7 +311,7 @@ impl AcpClientAdapter {
             identity: ActorIdentity::Automation {
                 name: format!("acp:{}", self.client_info.name),
             },
-            issued_at: now_timestamp(),
+            issued_at: Timestamp::now(),
             query,
         }
     }
@@ -392,7 +391,7 @@ impl AcpClientAdapter {
             revision: record.revision,
             connection_id: record.connection_id.clone(),
             state: ClientSessionState::Subscribed,
-            updated_at: now_timestamp(),
+            updated_at: Timestamp::now(),
         })
     }
 
@@ -410,7 +409,7 @@ impl AcpClientAdapter {
             client_session_id: record.client_session_id.clone(),
             ownership_epoch: record.ownership_epoch,
             revision: record.revision,
-            updated_at: now_timestamp(),
+            updated_at: Timestamp::now(),
         })
     }
 
@@ -601,7 +600,7 @@ mod tests {
             },
             expected_revision: None,
             idempotency_key: None,
-            issued_at: now_timestamp(),
+            issued_at: Timestamp::now(),
             command,
         }
     }

@@ -10,8 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use futures::future::BoxFuture;
-use pawork_domain::{CommandId, QueryId, SessionId, TenantId, WorkspaceId};
-use pawork_engine::now_timestamp;
+use pawork_domain::{CommandId, QueryId, SessionId, TenantId, Timestamp, WorkspaceId};
 use pawork_exec::PtyService;
 use pawork_gui_server::{GuiHost, GuiHostError};
 use pawork_protocol::{
@@ -132,7 +131,7 @@ impl GuiHostAdapter {
         core: Arc<tokio::sync::RwLock<AppCore>>,
         approvals: Arc<GuiApprovalHost>,
     ) -> Self {
-        let stamp = now_timestamp().as_unix_millis();
+        let stamp = Timestamp::now().as_unix_millis();
         let instance =
             pawork_domain::CoreInstanceId::from(format!("pawork-{stamp}-{}", std::process::id()));
         let bus = Arc::new(GuiEventBus::new(DEFAULT_HUB_CAPACITY));
@@ -484,7 +483,7 @@ impl GuiHost for GuiHostAdapter {
         Ok(Snapshot {
             instance_id: self.instance.clone(),
             snapshot_sequence: GlobalSequence(self.bus.current_sequence()),
-            generated_at: now_timestamp(),
+            generated_at: Timestamp::now(),
             sections,
         })
     }
@@ -647,7 +646,7 @@ impl GuiHost for GuiHostAdapter {
         let cached = AppResponseEnvelope {
             api_version: envelope.api_version,
             request_id: QueryId::from(envelope.command_id.as_str()),
-            responded_at: now_timestamp(),
+            responded_at: Timestamp::now(),
             response: response.clone(),
         };
         self.persist_command_response(

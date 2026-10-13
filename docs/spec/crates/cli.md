@@ -1,6 +1,6 @@
 # pawork-cli
 
-> `pawork` 二进制的子命令层与三条程序化通道（`--json` / headless JSONL / ACP stdio）。位于宿主装配链中层：被 [apps/pawork](pawork.md) 独家消费，向下依赖 app / client / domain / engine / protocol / storage(session) / transport（依赖方向见 [../../architecture.md](../../architecture.md)）。
+> `pawork` 二进制的子命令层与三条程序化通道（`--json` / headless JSONL / ACP stdio）。位于宿主装配链中层：被 [apps/pawork](pawork.md) 独家消费，向下依赖 acp / gui-server / gateway / app / protocol / client / storage / transport / domain / engine / models（内部 11 包，依赖方向见 [../../architecture.md](../../architecture.md)）。
 
 ## 1. 职责与边界
 
@@ -14,7 +14,8 @@
 | 路径 | 行数量级 | 承载内容 |
 | --- | --- | --- |
 | `src/lib.rs` | ~1300 | `Cli`（全局参数）与 `Command` 及全部子命令 enum（`SessionsCommand` / `AuthCommand` / `GuiCommand` / `AcpCommand` / `ServiceCommand` / `McpCommand` / `TasksCommand` / `PlanCommand` / `AgentsCommand` / `GatewayCommand`）；`run()` / `run_inner()` 分发（GUI / Tasks / Gateway 分支把同一次 data-dir 解析同时注入 Core 与对应宿主）；`run_models`（ADR-064 起 `--purpose <PURPOSE>` 可重复按 canonical 用途交集过滤，未知值 Usage 错误；用途无匹配时明确提示筛选结果为空；`--json` 条目增五布尔 `capabilities`）；`approval_host` 选择；`CliError`；clap 解析单元测试 |
-| `src/chat.rs` | ~1700 | `run_chat`（REPL + 单次）、`run_once`、`run_json`（`--json` 驱动）；REPL 斜杠命令处理；`drive_turn` Ctrl-C 取消；轮末 usage 行；`map_turn_error`；`--image` / `--video-url` 附件装配（合计上限 4、本地图片 base64 编码）；`run_on_gui_host` 的认证连接、RunStart、终态观测与恢复 |
+| `src/chat.rs` | ~810 | `run_chat`（REPL + 单次）、`run_once`、`run_json`（`--json` 驱动）；REPL 斜杠命令处理；`drive_turn` Ctrl-C 取消；轮末 usage 行；`map_turn_error`；`--image` / `--video-url` 附件装配（合计上限 4；本地图片的拒绝、8 MiB 上限、描述符二次检查与文本说明 part 在本文件，base64 / MIME 调用 `pawork_app` 的 `base64_encode` / `image_media_type`）；`video_content_from_url`（`pub(crate)`，供 `chat_host`） |
+| `src/chat_host.rs` | ~1660 | `--gui-host` 客户端：`GuiHostConnection`、WorkspaceList 根匹配、SessionCreate/Open、RunStart、空闲心跳、断线 Timeline、REPL 拒绝 `/compact` / `/model` / `/provider` / `/plan` |
 | `src/sessions.rs` | ~700 | `sessions list/show/export/import/fork` 实现；`.jsonl` 首行签名嗅探（Codex 信封 / Claude 本地行 / Pi 默认）；`format_millis`（无时区库的 UTC 格式化） |
 | `src/auth.rs` | ~120 | `auth list/set-key/login/logout`；OAuth 登录等待 5 分钟（`LOGIN_TIMEOUT`）；只显示掩码 |
 | `src/gui.rs` | ~280 | `gui serve`：消费 `run_inner` 已解析的 Host data directory，派生单实例 socket/pid/token，向认证握手注入同一路径；单实例由实例级 `gui.lock` 独占锁保证（R-04，装配期获取，不再有探测-绑定竞态）、`TokenStore`、socket 目录 0o700、pid 文件（bind 成功后发布）、`GuiServer` accept 循环；握手能力由 `pawork_protocol::app::registry::gui_supported_capabilities()` **派生**（无手写清单）；R-11：`ConnectionSet` 登记活跃连接 + 每连接 reaper（`wait_done` 就绪即移除，探测短连接不再累积），退出按「关 listener → close 全部连接 → 逐 `wait_done` 收口 → 删除 PID → drop Host 持有者 → pty/Core shutdown → 随 Core 释放实例锁」排序，core 仍被共享时告警而不静默跳过 shutdown |
@@ -222,7 +223,7 @@ CU-10：`chat` / `run` 增加可选 `--gui-host[=<SOCKET>]`，裸标志使用当
 - `pawork-domain` / `pawork-engine`：id 与事件类型 / `AgentEventSink`、`CancelHandle`（[domain.md](domain.md)、[engine.md](engine.md)）。
 - `pawork-models`：`capabilities_support_purpose`（`models --purpose` 按 canonical 用途交集过滤，[models.md](models.md)）。
 
-**外部依赖**：clap（derive）、tokio（macros / rt-multi-thread / signal / io-std / io-util / sync / time）、serde / serde_json、async-trait、thiserror、tracing。无 crate feature。
+**外部依赖**：clap（derive）、tokio（macros / rt-multi-thread / signal / io-std / io-util / sync / time）、serde_json、async-trait、thiserror、tracing。无 crate feature。
 
 **dev 依赖**：tempfile（临时 workspace root / 会话文件）；`pawork-testkit`（外部 Provider 的受控替身）；`pawork-transport` 的 `memory` feature（共享 Host CLI 控制循环的连接层回归，不改变生产传输）。
 
@@ -237,7 +238,8 @@ CU-10：`chat` / `run` 增加可选 `--gui-host[=<SOCKET>]`，裸标志使用当
 | 资产 | 覆盖点 |
 | --- | --- |
 | `src/lib.rs` 内嵌 tests | 子命令的 clap 解析矩阵（含 `sessions import` 三组互斥断言、`--branch`、`--instance`、CU-10 `--gui-host` 裸标志 / 等号路径 / 共享模式冲突矩阵）；`--approval-mode` kebab 解析、`--trust-workspaces` 全局解析、`on-failure → NeverAsk` 兼容、未知档拒绝；default instance 的 socket / token 命名稳定性 |
-| `src/chat.rs` 内嵌 tests | 附件与共享模式参数拒绝；真实 REPL / Run 观察循环经 GuiClient → MemoryTransport → GuiServer → Core，覆盖半行跨心跳、跨空闲与断连后的两轮输入、恢复 connect 等待期间取消原 Run、持久 Cancelled 终态与零新 RunStart。只替换 stdin / 传输 / Provider 外部边界 |
+| `src/chat.rs` 内嵌 tests | 本地图片成为 base64 part（`cG5nLWJ5dGVz`）与 `image_media_type("photo.JPEG")` |
+| `src/chat_host.rs` 内嵌 tests | `--gui-host` 与本地 Core 写标志的拒绝；真实 REPL / Run 观察循环经 GuiClient → MemoryTransport → GuiServer → Core，覆盖半行跨心跳、跨空闲与断连后的两轮输入、恢复 connect 等待期间取消原 Run、持久 Cancelled 终态与零新 RunStart。只替换 stdin / 传输 / Provider 外部边界 |
 | `src/approval.rs` tests | 审批提示格式（tool / path / risk / preview；edit 与 apply_patch 的 hunk preview） |
 | `src/render.rs` tests | 工具活动行（成功字节数 / 失败原因）、`run_command` 取消提示、stderr 红色仅限彩色终端、`已截断` 检测、沙箱回退 notice（现行 / 旧版 Diagnostic 形状、空 note、message 直传与默认串） |
 | `src/sessions.rs` tests | `.jsonl` 首行签名嗅探（Codex / Claude / Pi、首行无 message、首行超 8K 不误判）、本地源白名单（拒绝 grok）、`format_millis` epoch 断言 |

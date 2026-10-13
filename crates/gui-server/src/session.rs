@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use pawork_domain::{ActorId, ConnectionId, GuiClientId};
+use pawork_domain::{ActorId, ConnectionId, GuiClientId, Timestamp};
 use pawork_protocol::app::registry::{command_entry, query_entry, RegistryEntry};
 use pawork_protocol::codec::decode_client_frame;
 use pawork_protocol::{
@@ -151,7 +151,7 @@ async fn run(
         locality,
         identity: None,
         capabilities: granted.clone(),
-        connected_at: now_timestamp(),
+        connected_at: Timestamp::now(),
     };
     let mut event_rx = match inner.connections.register(registration) {
         Ok(receiver) => receiver,
@@ -275,7 +275,7 @@ async fn run(
                 }
             }
             _ = watchdog.tick() => {
-                if inner.connections.is_timed_out(&client_id, now_timestamp()) {
+                if inner.connections.is_timed_out(&client_id, Timestamp::now()) {
                     tracing::debug!(
                         %client_id,
                         "gui connection timed out; disconnecting (runs are not cancelled)"
@@ -309,7 +309,7 @@ async fn run(
                         break;
                     }
                 };
-                if let Err(error) = inner.connections.heartbeat(&client_id, now_timestamp()) {
+                if let Err(error) = inner.connections.heartbeat(&client_id, Timestamp::now()) {
                     tracing::debug!(%client_id, %error, "gui heartbeat update failed");
                 }
                 // RV-10：慢查询（额度 / 目录探测）入并发集合。串行时一个 4s
@@ -513,7 +513,7 @@ async fn handle_frame(inner: &Inner, frame: ClientFrame, client_id: &GuiClientId
                     FrameOutcome::Reply(vec![ServerFrame::Response(AppResponseEnvelope {
                         api_version: stamped.api_version,
                         request_id: pawork_domain::QueryId::from(stamped.command_id.as_str()),
-                        responded_at: now_timestamp(),
+                        responded_at: Timestamp::now(),
                         response,
                     })])
                 }
@@ -541,7 +541,7 @@ async fn handle_frame(inner: &Inner, frame: ClientFrame, client_id: &GuiClientId
                     FrameOutcome::Reply(vec![ServerFrame::Response(AppResponseEnvelope {
                         api_version: stamped.api_version,
                         request_id: stamped.request_id.clone(),
-                        responded_at: now_timestamp(),
+                        responded_at: Timestamp::now(),
                         response,
                     })])
                 }
@@ -1031,15 +1031,6 @@ fn connection_closed(message: &str) -> TransportError {
         message: message.into(),
         retryable: false,
     }
-}
-
-fn now_timestamp() -> pawork_domain::Timestamp {
-    pawork_domain::Timestamp::from_unix_millis(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_millis() as u64)
-            .unwrap_or(0),
-    )
 }
 
 #[cfg(test)]

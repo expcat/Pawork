@@ -23,13 +23,3 @@ pub use adapter::{
 pub use command_host::{AcpCommandHost, AcpHostError};
 pub use host::{AcpHost, OutboxItem, PromptResolution};
 pub use wire::{JsonRpcError, JsonRpcId, JsonRpcMessage, PROTOCOL_VERSION};
-
-/// 生成当前 Unix 毫秒时间戳（`pawork-domain` 无 `now()` 构造器）。
-pub(crate) fn now_timestamp() -> pawork_domain::Timestamp {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0);
-    pawork_domain::Timestamp::from_unix_millis(millis)
-}

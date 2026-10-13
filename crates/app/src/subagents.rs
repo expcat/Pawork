@@ -1,4 +1,5 @@
 //! Parent-owned, persisted child runs. All tool work still goes through SessionLoopCtx.
+use pawork_domain::Timestamp;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{atomic::Ordering, Arc, Mutex};
 
@@ -356,17 +357,12 @@ impl<'a> SubagentRun<'a> {
             if ws.id.as_str() == "ws-unbound" {
                 child
                     .store()?
-                    .create_session(&child_session, &title, pawork_engine::now_timestamp())
+                    .create_session(&child_session, &title, Timestamp::now())
                     .await?;
             } else {
                 child
                     .store()?
-                    .create_session_with_workspace(
-                        &child_session,
-                        &title,
-                        pawork_engine::now_timestamp(),
-                        &ws.id,
-                    )
+                    .create_session_with_workspace(&child_session, &title, Timestamp::now(), &ws.id)
                     .await?;
                 child.bind_session_workspace(&child_session, ws.id);
             }
@@ -1084,7 +1080,7 @@ mod tests {
             let child_session = SessionId::from(id.as_str());
             core.store()
                 .unwrap()
-                .create_session(&child_session, "child", pawork_engine::now_timestamp())
+                .create_session(&child_session, "child", Timestamp::now())
                 .await
                 .unwrap();
             let info = SubagentInfo {

@@ -10,6 +10,7 @@ mod agents;
 mod approval;
 mod auth;
 mod chat;
+mod chat_host;
 mod error;
 mod gateway;
 mod gui;
@@ -484,7 +485,7 @@ async fn run_inner() -> Result<(), CliError> {
     };
     if gui_host_socket.is_some() {
         let data_dir = consume_data_dir_outcome(default_data_dir_outcome());
-        return chat::run_on_gui_host(&cli, &instance, &data_dir).await;
+        return chat_host::run_on_gui_host(&cli, &instance, &data_dir).await;
     }
 
     if let Command::Gateway { command } = &cli.command {

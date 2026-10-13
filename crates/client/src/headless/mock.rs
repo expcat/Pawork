@@ -122,9 +122,12 @@ impl Transport for MockTransport {
                     return Ok(line);
                 }
                 // 请求-响应门控：第 N 条响应须等第 N 条请求已发出。
+                // 响应里已有的 request_id 回显这条请求（command_id 或 request_id）。
                 if !state.responses.is_empty() && state.sent.len() > state.served {
+                    let sent = state.sent[state.served].clone();
                     state.served += 1;
-                    return Ok(state.responses.pop_front().expect("served < len"));
+                    let line = state.responses.pop_front().expect("served < len");
+                    return Ok(echo_request_id(&line, &sent));
                 }
             }
             self.notify.notified().await;
@@ -144,4 +147,46 @@ impl Transport for MockTransport {
     fn is_open(&self) -> bool {
         !self.state.lock().unwrap().closed
     }
+}
+
+/// 脚本响应无法预写带命名空间的请求 id。只改写响应里已经存在的 request_id，
+/// 缺字段的帧（hello_ack、无 id 的 error）保持原样。
+fn echo_request_id(response: &str, sent: &str) -> String {
+    let Ok(mut response_value) = serde_json::from_str::<serde_json::Value>(response) else {
+        return response.to_string();
+    };
+    let Ok(sent_value) = serde_json::from_str::<serde_json::Value>(sent) else {
+        return response.to_string();
+    };
+    let Some(id) = sent_request_id(&sent_value) else {
+        return response.to_string();
+    };
+    let mut changed = false;
+    if response_value.get("request_id").is_some() {
+        response_value["request_id"] = serde_json::Value::String(id.clone());
+        changed = true;
+    }
+    if let Some(envelope) = response_value.get_mut("envelope") {
+        if envelope.get("request_id").is_some() {
+            envelope["request_id"] = serde_json::Value::String(id);
+            changed = true;
+        }
+    }
+    if changed {
+        response_value.to_string()
+    } else {
+        response.to_string()
+    }
+}
+
+fn sent_request_id(sent: &serde_json::Value) -> Option<String> {
+    if let Some(id) = sent.get("request_id").and_then(serde_json::Value::as_str) {
+        return Some(id.to_string());
+    }
+    let envelope = sent.get("envelope")?;
+    envelope
+        .get("command_id")
+        .or_else(|| envelope.get("request_id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
 }

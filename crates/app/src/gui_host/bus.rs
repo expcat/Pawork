@@ -3,8 +3,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use pawork_domain::{AgentEventEnvelope, CancellationToken, EventId, RunId, SessionId};
-use pawork_engine::{now_timestamp, AgentEventSink, EngineError};
+use pawork_domain::{AgentEventEnvelope, CancellationToken, EventId, RunId, SessionId, Timestamp};
+use pawork_engine::{AgentEventSink, EngineError};
 use pawork_protocol::{
     AppEvent, AppEventEnvelope, AuthChangeState, DiagnosticLevel, EventSource, EventStream,
     GlobalSequence, RunState, API_VERSION,
@@ -205,7 +205,7 @@ impl GuiEventBus {
             global_sequence: GlobalSequence(0),
             stream: EventStream::Session(session_id.clone()),
             stream_sequence: self.next_synthetic.fetch_add(1, Ordering::Relaxed),
-            timestamp: now_timestamp(),
+            timestamp: Timestamp::now(),
             source: EventSource::Core,
             payload: event,
         };
@@ -225,7 +225,7 @@ impl GuiEventBus {
             global_sequence: GlobalSequence(0),
             stream: EventStream::Terminal(terminal_session_id.to_string()),
             stream_sequence: 0,
-            timestamp: now_timestamp(),
+            timestamp: Timestamp::now(),
             source: EventSource::Core,
             payload: event,
         };
@@ -267,7 +267,7 @@ impl GuiEventBus {
             global_sequence: GlobalSequence(0),
             stream: EventStream::Global,
             stream_sequence: 0,
-            timestamp: now_timestamp(),
+            timestamp: Timestamp::now(),
             source: EventSource::Provider {
                 provider_id: provider_id.clone(),
             },

@@ -4,6 +4,7 @@
 //! 头中短暂停留，绝不进入 tracing / 事件 / ledger。proxy URL 可能内嵌
 //! user:pass，loopback_aware_proxy 错误串含原文，禁止送进 GUI Error / tracing。
 
+use pawork_domain::Timestamp;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -147,5 +148,5 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 }
 
 fn now_millis() -> u64 {
-    pawork_engine::now_timestamp().as_unix_millis()
+    Timestamp::now().as_unix_millis()
 }

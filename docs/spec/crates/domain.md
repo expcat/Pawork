@@ -18,7 +18,7 @@
 | `src/lib.rs` | ~40 | 模块声明 + 全量 re-export；crate 级红线文档 |
 | `src/task_usage.rs` | — | task / group / subtask 关联、操作类型、可空用量 / 金额、查询 / 汇总 / 游标与本地操作报告 |
 | `src/video_generation.rs` | ~30 | `VideoGenerationModel` / `VideoGenerationTask` / `VideoTaskStatus`：异步文生视频纯数据，providers 与 gateway 共用 |
-| `src/ids.rs` | ~110 | `string_id!` 宏生成 37 个 String newtype ID（基础 27 个：`SessionId` / `RunId` / `WorkspaceId` / `EventId` / `ToolCallId` / `ProviderId` / `ProtectedBlobRef`…；Phase 16 追加 10 个：`PlanId` / `GoalId` / `BackgroundTaskId` / `AutomationId` / `MonitorId` / `MemoryId` / `ReviewSessionId` 等）；`Timestamp`（Unix epoch 毫秒，u64） |
+| `src/ids.rs` | ~140 | `string_id!` 宏生成 37 个 String newtype ID（基础 27 个：`SessionId` / `RunId` / `WorkspaceId` / `EventId` / `ToolCallId` / `ProviderId` / `ProtectedBlobRef`…；Phase 16 追加 10 个：`PlanId` / `GoalId` / `BackgroundTaskId` / `AutomationId` / `MonitorId` / `MemoryId` / `ReviewSessionId` 等）；`Timestamp`（Unix epoch 毫秒，u64；`now()` 取 `SystemTime` 毫秒，时钟回绕为 0） |
 | `src/events.rs` | ~510 | `CURRENT_SCHEMA_VERSION = 1`、`EventSequence`、`AgentEventEnvelope`（含 `validate_after` 顺序校验、`with_parent`）、`AgentEvent` 32 变体、`ApprovalDecision`、`ToolOutputStream`、`EventOrderError`、`ProviderTranscriptContinuation` |
 | `src/message.rs` | ~300 | `Message` / `MessageRole`（System/User/Assistant/Tool）/ `ContentPart` 8 变体、`ToolResultContent`、`ArtifactReference`、`MessageMetadata`、`TokenUsage`、`Cost`（微单位整数）、`StopReason` 8 变体 |
 | `src/provider_api.rs` | ~1010 | `CanonicalModelRequest` 及子结构（`ToolDefinition` / `HostedToolRequest` / `ExtensionToolRequest` / `ToolChoice` / `ThinkingConfig` / `ResponseFormat` / `PromptCachePreference` / `RequestBudget`）、`ProviderStreamEvent` 14 变体、trait `ModelProvider` / `ProviderEventSink`、`ModelResponseSummary`、`ResolvedCredential` / `CredentialKind`、`ProviderError` / `ProviderErrorKind` 15 变体、`ModelDefinition` / `ModelCapabilities`（v1 布尔 + P15-8 v2 字段）、`ModelPurpose`（ADR-064 canonical 用途词汇：text / image_input / image_output / video_input / web_search，snake_case wire 名 + `as_wire_name` / `from_wire_name` / `ALL`）、`ModelTransport`、能力协商类型（`CapabilityRequirements` / `ResolvedCapabilities` / `CapabilityFallback` / `ReasoningStateDescriptor` / `ReasoningStateCapability` / `ReasoningConfig`）、`clamp_effort_to_thinking_level`、映射错误（`ServerToolMappingError` / `ReasoningMappingError`） |
@@ -43,7 +43,7 @@
 - 基础 27 个：`ActorId` `AgentId` `ArtifactId` `AccountId` `CheckpointId` `CredentialId` `CommandId` `ConnectionId` `CoreInstanceId` `EventId` `GuiClientId` `MessageId` `ModelId` `PluginId` `PrincipalId` `ProtectedBlobRef` `ProviderId` `QueryId` `ReasoningItemId` `RequestId` `RunId` `SessionId` `TenantId` `TerminalSessionId` `ToolCallId` `ToolExecutionId` `WorkspaceId`；
 - Phase 16 追加 10 个：`PlanId` `PlanStepId` `PlanVersionId` `GoalId` `BackgroundTaskId` `AutomationId` `MonitorId` `MemoryId` `ReviewSessionId` `ReviewFindingId`。
 
-`Timestamp(pub u64)` 序列化为整数毫秒（Unix epoch），保证跨语言无损。
+`Timestamp(pub u64)` 序列化为整数毫秒（Unix epoch），保证跨语言无损。`Timestamp::now()` 取当前 `SystemTime` 毫秒；`duration_since` 失败时为 0。
 
 ### 3.2 事件（持久化契约）
 
@@ -197,6 +197,7 @@ ADR-057：`CanonicalModelRequest` 增加可选 `session_id: Option<SessionId>`�
 | `tests/events_golden.rs` | 32 变体计数守卫 + 逐条 round-trip + 与检入 jsonl 字节比对；parent envelope 字节比对；`goal_budget.json` / `video_content.json` 附加字段 round-trip；重建入口为 ignored 测试 `write_event_envelope_golden`，须 `PAWORK_WRITE_EVENT_GOLDEN=1` |
 | `tests/contract_golden.rs` | `ProviderStreamEvent` 14 变体 / `ProviderError` / `CanonicalModelRequest` / `ToolResult` 字节 golden（`GOLDEN_UPDATE=1` 重建）；行数、字节、回读三重断言 |
 | `tests/fixtures/`（8 个） | `agent_event_envelope_variants.jsonl` · `agent_event_envelope_parent.json` · `provider_stream_event_14.jsonl` · `canonical_model_request_full.json` · `provider_error_full.json` · `tool_result_pair.jsonl` · `goal_budget.json` · `video_content.json` |
+| `src/ids.rs` tests | `Timestamp::now()` 落在调用前后的系统时钟窗口内 |
 | `src/cancel.rs` tests | 取消幂等、多 waiter 唤醒、Drop 注销 |
 | `src/events.rs` tests | 信封顺序校验、legacy 行解码（缺省字段） |
 | `src/message.rs` tests | ContentPart 全变体往返、legacy `signature` 丢弃 |

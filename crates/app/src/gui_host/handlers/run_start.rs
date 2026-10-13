@@ -2,9 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use pawork_domain::{
     AgentEvent, CancellationToken, ErrorCategory, ErrorContext, Message, MessageId, MessageRole,
-    RunId, SessionId,
+    RunId, SessionId, Timestamp,
 };
-use pawork_engine::{now_timestamp, AgentEventSink};
+use pawork_engine::AgentEventSink;
 use pawork_protocol::{AppCommand, AppCommandEnvelope, AppEvent, AppResponse, RunState};
 use serde_json::json;
 
@@ -599,7 +599,7 @@ async fn start(
             session_id: session_id.clone(),
             workspace_id,
             workspace_roots,
-            started_at_ms: now_timestamp().as_unix_millis(),
+            started_at_ms: Timestamp::now().as_unix_millis(),
         },
         token.clone(),
     );

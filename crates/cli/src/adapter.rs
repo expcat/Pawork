@@ -92,7 +92,7 @@ pub fn wrap_response(request_id: &str, response: AppResponse) -> AppResponseEnve
     AppResponseEnvelope {
         api_version: API_VERSION,
         request_id: QueryId::from(request_id),
-        responded_at: now_timestamp(),
+        responded_at: Timestamp::now(),
         response,
     }
 }
@@ -107,19 +107,9 @@ pub fn command_envelope(command: AppCommand, name: &str) -> AppCommandEnvelope {
         identity: ActorIdentity::Automation { name: name.into() },
         expected_revision: None,
         idempotency_key: None,
-        issued_at: now_timestamp(),
+        issued_at: Timestamp::now(),
         command,
     }
-}
-
-pub fn now_timestamp() -> Timestamp {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    Timestamp::from_unix_millis(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_millis() as u64)
-            .unwrap_or(0),
-    )
 }
 
 pub struct CliAcpCommandHost {

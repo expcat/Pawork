@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use pawork_domain::{
-    ConnectionId, DegradeEvent, DegradeKind, DegradeSeverity, QueryId, RunId, SessionId,
+    ConnectionId, DegradeEvent, DegradeKind, DegradeSeverity, QueryId, RunId, SessionId, Timestamp,
     ToolCallId, WorkspaceId,
 };
 use pawork_protocol::adapter::{
@@ -48,7 +48,6 @@ use crate::adapter::{
 };
 use crate::command_host::{AcpCommandHost, AcpHostError};
 use crate::map;
-use crate::now_timestamp;
 use crate::wire::{
     CancelRequestParams, ClientCapabilities, Implementation, InitializeParams, InitializeResult,
     JsonRpcError, JsonRpcId, JsonRpcNotification, JsonRpcRequest, ParamsExt, SessionNewResult,
@@ -60,8 +59,9 @@ use crate::wire::{
 pub const ACP_AGENT_NAME: &str = "pawork-acp";
 pub const ACP_AGENT_VERSION: &str = "0.0.0";
 
-/// 每连接唯一后缀：同一进程内多个 AcpHost（多连接）必须拥有各自独立的
-/// `connection_id`，否则 cross-connection resume 的 claim 无法区分新旧连接。
+/// 进程级序号。`connection_id` 为 `acp-connection-{pid}-{nanos:x}-{seq}`：
+/// 序号区分同进程多个 AcpHost；纳秒覆盖进程重启后 pid 复用，避免持久
+/// registry 里新旧连接撞上同一 id。
 static ACP_CONNECTION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// cwd → workspace 解析：cwd 必须位于某个已登记 workspace root 内
@@ -86,7 +86,7 @@ impl CwdResolver for HostCwdResolver {
             identity: ActorIdentity::Automation {
                 name: self.identity_name.clone(),
             },
-            issued_at: now_timestamp(),
+            issued_at: Timestamp::now(),
             query: AppQuery::WorkspaceList,
         };
         let response = self
@@ -245,10 +245,14 @@ impl AcpHost {
             identity_name: identity_name.clone(),
             next_query: AtomicU64::new(0),
         });
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let seq = ACP_CONNECTION_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let connection_id = ConnectionId::from(format!(
-            "acp-connection-{}-{}",
-            std::process::id(),
-            ACP_CONNECTION_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+            "acp-connection-{}-{nanos:x}-{seq}",
+            std::process::id()
         ));
         let (mail_tx, mail_rx) = mpsc::unbounded_channel();
         let (urgent_tx, urgent_rx) = mpsc::unbounded_channel();
@@ -1070,7 +1074,7 @@ impl AcpActor {
             revision: 1,
             state: ClientSessionState::Subscribed,
             capabilities: adapter.capabilities().clone(),
-            updated_at: now_timestamp(),
+            updated_at: Timestamp::now(),
         };
         let attach_context = AdapterSessionContext {
             adapter: Arc::clone(&adapter) as Arc<dyn ClientAdapter>,
@@ -1965,7 +1969,7 @@ impl AcpActor {
             identity: ActorIdentity::Automation {
                 name: format!("acp:{ACP_AGENT_NAME}"),
             },
-            issued_at: now_timestamp(),
+            issued_at: Timestamp::now(),
             query: AppQuery::SessionGet {
                 session_id: session_id.clone(),
                 timeline_after_sequence: None,

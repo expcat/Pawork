@@ -13,7 +13,7 @@ use pawork_computer_use::target::Scope;
 use pawork_computer_use::{NativeControl, NativeHost};
 use pawork_domain::{
     AgentEvent, AgentEventEnvelope, ApprovalDecision, CancellationToken, Cost, Message, ModelId,
-    ProviderId, RequestId, RunId, SessionId, TokenUsage, ToolDescriptor, WorkspaceId,
+    ProviderId, RequestId, RunId, SessionId, Timestamp, TokenUsage, ToolDescriptor, WorkspaceId,
 };
 use pawork_domain::{
     CanonicalModelRequest, ModelDefinition, ModelProvider, ModelResponseSummary, ProviderError,
@@ -887,8 +887,7 @@ impl AppCore {
             workspace_name.clone(),
             [canonical.clone()],
         )?;
-        let now_ms =
-            i64::try_from(pawork_engine::now_timestamp().as_unix_millis()).unwrap_or(i64::MAX);
+        let now_ms = i64::try_from(Timestamp::now().as_unix_millis()).unwrap_or(i64::MAX);
         self.extensions.workspace_catalog.insert(
             workspace_id.clone(),
             WorkspaceRecord {
@@ -921,8 +920,7 @@ impl AppCore {
             .map(|record| record.workspace_id.clone())
             .unwrap_or_else(|| self.allocate_workspace_id());
         let name = workspace_name_for_root(&canonical);
-        let now_ms =
-            i64::try_from(pawork_engine::now_timestamp().as_unix_millis()).unwrap_or(i64::MAX);
+        let now_ms = i64::try_from(Timestamp::now().as_unix_millis()).unwrap_or(i64::MAX);
         let record = self
             .store()?
             .register_workspace(&candidate, &name, &canonical, now_ms)
@@ -979,8 +977,7 @@ impl AppCore {
                     self.allocate_workspace_id()
                 };
                 let name = workspace_name_for_root(&canonical);
-                let now_ms = i64::try_from(pawork_engine::now_timestamp().as_unix_millis())
-                    .unwrap_or(i64::MAX);
+                let now_ms = i64::try_from(Timestamp::now().as_unix_millis()).unwrap_or(i64::MAX);
                 let record = store
                     .register_workspace(&workspace_id, &name, &canonical, now_ms)
                     .await?;
@@ -2027,7 +2024,7 @@ mod tests {
                         session.clone(),
                         pawork_domain::RunId::from("run-seed"),
                         pawork_domain::EventSequence::new((index + 1) as u64),
-                        pawork_engine::now_timestamp(),
+                        Timestamp::now(),
                         AgentEvent::MessageCommitted {
                             message: pawork_domain::Message {
                                 id: pawork_domain::MessageId::from(format!("msg-seed-{index}")),
@@ -2206,7 +2203,7 @@ mod tests {
         let session = SessionId::from("ses-unassigned");
         core.store()
             .expect("store")
-            .create_session(&session, "unassigned", pawork_engine::now_timestamp())
+            .create_session(&session, "unassigned", Timestamp::now())
             .await
             .expect("create unbound session");
         let workspace = core
@@ -2223,7 +2220,7 @@ mod tests {
         let session = SessionId::from("ses-dangling");
         core.store()
             .expect("store")
-            .create_session(&session, "dangling", pawork_engine::now_timestamp())
+            .create_session(&session, "dangling", Timestamp::now())
             .await
             .expect("create session");
         core.bind_session_workspace(&session, WorkspaceId::from("ws-gone"));

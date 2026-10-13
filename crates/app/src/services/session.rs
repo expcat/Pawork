@@ -6,8 +6,8 @@ use std::sync::Mutex;
 
 use pawork_domain::{
     AgentEvent, AgentEventEnvelope, ApprovalDecision, ContentPart, ErrorCategory, ErrorContext,
-    Message, MessageId, MessageRole, RunId, SessionId, TextContent, TokenUsage, ToolResultContent,
-    WorkspaceId,
+    Message, MessageId, MessageRole, RunId, SessionId, TextContent, Timestamp, TokenUsage,
+    ToolResultContent, WorkspaceId,
 };
 use pawork_engine::EngineError;
 use pawork_storage::session::SessionRecord;
@@ -72,7 +72,7 @@ impl SessionService {
         core: &AppCore,
         title: impl Into<String>,
     ) -> Result<SessionId, AppError> {
-        let ts = pawork_engine::now_timestamp();
+        let ts = Timestamp::now();
         let id = SessionId::from(crate::ids::process_unique("ses"));
         let workspace_id = core.workspace_id().clone();
         if workspace_id.as_str() != "ws-unbound" && core.workspace_by_id(&workspace_id).is_ok() {
@@ -93,7 +93,7 @@ impl SessionService {
         title: impl Into<String>,
         workspace_id: WorkspaceId,
     ) -> Result<SessionId, AppError> {
-        let ts = pawork_engine::now_timestamp();
+        let ts = Timestamp::now();
         let id = SessionId::from(crate::ids::process_unique("ses"));
         core.store()?
             .create_session_with_workspace(&id, title, ts, &workspace_id)
@@ -109,7 +109,7 @@ impl SessionService {
         core: &AppCore,
         title: impl Into<String>,
     ) -> Result<SessionId, AppError> {
-        let ts = pawork_engine::now_timestamp();
+        let ts = Timestamp::now();
         let id = SessionId::from(crate::ids::process_unique("ses"));
         core.store()?.create_session(&id, title, ts).await?;
         Ok(id)
@@ -438,10 +438,7 @@ impl SessionService {
         );
         let n = core.next_message.fetch_add(1, Ordering::Relaxed);
         let message = Message {
-            id: MessageId::from(format!(
-                "msg-{}-{n}",
-                pawork_engine::now_timestamp().as_unix_millis()
-            )),
+            id: MessageId::from(format!("msg-{}-{n}", Timestamp::now().as_unix_millis())),
             role: MessageRole::Tool,
             content: vec![ContentPart::ToolResult(result)],
             metadata: Default::default(),
@@ -523,7 +520,7 @@ impl SessionService {
 mod tests {
     use pawork_domain::{
         AgentEvent, AgentEventEnvelope, ContentPart, EventId, EventSequence, MessageId,
-        MessageRole, RunId, SessionId, TextContent, TokenUsage, WorkspaceId,
+        MessageRole, RunId, SessionId, TextContent, Timestamp, TokenUsage, WorkspaceId,
     };
     use pawork_storage::session::DEFAULT_BRANCH_ID;
 
@@ -567,7 +564,7 @@ mod tests {
             .create_session_with_workspace(
                 &unknown_session,
                 "unknown",
-                pawork_engine::now_timestamp(),
+                Timestamp::now(),
                 &WorkspaceId::from("ws-missing"),
             )
             .await
@@ -627,7 +624,7 @@ mod tests {
             session.clone(),
             RunId::from("run-fork-resume"),
             EventSequence::new(sequence),
-            pawork_engine::now_timestamp(),
+            Timestamp::now(),
             AgentEvent::MessageCommitted {
                 message: pawork_domain::Message {
                     id: MessageId::from(id),
@@ -645,7 +642,7 @@ mod tests {
             session.clone(),
             RunId::from("run-fork-resume"),
             EventSequence::new(sequence),
-            pawork_engine::now_timestamp(),
+            Timestamp::now(),
             payload,
         )
     }
@@ -665,7 +662,7 @@ mod tests {
                     session.clone(),
                     run.clone(),
                     EventSequence::new(sequence),
-                    pawork_engine::now_timestamp(),
+                    Timestamp::now(),
                     payload,
                 ),
             )
@@ -690,7 +687,7 @@ mod tests {
                 .await
                 .expect("store");
             store
-                .create_session(&session, "sweep", pawork_engine::now_timestamp())
+                .create_session(&session, "sweep", Timestamp::now())
                 .await
                 .expect("session");
             append_sweep_event(
@@ -835,7 +832,7 @@ mod tests {
         // Host 开始一个 run（Running，无终态）。
         host.store()
             .expect("host store")
-            .create_session(&session, "ownership", pawork_engine::now_timestamp())
+            .create_session(&session, "ownership", Timestamp::now())
             .await
             .expect("session");
         append_sweep_event(
@@ -968,7 +965,7 @@ mod tests {
                 .await
                 .expect("store");
             store
-                .create_session(&session, "archived", pawork_engine::now_timestamp())
+                .create_session(&session, "archived", Timestamp::now())
                 .await
                 .expect("session");
             append_sweep_event(
@@ -1032,11 +1029,7 @@ mod tests {
                 append_sweep_event(&store, &session, &run, index as u64 + 4, payload).await;
             }
             store
-                .archive_session(
-                    &session,
-                    true,
-                    pawork_engine::now_timestamp().as_unix_millis() as i64,
-                )
+                .archive_session(&session, true, Timestamp::now().as_unix_millis() as i64)
                 .await
                 .expect("archive");
             store.shutdown().await.expect("seed shutdown");
@@ -1081,7 +1074,7 @@ mod tests {
             .await
             .expect("store");
         store
-            .create_session(&session, "waiting", pawork_engine::now_timestamp())
+            .create_session(&session, "waiting", Timestamp::now())
             .await
             .expect("session");
         append_sweep_event(
@@ -1337,7 +1330,7 @@ mod tests {
                     session.clone(),
                     RunId::from("run-fork-resume"),
                     EventSequence::new(6),
-                    pawork_engine::now_timestamp(),
+                    Timestamp::now(),
                     AgentEvent::CompactionCompleted {
                         summary_message_id: MessageId::from("m-fork"),
                         compacted_through: EventSequence::new(1),
@@ -1389,7 +1382,7 @@ mod tests {
         let session = core.create_session("orphan").await.expect("create");
         let tool_call_id = pawork_domain::ToolCallId::from("call-orphan");
         let run_id = RunId::from("run-orphan");
-        let ts = pawork_engine::now_timestamp();
+        let ts = Timestamp::now();
         core.store()
             .expect("store")
             .append_event(
@@ -1482,7 +1475,7 @@ mod tests {
         let session = core.create_session("keep").await.expect("create");
         let tool_call_id = pawork_domain::ToolCallId::from("call-keep");
         let run_id = RunId::from("run-keep");
-        let ts = pawork_engine::now_timestamp();
+        let ts = Timestamp::now();
         core.store()
             .expect("store")
             .append_event(

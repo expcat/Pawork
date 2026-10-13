@@ -7,15 +7,13 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use pawork_domain::{
-    AgentEvent, AgentEventEnvelope, EventId, EventSequence, MessageId, RunId, SessionId, ToolCallId,
-    ToolOutputStream,
+    AgentEvent, AgentEventEnvelope, EventId, EventSequence, MessageId, RunId, SessionId, Timestamp,
+    ToolCallId, ToolOutputStream,
 };
 use pawork_domain::{
     ProviderError, ProviderEventSink, ProviderStreamEvent, ToolOutputChannel, ToolStreamEvent,
 };
 use thiserror::Error;
-
-use crate::session_turn::now_timestamp;
 
 #[derive(Debug, Error)]
 pub enum EngineError {
@@ -78,7 +76,7 @@ impl<'a> EventEmitter<'a> {
             self.session_id.clone(),
             self.run_id.clone(),
             sequence,
-            now_timestamp(),
+            Timestamp::now(),
             payload,
         );
         self.sink.emit(envelope).await?;

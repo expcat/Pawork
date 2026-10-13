@@ -6,7 +6,7 @@ use pawork_domain::{
     AgentEvent, AgentEventEnvelope, CancellationToken, ContentPart, DegradeEvent, EventId,
     EventSequence, Message, MessageId, MessageRole, ModelResponseSummary, RequestId, RunId,
     SessionId, TaskUsageContext, TaskUsageCost, TaskUsageCostKind, TaskUsageOperation,
-    TaskUsageRecord, TaskUsageSource, TaskUsageStatus, TextContent, UsageTaskRef,
+    TaskUsageRecord, TaskUsageSource, TaskUsageStatus, TextContent, Timestamp, UsageTaskRef,
 };
 use pawork_engine::{
     assemble_request, assemble_request_with_tools, run_manual_compaction, run_session,
@@ -63,7 +63,7 @@ impl RunService {
             session_id.clone(),
             run_id.clone(),
             EventSequence::new(value),
-            pawork_engine::now_timestamp(),
+            Timestamp::now(),
             payload,
         );
         core.store()?
@@ -177,10 +177,7 @@ impl RunService {
             request_messages.insert(
                 0,
                 Message {
-                    id: MessageId::from(format!(
-                        "msg-git-{}",
-                        pawork_engine::now_timestamp().as_unix_millis()
-                    )),
+                    id: MessageId::from(format!("msg-git-{}", Timestamp::now().as_unix_millis())),
                     role: MessageRole::System,
                     content: vec![ContentPart::Text(TextContent { text: note })],
                     metadata: Default::default(),
@@ -404,7 +401,7 @@ impl RunService {
             operation: TaskUsageOperation::Coding,
             provider: Some(core.provider_id.as_str().into()),
             model: Some(core.model.as_str().into()),
-            started_at_ms: pawork_engine::now_timestamp().as_unix_millis(),
+            started_at_ms: Timestamp::now().as_unix_millis(),
             finished_at_ms: None,
             status: TaskUsageStatus::Running,
             tokens: None,
@@ -492,7 +489,7 @@ impl RunService {
             _ => TaskUsageStatus::Failed,
         };
         usage_log.finished_at_ms = Some(
-            pawork_engine::now_timestamp()
+            Timestamp::now()
                 .as_unix_millis()
                 .max(usage_log.started_at_ms),
         );
@@ -629,7 +626,7 @@ async fn emit_tasks_finish_degrade(
         session_id.clone(),
         run_id.clone(),
         EventSequence::new(sequence),
-        pawork_engine::now_timestamp(),
+        Timestamp::now(),
         degrade.to_agent_event(),
     );
     if let Err(error) = sink.emit(envelope).await {

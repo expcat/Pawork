@@ -16,7 +16,7 @@ use pawork_domain::{
     AgentEvent, CancellationToken, CanonicalModelRequest, ContentPart, Message, MessageId,
     MessageRole, ModelDefinition, ModelId, ModelProvider, ProviderError, ProviderErrorKind,
     ProviderEventSink, ProviderId, ProviderStreamEvent, RequestId, ResolvedCredential, RunId,
-    SessionId, TextContent,
+    SessionId, TextContent, Timestamp,
 };
 use pawork_models::{CatalogEntry, ModelRegistry};
 use pawork_providers::ReasoningProtector;
@@ -52,7 +52,7 @@ fn naming_request(
     let mut request = pawork_engine::assemble_request(
         RequestId::from(format!(
             "req-naming-{}",
-            pawork_engine::now_timestamp().as_unix_millis()
+            Timestamp::now().as_unix_millis()
         )),
         model,
         vec![
@@ -409,10 +409,7 @@ impl AppCore {
         to: (ProviderId, ModelId),
     ) -> Result<(), AppError> {
         let mut sequence = self.next_sequence(session).await?;
-        let run_id = RunId::from(format!(
-            "run-switch-{}",
-            pawork_engine::now_timestamp().as_unix_millis()
-        ));
+        let run_id = RunId::from(format!("run-switch-{}", Timestamp::now().as_unix_millis()));
         self.append_payload(
             session,
             &run_id,

@@ -3,6 +3,7 @@ use crate::provider_assembly::{assemble_provider, resolve_provider_model};
 use crate::{AdapterProtocol, AppCore, AppError};
 use async_trait::async_trait;
 use pawork_control_plane::credential::{AcquireRequest, LeaseOutcome};
+use pawork_domain::Timestamp;
 use pawork_domain::*;
 use pawork_gateway::{
     GatewayBackend, GatewayChatRequest, GatewayContent, GatewayContentPart, GatewayError,
@@ -179,7 +180,7 @@ fn gateway_record(
         operation,
         provider,
         model,
-        started_at_ms: pawork_engine::now_timestamp().as_unix_millis(),
+        started_at_ms: Timestamp::now().as_unix_millis(),
         finished_at_ms: None,
         status: TaskUsageStatus::Running,
         tokens: None,
@@ -193,11 +194,7 @@ fn gateway_record(
     }
 }
 fn complete_record<T>(record: &mut TaskUsageRecord, result: &Result<T, GatewayError>) {
-    record.finished_at_ms = Some(
-        pawork_engine::now_timestamp()
-            .as_unix_millis()
-            .max(record.started_at_ms),
-    );
+    record.finished_at_ms = Some(Timestamp::now().as_unix_millis().max(record.started_at_ms));
     record.status = match result {
         Ok(_) => TaskUsageStatus::Succeeded,
         Err(e) if e.code == "cancelled" => TaskUsageStatus::Cancelled,

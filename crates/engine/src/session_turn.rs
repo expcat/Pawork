@@ -31,17 +31,9 @@ impl SessionTurn {
             model,
             start_sequence,
             trigger_message,
-            timestamp: now_timestamp(),
+            timestamp: Timestamp::now(),
         }
     }
-}
-
-pub fn now_timestamp() -> Timestamp {
-    let millis = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0);
-    Timestamp::from_unix_millis(millis)
 }
 
 pub(crate) fn optional_usage(usage: &TokenUsage) -> Option<TokenUsage> {

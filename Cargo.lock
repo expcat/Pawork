@@ -4448,7 +4448,6 @@ dependencies = [
  "pawork-storage",
  "pawork-testkit",
  "pawork-transport",
- "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",

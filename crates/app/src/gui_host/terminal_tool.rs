@@ -12,8 +12,8 @@ use pawork_domain::{
 use pawork_exec::{
     OwnerSessionId, PtyCreateSpec, PtyService, PtySnapshot, PtyWindowSize, TerminalId,
 };
-use pawork_workspace::{WorkspacePathError, resolve_relative_path};
-use serde_json::{Value, json};
+use pawork_workspace::{resolve_relative_path, WorkspacePathError};
+use serde_json::{json, Value};
 
 use super::bus::{ActiveGuiRun, GuiEventBus, GuiRunRegistry};
 use super::handlers::terminal::{
@@ -394,8 +394,9 @@ impl TerminalTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pawork_domain::{AgentTool, ErrorCategory, RunId, SessionId, ToolCallId, ToolStreamEvent};
-    use pawork_engine::now_timestamp;
+    use pawork_domain::{
+        AgentTool, ErrorCategory, RunId, SessionId, Timestamp, ToolCallId, ToolStreamEvent,
+    };
     use pawork_policy::ApprovalMode;
     use pawork_tools::{NoopToolEventSink, ToolRegistry, ToolScheduler, ToolSchedulerConfig};
     use std::path::PathBuf;
@@ -429,7 +430,7 @@ mod tests {
                 session_id: SessionId::from(unique("session")),
                 workspace_id: workspace_id.clone(),
                 workspace_roots: vec![root],
-                started_at_ms: now_timestamp().as_unix_millis(),
+                started_at_ms: Timestamp::now().as_unix_millis(),
             },
             CancellationToken::new(),
         );

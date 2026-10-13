@@ -19,7 +19,7 @@
 | `src/tool_loop/exec.rs` | ~210 | 待执行调用解析、写快照、`execute_tools`、结果对齐与 `MessageCommitted` |
 | `src/tool_loop/compaction.rs` | ~500 | 注入层、输入估算、软限压缩 / 硬限截断、`run_manual_compaction` |
 | `src/tool_loop/tests.rs` | ~2180 | 原 `tool_loop.rs` 内联测试整文件迁入（`#[cfg(test)]`） |
-| `src/session_turn.rs` | ~70 | `SessionTurn`（会话轮次标识 + start_sequence）；`now_timestamp`；工具循环共享的 usage 归并 helper（`optional_usage` / `last_stream_usage`，`pub(crate)`） |
+| `src/session_turn.rs` | ~60 | `SessionTurn`（会话轮次标识 + start_sequence）；墙钟经 `Timestamp::now()`；工具循环共享的 usage 归并 helper（`optional_usage` / `last_stream_usage`，`pub(crate)`） |
 | `src/appender.rs` | ~330 | `AssembledTurn`：把 `ProviderStreamEvent` 流折叠成一条助手 `Message`（text / thinking / reasoning / tool_calls / summary）；`PendingToolCall`；`ToolCallResult`；`tool_results_message` |
 | `src/cancel.rs` | ~120 | `CancelHandle`（原子幂等 cancel：只取消根 token）；`CancelReason` / `CancelReceipt`（`already_cancelled`） |
 | `src/event.rs` | ~245 | `EngineError`；`AgentEventSink` trait；`EventEmitter`（pub(crate)，sequence 分配 + 信封封装）；`LoopEventEmitter`（工具流事件入口）；`LoopSink`（pub(crate)，Provider 事件双写：映射转发 + 缓冲）；`map_provider_event` |
@@ -59,7 +59,7 @@
 ### 3.4 手动压缩
 
 - `run_manual_compaction(provider, request, turn, events, cancel, loop_ctx, context) -> Result<Vec<Message>, EngineError>`：REPL `/compact` 等入口。不是 run：不发 `RunStarted` / `RunCancelled`，事件序直接 `CompactionStarted → MessageCommitted(summary) → CompactionCompleted`（复用自动链同一内部函数，reason 为 `AutoCompactionReason::Manual`）。`messages.len() <= retained_messages` 时返回 `Err`（nothing to compact）。返回重建后的消息列表（summary + retained tail）。**取消语义（R-18）**：摘要请求的 `Cancelled` 不再降级为结构摘要——直接上抛；摘要返回时令牌已取消同样按取消处理；持久提交（`compact_history`）前再查一次取消。取消路径不产生任何压缩事件，手动入口返回 `EngineError::Provider(Cancelled)`（`is_cancelled()` 为真）。
-- `SessionTurn { session_id, run_id, provider_id, model, start_sequence, trigger_message, timestamp }`；`SessionTurn::new` 以 `now_timestamp()` 取当前时间。ADR-057：`run_session` 与手动压缩以该 turn 的真实 session_id 覆盖请求值；工具续轮与自动/手动摘要请求保留此身份，不按 Provider 名称分支。
+- `SessionTurn { session_id, run_id, provider_id, model, start_sequence, trigger_message, timestamp }`；`SessionTurn::new` 以 `Timestamp::now()` 取当前时间。ADR-057：`run_session` 与手动压缩以该 turn 的真实 session_id 覆盖请求值；工具续轮与自动/手动摘要请求保留此身份，不按 Provider 名称分支。
 
 ### 3.5 事件与错误
 

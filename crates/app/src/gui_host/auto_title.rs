@@ -7,13 +7,12 @@
 
 use std::sync::Arc;
 
-use pawork_domain::{MessageRole, SessionId};
-use pawork_engine::now_timestamp;
+use pawork_domain::{MessageRole, SessionId, Timestamp};
 use pawork_protocol::AppEvent;
 
 use super::bus::GuiEventBus;
-use crate::AppCore;
 use crate::app_core::PLACEHOLDER_SESSION_TITLE;
+use crate::AppCore;
 
 pub(crate) async fn auto_title_after_successful_run(
     core: Arc<tokio::sync::RwLock<AppCore>>,
@@ -87,7 +86,7 @@ pub(crate) async fn auto_title_after_successful_run(
             &session_id,
             PLACEHOLDER_SESSION_TITLE,
             &title,
-            now_timestamp().as_unix_millis() as i64,
+            Timestamp::now().as_unix_millis() as i64,
         )
         .await
     {

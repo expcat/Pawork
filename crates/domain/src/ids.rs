@@ -109,4 +109,32 @@ impl Timestamp {
     pub const fn as_unix_millis(self) -> u64 {
         self.0
     }
+
+    pub fn now() -> Self {
+        let millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or(0);
+        Self::from_unix_millis(millis)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Timestamp;
+
+    #[test]
+    fn now_is_near_system_clock() {
+        let before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or(0);
+        let stamp = Timestamp::now().as_unix_millis();
+        let after = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or(0);
+        assert!(stamp + 1_000 >= before, "{stamp} before {before}");
+        assert!(stamp <= after + 1_000, "{stamp} after {after}");
+    }
 }

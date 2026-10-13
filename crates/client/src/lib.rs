@@ -55,22 +55,20 @@ pub use pawork_protocol::projection;
 pub use pawork_protocol::{
     ActorIdentity, ApiVersion, AppCommand, AppCommandEnvelope, AppEvent, AppEventEnvelope,
     AppQuery, AppQueryEnvelope, AppResponse, AppResponseEnvelope, ApprovalModeWire, AuthStartData,
-    ClientAuthentication, CommandSource, ComputerActionKind, ComputerAppFamily, ComputerAppIdentity,
-    ComputerCapabilitySupport, ComputerGrantKind, ComputerTargetApproveParams,
+    ClientAuthentication, CommandSource, ComputerActionKind, ComputerAppFamily,
+    ComputerAppIdentity, ComputerCapabilitySupport, ComputerGrantKind, ComputerTargetApproveParams,
     ComputerTargetCapability, ComputerTargetIdentity, ComputerTargetListData,
     ComputerTargetRevokeParams, ComputerTargetScope, ComputerTargetState, DefaultModelPair,
-    EventStream, GeneralSettingsData, GlobalSequence, GuiCapability,
-    MAX_COMPUTER_TARGET_LIST_RESPONSE_BYTES, MAX_COMPUTER_TARGET_LIST_TARGETS,
-    MAX_OBSERVATION_LIST_LIMIT, MAX_OBSERVATION_LIST_RESPONSE_BYTES, MAX_OBSERVATION_READ_BYTES,
-    ObservationEvidenceEntry,
+    EventStream, GeneralSettingsData, GlobalSequence, GuiCapability, ObservationEvidenceEntry,
     ObservationEvidenceStatus, ObservationImageData, ObservationListData, PermissionsSettingsData,
-    ProtocolErrorCode,
-    ProviderAccountSelectionMode, ProviderAuthState, ProviderAuthStatusData,
+    ProtocolErrorCode, ProviderAccountSelectionMode, ProviderAuthState, ProviderAuthStatusData,
     ProviderAuthStatusEntry, ProviderCatalogState, ProviderCredentialStatus, ProviderUseProxyData,
     QuotaMeasure, QuotaOverviewQuery, QuotaOverviewView, QuotaReset, QuotaUnit, QuotaWindow,
     RoleDefaultsData, RunState, Snapshot, SubagentInfo, SubagentListData, SubagentModelRule,
     SubagentSettingsData, TerminalExitReason, TerminalSettingsData, TimelineItem, TimelineItemKind,
-    TimelinePage, WindowReadView,
+    TimelinePage, WindowReadView, MAX_COMPUTER_TARGET_LIST_RESPONSE_BYTES,
+    MAX_COMPUTER_TARGET_LIST_TARGETS, MAX_OBSERVATION_LIST_LIMIT,
+    MAX_OBSERVATION_LIST_RESPONSE_BYTES, MAX_OBSERVATION_READ_BYTES,
 };
 pub use pawork_transport::{ConnectOptions, GuiTransportClient, LocalTransport, TransportEndpoint};
 
@@ -517,7 +515,7 @@ impl GuiClient {
             identity,
             expected_revision: None,
             idempotency_key: None,
-            issued_at: now_timestamp(),
+            issued_at: Timestamp::now(),
             command,
         })
         .await
@@ -557,7 +555,7 @@ impl GuiClient {
             )),
             source,
             identity,
-            issued_at: now_timestamp(),
+            issued_at: Timestamp::now(),
             query,
         })
         .await
@@ -1106,18 +1104,9 @@ fn frame_label(frame: &ServerFrame) -> &'static str {
     }
 }
 
-fn now_timestamp() -> Timestamp {
-    Timestamp::from_unix_millis(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_millis() as u64)
-            .unwrap_or(0),
-    )
-}
-
 static NEXT_REQUEST_NAMESPACE: AtomicU64 = AtomicU64::new(0);
 
-fn new_request_namespace() -> String {
+pub(crate) fn new_request_namespace() -> String {
     let sequence = NEXT_REQUEST_NAMESPACE.fetch_add(1, Ordering::Relaxed);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1788,7 +1777,7 @@ mod tests {
             },
             expected_revision: None,
             idempotency_key: None,
-            issued_at: now_timestamp(),
+            issued_at: Timestamp::now(),
             command: AppCommand::BrowserRespond {
                 request_id: "browser-1".into(),
                 result: serde_json::json!({"ok": true, "data": {}}),
@@ -1807,7 +1796,7 @@ mod tests {
                 actor_id: pawork_domain::ActorId::from("actor-1"),
                 display_name: None,
             },
-            issued_at: now_timestamp(),
+            issued_at: Timestamp::now(),
             query: AppQuery::BrowserNext {
                 session_id: pawork_domain::SessionId::from("session-1"),
                 run_id: pawork_domain::RunId::from("run-1"),

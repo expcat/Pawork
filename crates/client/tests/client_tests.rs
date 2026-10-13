@@ -555,7 +555,13 @@ async fn raw_query_envelope_returns_app_response() {
     let client = connect(&mock).await;
     let envelope = client.query(AppQuery::WorkspaceList).await.expect("query");
     assert!(matches!(envelope.response, AppResponse::Data(_)));
-    assert_eq!(envelope.request_id, QueryId::from("qry-1"));
+    let sent: Value = serde_json::from_str(&mock.sent_lines()[1]).expect("query frame");
+    let sent_id = sent["envelope"]["request_id"]
+        .as_str()
+        .expect("sent request_id");
+    assert_eq!(envelope.request_id, QueryId::from(sent_id));
+    assert!(sent_id.starts_with("qry-"), "{sent_id}");
+    assert_ne!(sent_id, "qry-1", "{sent_id}");
 }
 
 #[tokio::test]
@@ -577,6 +583,47 @@ async fn sdk_error_kind_is_stable_label() {
     );
     assert!(SdkErrorKind::Io.is_retryable());
     assert!(!SdkErrorKind::RequestFailed.is_retryable());
+}
+
+#[tokio::test]
+async fn two_clients_first_command_ids_differ_and_include_namespace() {
+    async fn first_command_id() -> String {
+        let mock = hello_ack().push_response(fixture_text("session_response.json"));
+        let client = connect(&mock).await;
+        client
+            .create_session(WorkspaceId::from("ws-1"), None)
+            .await
+            .expect("create session");
+        let sent: Value = serde_json::from_str(&mock.sent_lines()[1]).expect("command frame");
+        sent["envelope"]["command_id"]
+            .as_str()
+            .expect("command_id")
+            .to_string()
+    }
+
+    let first = first_command_id().await;
+    let second = first_command_id().await;
+    assert_ne!(
+        first, second,
+        "two PaworkClient instances must not share the first command id"
+    );
+    for id in [&first, &second] {
+        let rest = id
+            .strip_prefix("cmd-")
+            .unwrap_or_else(|| panic!("missing cmd prefix: {id}"));
+        let (namespace, n) = rest
+            .rsplit_once('-')
+            .unwrap_or_else(|| panic!("missing counter: {id}"));
+        assert_eq!(n, "1", "{id}");
+        let segments: Vec<&str> = namespace.split('-').collect();
+        assert_eq!(segments.len(), 3, "{id}");
+        for segment in segments {
+            assert!(
+                !segment.is_empty() && segment.chars().all(|ch| ch.is_ascii_hexdigit()),
+                "{id}"
+            );
+        }
+    }
 }
 
 /// 轮询直到条件成立（读者任务异步路由事件，避免时序断言）。

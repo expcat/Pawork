@@ -1,8 +1,7 @@
 use std::sync::atomic::Ordering;
 
 use crate::app_core::PLACEHOLDER_SESSION_TITLE;
-use pawork_domain::{SessionId, WorkspaceId};
-use pawork_engine::now_timestamp;
+use pawork_domain::{SessionId, Timestamp, WorkspaceId};
 use pawork_gui_server::GuiHostError;
 use pawork_protocol::{AppCommand, AppCommandEnvelope, AppEvent, AppResponse};
 use serde_json::{json, Value};
@@ -107,7 +106,7 @@ pub(crate) async fn session_rename(
         ));
     }
     let core = adapter.core.read().await;
-    core.rename_session(session_id, &title, now_timestamp().as_unix_millis() as i64)
+    core.rename_session(session_id, &title, Timestamp::now().as_unix_millis() as i64)
         .await
         .map_err(GuiHostAdapter::app_error)?;
     let record = core
@@ -142,7 +141,7 @@ pub(crate) async fn session_archive(
     core.archive_session(
         session_id,
         *archived,
-        now_timestamp().as_unix_millis() as i64,
+        Timestamp::now().as_unix_millis() as i64,
     )
     .await
     .map_err(GuiHostAdapter::app_error)?;
@@ -203,7 +202,7 @@ pub(crate) async fn session_fork(
         .map_err(GuiHostAdapter::app_error)?;
     let store = core.store().map_err(GuiHostAdapter::app_error)?;
     let n = adapter.next_fork.fetch_add(1, Ordering::Relaxed);
-    let branch_id = format!("fork-{}-{n}", now_timestamp().as_unix_millis());
+    let branch_id = format!("fork-{}-{n}", Timestamp::now().as_unix_millis());
     store
         .fork_from_event(session_id, &branch_id, parent_event_id)
         .await

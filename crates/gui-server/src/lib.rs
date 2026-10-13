@@ -126,18 +126,6 @@ impl GuiServer {
         }
     }
 
-    pub fn host(&self) -> &Arc<dyn GuiHost> {
-        &self.inner.host
-    }
-
-    pub fn handshake(&self) -> &HandshakeService {
-        &self.inner.handshake
-    }
-
-    pub fn connections(&self) -> &Arc<ConnectionManager> {
-        &self.inner.connections
-    }
-
     /// 绑定端点并返回 GUI 监听器；每次 `accept` 启动一个连接任务。
     pub async fn bind(
         &self,

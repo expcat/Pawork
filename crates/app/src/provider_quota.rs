@@ -86,7 +86,7 @@ pub(crate) async fn account_quota(
                 url.to_string()
             });
     let credential = ApiKeyCredential::from_stored(account.stored.clone())?.resolve(backend)?;
-    let fetched_at = pawork_engine::now_timestamp();
+    let fetched_at = Timestamp::now();
     let result = pawork_providers::fetch_go_usage(channel, &credential, cancel.clone()).await;
     if cancel.is_cancelled() {
         return Err(ProviderError::cancelled("account quota cancelled").into());
@@ -170,7 +170,7 @@ pub(crate) async fn account_quota(
     Ok(QuotaOverviewView {
         scope,
         windows,
-        generated_at: pawork_engine::now_timestamp(),
+        generated_at: Timestamp::now(),
         from_cache: false,
     })
 }
@@ -276,7 +276,7 @@ impl AppCore {
         else {
             return Ok(None);
         };
-        if headroom(&current, pawork_engine::now_timestamp()) != Some(0) {
+        if headroom(&current, Timestamp::now()) != Some(0) {
             return Ok(None);
         }
         let mut best: Option<(u64, &ProviderAccount, QuotaOverviewView)> = None;
@@ -297,9 +297,7 @@ impl AppCore {
             else {
                 continue;
             };
-            if let Some(score) =
-                headroom(&view, pawork_engine::now_timestamp()).filter(|score| *score > 0)
-            {
+            if let Some(score) = headroom(&view, Timestamp::now()).filter(|score| *score > 0) {
                 if best
                     .as_ref()
                     .is_none_or(|(previous, _, _)| score > *previous)
@@ -311,7 +309,7 @@ impl AppCore {
         let Some((_, account, view)) = best else {
             return Ok(None);
         };
-        let now = pawork_engine::now_timestamp();
+        let now = Timestamp::now();
         if cancel.is_cancelled()
             || headroom(&current, now) != Some(0)
             || headroom(&view, now).is_none_or(|score| score == 0)

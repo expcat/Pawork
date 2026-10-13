@@ -27,7 +27,7 @@ pub use context::{
     ToolSchema, TurnContext,
 };
 pub use event::{map_provider_event, AgentEventSink, EngineError, LoopEventEmitter};
-pub use session_turn::{now_timestamp, SessionTurn};
+pub use session_turn::SessionTurn;
 pub use tool_loop::{
     run_manual_compaction, run_session, ApprovalGate, CompactionOutcome, LoopContext,
     PendingToolInvocation, WriteCheckpoint, DEFAULT_MAX_TOOL_ROUNDS,
