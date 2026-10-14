@@ -453,20 +453,30 @@ fn target_capabilities(family: AppFamily, bundle_id: &str) -> Vec<ComputerTarget
         NativeActionKind::WindowMove,
         NativeActionKind::WindowResize,
     ];
-    let isolated_firefox = bundle_id == pawork_computer_use::guest::FIREFOX_BUNDLE_ID;
+    // Guest surfaces reuse a family but gate actions by their own proof; the
+    // rows must mirror each surface's `admit_action`, never the macOS matrix.
+    let guest_proved: Option<&[NativeActionKind]> =
+        if bundle_id == pawork_computer_use::guest::FIREFOX_BUNDLE_ID {
+            Some(&[
+                NativeActionKind::CaptureWindow,
+                NativeActionKind::AxRead,
+                NativeActionKind::AxPress,
+            ])
+        } else if bundle_id.starts_with(pawork_computer_use::guest::WAYLAND_BUNDLE_PREFIX) {
+            Some(&[
+                NativeActionKind::CaptureWindow,
+                NativeActionKind::Pointer,
+                NativeActionKind::TargetedKeys,
+            ])
+        } else {
+            None
+        };
     ACTIONS
         .into_iter()
         .map(|action| {
             let support = |minimized: bool| {
-                if isolated_firefox {
-                    let proved = !minimized
-                        && matches!(
-                            action,
-                            NativeActionKind::CaptureWindow
-                                | NativeActionKind::AxRead
-                                | NativeActionKind::AxPress
-                        );
-                    if proved {
+                if let Some(proved) = guest_proved {
+                    if !minimized && proved.contains(&action) {
                         ComputerCapabilitySupport::Supported
                     } else {
                         ComputerCapabilitySupport::Unsupported
@@ -700,4 +710,95 @@ pub(crate) async fn computer_target_revoke(
     core.revoke_target(&Scope::new(workspace_id, run_id), &native);
     let receipt = serde_json::json!({ "target": wire_target(&native) });
     Ok(AppResponse::Data(receipt))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ComputerActionKind::*;
+    use ComputerCapabilitySupport::{Supported, Unsupported, Unverified};
+
+    fn matrix(
+        family: AppFamily,
+        bundle_id: &str,
+    ) -> Vec<(
+        ComputerActionKind,
+        ComputerCapabilitySupport,
+        ComputerCapabilitySupport,
+    )> {
+        target_capabilities(family, bundle_id)
+            .into_iter()
+            .map(|row| (row.action, row.background, row.minimized))
+            .collect()
+    }
+
+    fn guest_rows(proved: &[ComputerActionKind]) -> Vec<(ComputerActionKind, bool)> {
+        [
+            CaptureWindow,
+            AxRead,
+            AxSemanticWrite,
+            AxPress,
+            TargetedKeys,
+            MenuShortcut,
+            MenubarPress,
+            Pointer,
+            WindowMove,
+            WindowResize,
+        ]
+        .into_iter()
+        .map(|action| (action, proved.contains(&action)))
+        .collect()
+    }
+
+    fn assert_guest(bundle_id: &str, proved: &[ComputerActionKind]) {
+        let rows = matrix(AppFamily::Browser, bundle_id);
+        let expected = guest_rows(proved);
+        assert_eq!(rows.len(), 10, "{bundle_id}: ten-action matrix");
+        for ((action, background, minimized), (want_action, want)) in rows.into_iter().zip(expected)
+        {
+            assert_eq!(action, want_action, "{bundle_id}: row order");
+            let want = if want { Supported } else { Unsupported };
+            assert_eq!(background, want, "{bundle_id}: {action:?} background");
+            assert_eq!(minimized, Unsupported, "{bundle_id}: {action:?} minimized");
+        }
+    }
+
+    #[test]
+    fn wayland_guest_matrix_mirrors_seat_surface_gate() {
+        for bundle_id in ["guest.wayland.foot", "guest.wayland.org.gnome.texteditor"] {
+            assert!(bundle_id.starts_with(pawork_computer_use::guest::WAYLAND_BUNDLE_PREFIX));
+            assert_guest(bundle_id, &[CaptureWindow, Pointer, TargetedKeys]);
+        }
+    }
+
+    #[test]
+    fn firefox_guest_and_browser_family_matrices_do_not_regress() {
+        assert_guest(
+            pawork_computer_use::guest::FIREFOX_BUNDLE_ID,
+            &[CaptureWindow, AxRead, AxPress],
+        );
+        // Only the exact prefix selects the seat surface.
+        for bundle_id in [
+            "org.mozilla.firefox",
+            "guest.waylandfoot",
+            "guest.browser.wayland",
+        ] {
+            assert_eq!(
+                matrix(AppFamily::Browser, bundle_id),
+                vec![
+                    (CaptureWindow, Supported, Supported),
+                    (AxRead, Supported, Supported),
+                    (AxSemanticWrite, Unverified, Unverified),
+                    (AxPress, Supported, Supported),
+                    (TargetedKeys, Unsupported, Unsupported),
+                    (MenuShortcut, Unverified, Unverified),
+                    (MenubarPress, Unverified, Unverified),
+                    (Pointer, Unsupported, Unsupported),
+                    (WindowMove, Unsupported, Unsupported),
+                    (WindowResize, Supported, Unverified),
+                ],
+                "{bundle_id}: browser family path",
+            );
+        }
+    }
 }
