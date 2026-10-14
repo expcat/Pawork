@@ -16,6 +16,7 @@ mod approval;
 mod chat_controls;
 mod computer;
 mod cu21_live;
+mod cu26_live;
 mod idempotency;
 mod run;
 mod session;

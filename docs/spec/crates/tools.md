@@ -80,7 +80,7 @@
 
 `NativeComputerTool::wayland(Arc<dyn NativePerform>)` 只在 app 显式选择 `ComputerNativeMode::Wayland` 时装配，注入的必须是 `shared_wayland_host()`，不能是 X11 隔离桌面。工具名、descriptor 属性、预算与 CU-11 门控都与 `new` 相同；说明与 schema 独立：动作只有 discover、request、bind、screenshot(window)、`observed_click(observation, x, y)`（截图图像像素，左上角原点，左键单击）和 `observed_keys(observation, text)` 或 `observed_keys(observation, key, modifiers)`（key 与 modifier 使用既有 targeted 枚举）。一张截图最多授权一次动作，文本 / 按键要求目标窗口已有 compositor 焦点，partial / unknown_effect / observation_failure 时提示模型重新截图而不是重试。
 
-解析对所有表面同一套规则，并在触达 Host 前完成：text 与 key 必须恰好一个，modifiers 只能配 key，文本先过 `TargetedInput::validate`，否则报 InvalidInput。`new` 构造的本机 / X11 隔离 descriptor 不列 `observed_*`；臆造调用由 Host 的 `admit_observed` 在派发和租约花费前拒绝（ExecutionFailed）。Wayland 实例不调用 `Computer::claim_shared`，不与 raw `computer` 的 X11 桌面互斥；同目标并发仍由 NativeHost 的占用与单次凭证约束。结果 metadata 与 native 其它动作相同（environment=`isolated_desktop`、input_dispatched、outcome、observation / observation_failure）。只有离线替身回归，见 [CU-26](../../plan/cu-26-wayland-production.md)。
+解析对所有表面同一套规则，并在触达 Host 前完成：text 与 key 必须恰好一个，modifiers 只能配 key，文本先过 `TargetedInput::validate`，否则报 InvalidInput。`new` 构造的本机 / X11 隔离 descriptor 不列 `observed_*`；臆造调用由 Host 的 `admit_observed` 在派发和租约花费前拒绝（ExecutionFailed）。Wayland 实例不调用 `Computer::claim_shared`，不与 raw `computer` 的 X11 桌面互斥；同目标并发仍由 NativeHost 的占用与单次凭证约束。结果 metadata 与 native 其它动作相同（environment=`isolated_desktop`、input_dispatched、outcome、observation / observation_failure）。本包只有离线替身回归；真实 Sway guest 上经 Scheduler、GUI 审批和持久观测的 live 证据在 app 的 `cu26_live`（脚本 Provider），见 [CU-26](../../plan/cu-26-wayland-production.md)。
 
 ### 3.3 公共层（common）
 

@@ -183,7 +183,7 @@ CU-10：`chat` / `run` 增加可选 `--gui-host[=<SOCKET>]`，裸标志使用当
 
 ## 5. 契约与不变量
 
-- **隔离表面选择（CU-21 / CU-26）**：`--computer-native` 只接受 `host` / `isolated` / `wayland`（区分大小写），其它值报 Usage 错误。选 isolated 或 wayland 都不签目标授权，也不把缺失容器或 guest 回退到本机；共享 `--gui-host` 的客户端沿用已连接 Host 的选择。wayland 只有离线回归，未经专用容器验收，见 [CU-26](../../plan/cu-26-wayland-production.md)。
+- **隔离表面选择（CU-21 / CU-26）**：`--computer-native` 只接受 `host` / `isolated` / `wayland`（区分大小写），其它值报 Usage 错误。选 isolated 或 wayland 都不签目标授权，也不把缺失容器或 guest 回退到本机；共享 `--gui-host` 的客户端沿用已连接 Host 的选择。wayland 未经专用容器验收；`gui serve` 同款装配只有 app 侧 live 测试（脚本 Provider，非本二进制进程），见 [CU-26](../../plan/cu-26-wayland-production.md)。
 
 - **显式共享 Host（CU-10）**：`--gui-host` 在 Executor Core 装配前分流，通过既有 `GuiClient` / GUI Connection Protocol 认证；本进程不创建第二个 Core。Host / token 缺失、认证或版本失败如实报错，不回退本地执行。cwd 必须唯一匹配 Host 已登记的 workspace root，resume 必须属于该 workspace。握手名 `pawork-cli` 只供 Host 在 RunStart 固定目标等批开关，不能签授权；目标批准仍经过 GUI 的既有命令与同一 registry。事件 ACK、Resume 和 SessionGet Timeline 用于观察原 run_id；连接全局游标与持久会话游标分别使用，分页末尾不冒充 Run 终态。REPL 等输入期间每 15 秒心跳，保持同一个未完成的读取 future，半行跨心跳不丢字节；心跳失败后下一轮输入先恢复连接。Ctrl-C 监听覆盖当轮观察、重连和 Timeline 查询，恢复后向原 Run 发送 RunCancel 并等待真实终态；协议拒绝只打印一次，传输未送达才在恢复后重试。监听结束或连接断开本身不取消 Run、不新建 Run、不重派发；每轮结束回收信号监听任务。
 
@@ -231,7 +231,7 @@ CU-10：`chat` / `run` 增加可选 `--gui-host[=<SOCKET>]`，裸标志使用当
 
 ## 7. 测试与验证资产
 
-`parses_explicit_workspace_trust_without_persisting_config` 仅验证 `--trust-workspaces` 与 `gui serve` 的解析。`computer_native_defaults_to_host_and_wayland_is_explicit`（CU-26）验证 `--computer-native` 缺省为 host、`wayland` / `isolated` 显式解析，以及 `Wayland` / `x11` / 空串报 Usage。CU-21 正式 Host 的隔离表面装配与 Firefox 集成由 app 的专用 live 测试验证；Wayland 表面的装配由 app 定向回归覆盖，没有 live 测试。
+`parses_explicit_workspace_trust_without_persisting_config` 仅验证 `--trust-workspaces` 与 `gui serve` 的解析。`computer_native_defaults_to_host_and_wayland_is_explicit`（CU-26）验证 `--computer-native` 缺省为 host、`wayland` / `isolated` 显式解析，以及 `Wayland` / `x11` / 空串报 Usage。CU-21 正式 Host 的隔离表面装配与 Firefox 集成由 app 的专用 live 测试验证；Wayland 表面的装配由 app 定向回归覆盖；`gui serve` 同款装配 + GUI 审批的 live 测试在 app（`cu26_live`），不经本 crate 的进程入口。
 
 默认验证命令：`cargo test -p pawork-cli --offline --lib --tests`
 

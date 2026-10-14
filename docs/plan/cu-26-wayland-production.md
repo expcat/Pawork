@@ -1,6 +1,6 @@
 # CU-26 · Wayland 隔离后台生产后端
 
-> 状态：进行中。切片 1（guest 侧专用 seat 客户端与 compositor 权威身份）已落地：有离线定向回归，并在本机 headless Sway 1.10.1 做了真实 smoke。切片 2 的代码已实现、离线替身回归已通过：guest 帧协议加了 capture / input，`computer_guest --wayland` 提供服务，Host 侧新增 `WaylandSurface` 与按截图租约派发的点击 / 按键。切片 3 已接线、离线回归已通过：`computer_native` 工具暴露 `observed_click` / `observed_keys`，App 新增 `ComputerNativeMode::Wayland` 并选用 `NativeHost::wayland()`，CLI 接受 `--computer-native wayland`；默认入口未改，仍是 `host`。本机经 Host 链路的 smoke 已在独立 user + network namespace 内通过（`wayland_host_probe` → `NativeHost::wayland()` → 5907 → `computer_guest --wayland` → headless Sway，见下文「本机 Host 链路 smoke 复试」）；它不是专用容器，探针 grant 代替 GUI 审批，也没有经过正式 `pawork --computer-native wayland` 进程，完成条件仍未满足。专用容器无法建立。更新：2026-10-13。
+> 状态：进行中。切片 1（guest 侧专用 seat 客户端与 compositor 权威身份）已落地：有离线定向回归，并在本机 headless Sway 1.10.1 做了真实 smoke。切片 2 的代码已实现、离线替身回归已通过：guest 帧协议加了 capture / input，`computer_guest --wayland` 提供服务，Host 侧新增 `WaylandSurface` 与按截图租约派发的点击 / 按键。切片 3 已接线、离线回归已通过：`computer_native` 工具暴露 `observed_click` / `observed_keys`，App 新增 `ComputerNativeMode::Wayland` 并选用 `NativeHost::wayland()`，CLI 接受 `--computer-native wayland`；默认入口未改，仍是 `host`。本机经 Host 链路的 smoke 已在独立 user + network namespace 内通过（`wayland_host_probe` → `NativeHost::wayland()` → 5907 → `computer_guest --wayland` → headless Sway，见下文「本机 Host 链路 smoke 复试」）。同日又在同类 netns 内跑通了 `pawork gui serve` 同款装配：`ComputerNativeMode::Wayland` + `GuiApprovalHost` + token 认证的本地 socket；`computer_native` 的每次调用和目标批准都经 GUI Connection Protocol 完成，持久 ObservationList / ObservationImageRead 可读（见下文「GUI Host 装配链路验收」）。这一轮的 Provider 是脚本替身，没有起 `pawork` 二进制进程，也没有 GPUI 真窗口；真实 Provider 因凭据不可用被阻塞。专用容器无法建立，完成条件仍未满足。更新：2026-10-13。
 
 [返回 ROADMAP](../ROADMAP.md#未完成任务)
 
@@ -118,14 +118,66 @@
 
 这些回归只替代 guest 与 seat 边界，不证明真实 Sway、专用容器、真实 Provider、GUI 真窗口审批或持久观测。
 
+## GUI Host 装配链路验收（2026-10-13，脚本 Provider 下通过；真实 Provider 阻塞）
+
+新增 live 测试 `crates/app/src/gui_host/tests/cu26_live.rs::cu26_wayland_gui_serve_assembly`。它默认 ignored；缺少 `PAWORK_CU26_WAYLAND=1`、`PAWORK_CU26_EVIDENCE`（证据目录）或 `PAWORK_ISOLATED_GUEST_TOKEN` 时直接失败。测试按 `crates/cli/src/gui.rs::run_gui` 的顺序装配 Host：`AppLoadOptions { instance_role: GuiHost, computer_native: Wayland, approval_mode: AskForWrites, trust_workspaces: true }` → `load_for_catalog` → `set_approval_host(GuiApprovalHost)` → `GuiHostAdapter::from_locked(..).with_connections(..)` → `TokenStore` 生成 `gui.token` → `HandshakeService(gui_supported_capabilities)` + `TokenAuthenticator` → `GuiServer` 用 `LocalTransport` 绑定 Unix socket。驱动方是 Desktop 也在用的 `pawork-client::GuiClient`，经该 socket 和 token 握手；SessionCreate、RunStart、ToolApprove、ComputerTargetList、ComputerTargetApprove、ObservationList、ObservationImageRead 全部走 wire。只有 Provider 换成脚本替身（与 cu21 同一模式），并临时登记一个声明 image_input 的 `cu26-vision` 目录条目，以满足 CU-11 视觉门控。
+
+为什么不是 `pawork --computer-native wayland gui serve` 加 Desktop：
+
+- 真实 Provider 不可用（见下）。正式二进制无法注入进程内脚本 Provider；把某个首方通道的 `base_url` 改指本地假服务，等于冒充真实通道，因此不采用。
+- Desktop 的审批卡是 GPUI 窗口，需要 display。独立 netns 里没有 display，宿主的 x11vnc display（含占用 5907 的 `:7`）不能动，Desktop 也没有可自动化的无头审批入口。
+- 其它正式 CLI 入口都做不了目标批准：注册表中 `computer_target_approve` 的 `headless` 为 None，`pawork headless --json-stdio` 会回 UnsupportedCapability；`pawork run`（chat_host）只处理工具审批，不处理目标批准。
+
+因此，没有 GUI 窗口时唯一的正式审批通道就是 GUI Connection Protocol。测试用 Desktop 同一个客户端 crate 驱动它，服务端走的是与 `gui serve` 相同的 adapter handler。驱动方代替的是用户在审批卡上的点击：先用 `ToolStarted` 核对工具名为 `computer_native`，收到 `ToolApprovalRequired` 后发 `ToolApprove(ApproveOnce)`；模型在未获批准的 bind 被拒后停下等待，驱动方读 ComputerTargetList（即 Desktop 目标卡渲染的数据），确认该目标已登记、尚无 grant，再发 `ComputerTargetApprove(ForRun)`。这不是 GPUI 真窗口，也不是人工点击。
+
+环境与 cu26s3 相同：独立 `unshare -rn`，Sway 1.10.1 headless + pixman，唯一输出 HEADLESS-1 640×480，`xwayland disable`；目标为 foot，`app_id=cu26target`，目标脚本开启 X10 鼠标上报，读 12 字节点击后再读一行文本写入 `typed.txt`。测试进程设置空的 `XDG_CONFIG_HOME`，并移除 `PAWORK_API_KEY_OPENCODE_GO`，不使用任何真实凭据。命令为 `TEST_BIN=target/debug/deps/pawork_app-<hash> timeout 400 unshare -rn /tmp/cu26s4/smoke.sh`，测试耗时 2.17s，结果 1 passed。
+
+| 环节 | 结果 | 外部事实 / 持久证据 |
+| --- | --- | --- |
+| 错误 token 握手 | `AuthenticationFailed: invalid token` | — |
+| 装配 | `core.computer_native == Wayland`，`core.native` 即 `shared_wayland_host()` | — |
+| discover / request | 都成功；discover 列出 `cu26target guest.wayland.cu26target browser windows=1` | — |
+| 目标批准前 bind | 工具失败：NotAuthorized | — |
+| ComputerTargetList（批准前） | 目标已登记，scope 为本 Run，无 grant | — |
+| ComputerTargetApprove(ForRun) | 回执 `kind=for_run`，bundle 一致 | — |
+| bind → screenshot | 返回窗口句柄与截图租约，JPEG 640×455 | Sway tree 中唯一 xdg_shell con 为 `cu26target`，处于 focused |
+| `observed_click` 图像中心 (320, 227.5) | dispatched，返回新观测 | `click.bin` = `27 91 77 32 86 50 27 91 77 35 86 50`（左键按下 / 释放） |
+| 用已花费的首个租约发文本 | 工具失败：StaleHandle | `typed.txt` 中没有 `stale` |
+| `observed_keys` 文本，再按 Return | 均为 dispatched，各返回新观测 | `typed.txt` = `Pawork CU-26 formal {ok}`；最后一张持久观测显示 `GOT:Pawork CU-26 formal {ok}` |
+| GUI 工具审批 | 9 次调用各收到一次 `ToolApprovalRequired`，均经 wire 回 `ToolApprove(ApproveOnce)` | 落库 9 条 ToolApprovalRequested、9 条 ToolApprovalResponded（approved_once）、9 条 ToolExecutionCompleted、1 条 RunCompleted |
+| ObservationList / ObservationImageRead | 4 条（截图 + 3 次动作后观测），均为 `computer_native` / `image/jpeg` / historical；分块读回 4 张 640×455 JPEG | 4 张持久 JPEG 的字节长度与 Run 期间返回模型的图逐一相同（未逐字节比对） |
+| Run 终态 | Completed；ComputerTargetList 为空（scope 已收口） | `get_inputs` 动作前为空，动作后只有 `0:0:wlr_virtual_keyboard_v1` / `0:0:wlr_virtual_pointer_v1` |
+
+负向对照：同类 netns 内不启动 guest 时，`request` 报 `no installed application resolves this bundle id`，Run Failed，测试 FAILED（exit 101）；不设 `PAWORK_CU26_WAYLAND` 时测试直接 panic。宿主 netns 中 x11vnc（`:7`，pid 66283）在 5907 上的监听前后一致。
+
+证据在本机 `/tmp/cu26s4/`（`smoke.sh` / `sway.cfg` / `target.sh`、`smoke.log`、`sway.log`、`guest.log`；`out/` 下有 `test.log`、`formal.json`（装配、审批、回执、目标列表、ObservationList、落库事件计数、目标事实）、`tool-trace.json`（每轮工具参数与结果 metadata）、`observation-{51,61,81,91}.jpg`、`click.bin`、`typed.txt`、tree / inputs / outputs；`neg/` 为负向对照；`preflight/` 为 Provider 预检）。均不检入仓库。
+
+**真实 Provider：未完成（阻塞）**。`pawork auth list` 显示 `glm-coding` 与 `xai`（OAuth）都没有凭据；没有 xai 登录时目录里也没有任何 `xai/*` 模型。本机唯一可用的凭据是环境变量里的 opencode-go key：正式 CLI `pawork --provider opencode-go --model <m> run` 对 grok-4.7、glm-5.3、glm-5.3-flash、grok-4.6、kimi-k3 都返回 `Authorization (403)`；直接请求上游时，响应体为 `An active OpenCode Go subscription is required to use Go models.`。证据见 `/tmp/cu26s4/preflight/`（`run*.err`、`chat2-*.body`、`auth-list.txt`、`models-vision.txt`、`models-xai.txt`），其中不含密钥。另有一个与凭据无关的约束：目录中 `glm-5.3` / `glm-5.2` 的 `image_input=false`，CU-11 视觉门控会对它们隐藏 `computer_native`，所以即使有凭据，`glm-coding / glm-5.3` 也驱动不了本链路；授权测试模型里只有 `grok-4.7`（目录 `image_input=true`）可行，需要 xai OAuth 登录或有效的 OpenCode Go 订阅。
+
+本轮新发现：ComputerTargetList 给 `guest.wayland.*` 目标返回的能力矩阵不对。`handlers/computer.rs::target_capabilities` 只按 family 加 CU-21 Firefox 特例做静态推导，Wayland 目标沿用 `Browser` 族，于是显示 ax_read / ax_press 支持、targeted_keys / pointer 不支持；而 `WaylandSurface` 的实际能力闸恰好相反（放行截图、指针与定向按键，拒绝读树与语义动作）。派发不受影响，但 Desktop 目标卡会给用户展示错误的能力。本轮未修，归入下面的剩余项（2026-10-13 已在后续切片修复，见下文「ComputerTargetList 能力矩阵修复」）。
+
+## ComputerTargetList 能力矩阵修复
+
+`crates/app/src/gui_host/handlers/computer.rs::target_capabilities` 原先只对 `guest.browser.firefox` 有特例，现把它泛化为「guest 表面已证明动作集」：bundle_id 以 `pawork_computer_use::guest::WAYLAND_BUNDLE_PREFIX`（`guest.wayland.`）开头时，背景列只有 CaptureWindow / Pointer / TargetedKeys 为 Supported，AxRead / AxSemanticWrite / AxPress / MenuShortcut / MenubarPress / WindowMove / WindowResize 为 Unsupported，与 `WaylandSurface::admit_action` 逐项一致。minimized 列与 Firefox 特例同级，十项全部 Unsupported：表面在运行时只接受可见、无重叠的窗口，没有最小化证明。Firefox 特例与其它目标的 `background_capability` 族矩阵不变。没有新增 `AppFamily` 变体，wire、存储 schema 与 Desktop 映射都不变；派发路径本来就不读这个矩阵，行为不变。
+
+只修了 GUI 展示，没有新的真实环境证据：没有重跑 live 验收，没有用真实 Provider、专用容器或 GPUI 真窗口复核目标卡。
+
+矩阵修复 Validated: `cargo test --offline -p pawork-app --features pawork-app/ui-fixture --lib gui_host::handlers::computer::tests`（2 passed）；同二进制 `gui_host::tests::computer`（11 passed，含十动作矩阵长度断言）；`rustfmt --edition 2021 --check crates/app/src/gui_host/handlers/computer.rs` 干净。
+
+矩阵修复 Targeted regressions: `wayland_guest_matrix_mirrors_seat_surface_gate`（两个 `guest.wayland.*` id 的十动作背景 / 最小化列）；`firefox_guest_and_browser_family_matrices_do_not_regress`（Firefox 特例；`org.mozilla.firefox`、`guest.waylandfoot`、`guest.browser.wayland` 走 Browser 族通用矩阵，近似前缀不误入 Wayland 分支）。
+
 ## 阻塞与剩余（切片 3 之后）
 
 - **专用容器环境缺失**：本机没有 Docker / Podman，CU-23 规格的专用 Wayland 容器（只读 rootfs、network none、CapDrop=ALL、无宿主 bind）无法建立，也无法验证「容器只把 5907 发布到宿主 loopback」这一部署形态。network none 与「发布端口」本身互相冲突，需要在部署设计中改为仅 loopback 的端口发布（同 CU-21），或改用 Unix socket 挂载，并重新评审。完成条件里的真实环境验收全部待此项。
-- **本机 Host 链路 smoke 只到探针层**：2026-10-13 复试已在独立 user + netns 内经 `wayland_host_probe` 通过（见「本机 Host 链路 smoke 复试」）。下一步应在同样的 netns 做法下，改为经正式 `pawork --computer-native wayland` 进程与 GUI 目标审批完成，而不只是 `wayland_host_probe`。
-- **正式工具链只有离线证据**：切片 3 已把工具、App、CLI 接通，但没有 `PAWORK_CU21_ISOLATED` 那样的 Wayland live 测试，也没有真实 Provider（`glm-coding / glm-5.3` 或 `xai / grok-4.7`）驱动的 Run、持久 ObservationList / ObservationImageRead 证据或真窗口审批。探针层 smoke 已打通，这些现在只差正式进程、Provider 与 GUI 审批的组合验收。
-- **`AppFamily` 没有 Wayland 取值**：`WaylandSurface` 沿用 CU-21 guest 的 `Browser` 标签，只作身份字段，能力闸不看族；网站目标在这里因 `current_origin` 恒为 None 而 fail-closed。新增族会改 app / desktop 的穷举映射与 GUI 展示，留给后续。
+- **正式链路已到 GUI Host 装配层，缺真实 Provider、二进制进程与真窗口**：2026-10-13 的 `cu26_live` 在独立 netns 内经 `gui serve` 同款装配、token 认证本地 socket 与 GUI 审批 / 目标批准跑通，持久 ObservationList / ObservationImageRead 可读（见「GUI Host 装配链路验收」）。仍缺：真实 Provider Run（`glm-coding` / `xai` 无凭据，opencode-go 403 无订阅；`glm-5.3` 无 image_input，只有 `grok-4.7` 可行）；以 `pawork --computer-native wayland gui serve` 二进制进程为 Host；GPUI Desktop 真窗口里的人工审批。
+- ~~**ComputerTargetList 能力矩阵与 Wayland 表面不符**~~：已修（2026-10-13，见「ComputerTargetList 能力矩阵修复」）。`target_capabilities` 对 `guest.wayland.*` 改为按 bundle_id 前缀对齐 `WaylandSurface::admit_action`，未新增族，wire 与 Desktop 映射不变。
+- **`AppFamily` 没有 Wayland 取值**：`WaylandSurface` 沿用 CU-21 guest 的 `Browser` 标签，只作身份字段，Host 能力闸不看族；GUI 目标列表的能力矩阵已改为按 bundle_id 前缀识别 Wayland 目标，不再依赖族（见上一条）；网站目标在这里因 `current_origin` 恒为 None 而 fail-closed。新增族会改 app / desktop 的穷举映射与 GUI 展示，留给后续。
 - **seat 级权限的固有限制**：三条协议的权限来自 socket 可达性，guest 内任何能连上 socket 的客户端（包括目标应用本身）都能截图或注入输入。`require_dedicated` 只能在调用时发现非虚拟设备或多余输出 / seat，无法阻止同 guest 内其它客户端创建虚拟设备。因此部署必须保证 guest 内只有 Pawork guest 服务和获批目标，sway 配置不带任何按键绑定。
 - 撤销、接管、断线、取消的真实环境证据，以及 AT-SPI、其它应用、其它 compositor、共享用户 seat、portal 许可、非 ASCII 文本（当前 keymap 只覆盖可打印 ASCII）均未验证。
+
+GUI Host 装配验收 Validated: `cargo test --offline -p pawork-app --features pawork-app/ui-fixture --lib --no-run`（rustfmt 后重建，exit 0，新文件无警告）；在 `unshare -rn /tmp/cu26s4/smoke.sh` 内运行该 lib 测试二进制 `--ignored --exact gui_host::tests::cu26_live::cu26_wayland_gui_serve_assembly`：1 passed；负向对照两项均按预期失败（无 guest、无门控）；`rustfmt --edition 2021 --check` 干净。没有重跑 app 全量单测：本次只新增一个 ignored 测试文件和一行 `mod` 声明，非测试代码零改动。
+
+GUI Host 装配验收 Targeted regressions: `cu26_wayland_gui_serve_assembly`（真实 Sway / guest 的 live 测试，默认 ignored），覆盖错误 token 拒绝、目标批准前 bind 拒绝、过期租约拒绝、每次工具调用都经 GUI 审批、持久观测读回与 Run 终态 scope 收口。
 
 切片 2 Validated: `bash scripts/test.sh computer-use`（即 `cargo test --offline --tests -p pawork-computer-use`：lib 93 通过 / 1 失败，失败项仍是既有的 `guest::tests::bad_or_missing_token_is_rejected_and_the_connection_is_dropped`，脚本因此退出 101）；`cargo test --offline -p pawork-computer-use --lib --bins --no-fail-fast`（guest bin 2 通过）；`cargo build --offline -p pawork-computer-use --tests --examples --bins` 无新增警告。`cargo check --offline -p pawork-tools` 未能运行：离线 registry 缺少 `aho-corasick`，属环境限制；tools / app 里实现 `NativeSurface` 的只有测试替身，新方法都有默认实现，`NativeRequest` 在本包外没有穷举 match。
 
