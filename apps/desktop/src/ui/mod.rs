@@ -3736,8 +3736,10 @@ impl Render for AppView {
         // CU-13：Host 浏览器请求在 handle_controller_event 里即时派发，
         // render 只负责刷新创建 WebView 所需的窗口原始句柄。
         // 测试平台窗口没有真实句柄（window_handle 会 panic），与
-        // product_access 同款 cfg!(test) 守门。
-        if !cfg!(test) {
+        // product_access 同款 cfg!(test) 守门。原生 WebView 只有 macOS
+        // 实现；gpui 0.2.2 的 X11 窗口 window_handle 是 unimplemented!()，
+        // 其它平台取句柄会在首帧 panic。
+        if !cfg!(test) && cfg!(target_os = "macos") {
             self.raw_window_handle = raw_window_handle::HasWindowHandle::window_handle(window)
                 .ok()
                 .map(|handle| handle.as_raw());
