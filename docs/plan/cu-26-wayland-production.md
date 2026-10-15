@@ -1,6 +1,6 @@
 # CU-26 · Wayland 隔离后台生产后端
 
-> 状态：进行中。切片 1（guest 侧专用 seat 客户端与 compositor 权威身份）已落地：有离线定向回归，并在本机 headless Sway 1.10.1 做了真实 smoke。切片 2 的代码已实现、离线替身回归已通过：guest 帧协议加了 capture / input，`computer_guest --wayland` 提供服务，Host 侧新增 `WaylandSurface` 与按截图租约派发的点击 / 按键。切片 3 已接线、离线回归已通过：`computer_native` 工具暴露 `observed_click` / `observed_keys`，App 新增 `ComputerNativeMode::Wayland` 并选用 `NativeHost::wayland()`，CLI 接受 `--computer-native wayland`；默认入口未改，仍是 `host`。本机经 Host 链路的 smoke 已在独立 user + network namespace 内通过（`wayland_host_probe` → `NativeHost::wayland()` → 5907 → `computer_guest --wayland` → headless Sway，见下文「本机 Host 链路 smoke 复试」）。同日又在同类 netns 内跑通了 `pawork gui serve` 同款装配：`ComputerNativeMode::Wayland` + `GuiApprovalHost` + token 认证的本地 socket；`computer_native` 的每次调用和目标批准都经 GUI Connection Protocol 完成，持久 ObservationList / ObservationImageRead 可读（见下文「GUI Host 装配链路验收」）。这一轮的 Provider 是脚本替身，没有起 `pawork` 二进制进程，也没有 GPUI 真窗口。2026-10-14 已补上二进制 Host、GPUI 真窗口审批与真实 Provider `glm-coding / glm-5.3-flash`（见「二进制 Host + GPUI 真窗口验收」）。2026-10-15 在同类 netns 里用 `wayland_host_probe --boundaries` 补了撤销、派发前取消、断线与 scope 让出的真实 Sway 证据（见「撤销 / 取消 / 断线 / 让出」）。2026-10-15 已在 rootless podman 里跑通最小专用容器验收，同日用同一镜像复跑仍通过（见「专用容器最小验收」）。CU-23 的无宿主 bind 全文仍未做。2026-10-15 又在同类 netns 里用 `wayland_host_probe --partial-receipt` 打出真实 seat 上的 Partial 与回执丢失（见「Partial 与回执丢失」）。同日复核打出点击中途 Partial，并用真实 Sway 复验了空闲后的 resolve 重拨（见「点击中途 Partial 与 resolve 复验」）。同日稍后在该专用容器 guest 上重跑了容器外二进制 Host、GPUI 真窗口审批与真实 Provider（见「专用容器上的 GUI 审批与真实 Provider」）。CU-23 无宿主 bind 全文仍未做，完成条件未满足。更新：2026-10-15。
+> 状态：进行中。切片 1（guest 侧专用 seat 客户端与 compositor 权威身份）已落地：有离线定向回归，并在本机 headless Sway 1.10.1 做了真实 smoke。切片 2 的代码已实现、离线替身回归已通过：guest 帧协议加了 capture / input，`computer_guest --wayland` 提供服务，Host 侧新增 `WaylandSurface` 与按截图租约派发的点击 / 按键。切片 3 已接线、离线回归已通过：`computer_native` 工具暴露 `observed_click` / `observed_keys`，App 新增 `ComputerNativeMode::Wayland` 并选用 `NativeHost::wayland()`，CLI 接受 `--computer-native wayland`；默认入口未改，仍是 `host`。本机经 Host 链路的 smoke 已在独立 user + network namespace 内通过（`wayland_host_probe` → `NativeHost::wayland()` → 5907 → `computer_guest --wayland` → headless Sway，见下文「本机 Host 链路 smoke 复试」）。同日又在同类 netns 内跑通了 `pawork gui serve` 同款装配：`ComputerNativeMode::Wayland` + `GuiApprovalHost` + token 认证的本地 socket；`computer_native` 的每次调用和目标批准都经 GUI Connection Protocol 完成，持久 ObservationList / ObservationImageRead 可读（见下文「GUI Host 装配链路验收」）。这一轮的 Provider 是脚本替身，没有起 `pawork` 二进制进程，也没有 GPUI 真窗口。2026-10-14 已补上二进制 Host、GPUI 真窗口审批与真实 Provider `glm-coding / glm-5.3-flash`（见「二进制 Host + GPUI 真窗口验收」）。2026-10-15 在同类 netns 里用 `wayland_host_probe --boundaries` 补了撤销、派发前取消、断线与 scope 让出的真实 Sway 证据（见「撤销 / 取消 / 断线 / 让出」）。2026-10-15 已在 rootless podman 里跑通最小专用容器验收，同日用同一镜像复跑仍通过（见「专用容器最小验收」）。当时 CU-23 的无宿主 bind 还没有做。2026-10-15 又在同类 netns 里用 `wayland_host_probe --partial-receipt` 打出真实 seat 上的 Partial 与回执丢失（见「Partial 与回执丢失」）。同日复核打出点击中途 Partial，并用真实 Sway 复验了空闲后的 resolve 重拨（见「点击中途 Partial 与 resolve 复验」）。同日稍后在该专用容器 guest 上重跑了容器外二进制 Host、GPUI 真窗口审批与真实 Provider（见「专用容器上的 GUI 审批与真实 Provider」）。2026-10-15 稍后把拨号进程放进同一容器，guest 控制通道不再挂宿主目录（见「无宿主 bind」）。CU-26 完成条件仍未满足：这一刀没有重跑 GPUI 与真实 Provider。更新：2026-10-15。
 
 [返回 ROADMAP](../ROADMAP.md#未完成任务)
 
@@ -295,7 +295,7 @@ podman run -d --name cu26-wayland --init --read-only --cap-drop=ALL \
 
 和 CU-23 / 完成条件的差距（所以本任务仍是进行中，ROADMAP 不删）：
 
-- 有一个宿主目录 bind（控制 socket）。CU-23 的「无宿主 bind」没有达到。
+- 有一个宿主目录 bind（控制 socket）。这一轮没有达到 CU-23 的「无宿主 bind」。后来的「无宿主 bind」一节去掉了这条 guest 控制 bind；这一轮本身仍然有它。
 - 没有把 5907 发布到宿主 loopback。跨边界是 Unix socket，探针为了拨硬编码端口而多了一个 helper netns。
 - 运行时自带最小 `/dev`，不是「完全没有设备节点」。
 - 镜像是本盒的 Sway 1.10.1 / wlroots 0.18.2，不是 CU-23 那次 aarch64 上的 Sway 1.7 / wlroots 0.15.1。
@@ -323,7 +323,7 @@ podman run -d --name cu26-wayland --init --read-only --cap-drop=ALL \
 | 真正未安装 | `request guest.wayland.absent` 为 `Invalid("no installed application resolves this bundle id")`，不是 NotAuthorized | 元数据成功，列表里没有这个 bundle |
 | 批准后再 bind | 通过，窗口 `w-2061128-1792070612689373258-1` | 目标仍在 tree 里，pid 2061045，focused |
 
-动作前 `get_inputs` 为 `[]`，动作后只有 `0:0:wlr_virtual_keyboard_v1` 与 `0:0:wlr_virtual_pointer_v1`。这不是专用容器，也没有 GPUI 真窗口或真实 Provider。CU-23 无宿主 bind 全文仍未做。容器上的 GUI 审批和真实 Provider 见下一节。
+动作前 `get_inputs` 为 `[]`，动作后只有 `0:0:wlr_virtual_keyboard_v1` 与 `0:0:wlr_virtual_pointer_v1`。这不是专用容器，也没有 GPUI 真窗口或真实 Provider。当时 CU-23 的无宿主 bind 还没有做。容器上的 GUI 审批和真实 Provider 见下一节；无 bind 形态见后文「无宿主 bind」。
 
 ## 专用容器上的 GUI 审批与真实 Provider（2026-10-15）
 
@@ -349,7 +349,7 @@ Guest 仍是上一节的镜像 `localhost/pawork-cu26-wayland:local`（`8038d17e
 
 和 CU-23 / 完成条件的差距（条目保留）：
 
-- 仍有一个宿主目录 bind（控制 socket）。CU-23 的「无宿主 bind」没有达到。Host 不能在宿主 netns 里拨 5907，所以多了一个 helper netns 做端口转发。
+- 这一轮仍有一个宿主目录 bind（控制 socket），还没有达到 CU-23 的「无宿主 bind」。Host 不能在宿主 netns 里拨 5907，所以多了一个 helper netns 做端口转发。后来的「无宿主 bind」一节把拨号进程放进容器后去掉了这条 bind；这一轮本身仍然有它。
 - 没有把 5907 发布到宿主 loopback。
 - 运行时自带最小 `/dev`。镜像仍是本盒的 Sway 1.10.1 / wlroots 0.18.2。
 - 这一轮没有在容器里重做撤销、断线、占用让出或点击中途 Partial。动作后的 `get_inputs` 没有来得及在容器退出前再读一次。
@@ -357,9 +357,62 @@ Guest 仍是上一节的镜像 `localhost/pawork-cu26-wayland:local`（`8038d17e
 
 证据在 `/tmp/cu26-container-gui/`（`out/formal.json`、`out/observation-{1,2,3,4}.jpg`、`out/guest/click.bin`、`out/guest/typed.txt`、`approvals.log`、`security.tsv`、`inside.txt`、`host-5907-before.txt`、`host-5907-after.txt`）。不入库。
 
-## 阻塞与剩余（切片 3 之后；2026-10-15 容器 GUI 验收后更新）
+## 无宿主 bind（2026-10-15）
 
-- **专用容器：进行中，不是「环境缺失」**。rootless Podman 可用。最小容器里的探针链路，以及同一镜像上的 GPUI 真窗口审批加真实 Provider，都已通过（见「专用容器最小验收」和「专用容器上的 GUI 审批与真实 Provider」）。剩下的是 CU-23 无宿主 bind 全文（与「Host 必须拨到 guest」冲突；跨出容器的通道仍是 Unix socket 目录，Host 为了拨硬编码的 `127.0.0.1:5907` 还要一个 helper netns）。不要把本刀写成 CU-26 完成。
+上一节的容器把 guest 的 5907 用 socat 接到宿主目录 `/sock`，Host 在另一个 netns 里拨硬编码的 `127.0.0.1:5907`。那是 guest 控制通道上的宿主 bind。这一刀把拨号进程放进 guest 所在的网络命名空间，容器不再挂任何宿主目录。
+
+镜像在 `8038d17eb623` 上只换了入口（`localhost/pawork-cu26-wayland:nobind`，`9588f50534e2`）。入口仍起 headless Sway 与 `computer_guest --wayland`，不再执行 socat。运行参数去掉了 `-v`。内存上限从 2g 改为 4g，只为同容器里再放一份 `pawork` 二进制。`--tmpfs` 不是宿主目录 bind。token 只经 env 文件进入，不写入本页。
+
+```text
+podman run -d --name cu26-wayland-nobind --init --read-only --cap-drop=ALL \
+  --security-opt=no-new-privileges --network=none --user 1000:1000 \
+  --userns=keep-id --memory=4g --pids-limit=512 --shm-size=256m \
+  --tmpfs /tmp:rw,mode=1777 --tmpfs /run:rw,mode=755 --tmpfs /home:rw,mode=755 \
+  --env-file <token-env> localhost/pawork-cu26-wayland:nobind
+```
+
+探针是容器内的 `wayland_host_probe`（`podman cp` 进 `/tmp`，不是挂载）。它与 guest 同在 `net:[4026532241]`，宿主 x11vnc 在 `net:[4026531840]`。探针 grant 代替 GUI 审批。容器 `08c8a29c97ea`，探针退出码 0。
+
+| 阶段 | Host 结果 | 外部事实 |
+| --- | --- | --- |
+| 未授权 bind | NotAuthorized | — |
+| bind（探针 ForRun grant） | 通过，窗口 `w-62-1792076252506416752-1` | 动作前 `get_inputs` 为 `[]` |
+| 截图 | 通过，15866 字节 | — |
+| 图像中心点击 | dispatched | `click.bin` = `1b 5b 4d 20 56 32 1b 5b 4d 23 56 32` |
+| 已花费租约再发文本 | StaleHandle | — |
+| 文本 `Pawork CU-26 nobind {ok}`，再按 Return | 均为 dispatched | `typed.txt` 等于该字符串（24 字节） |
+| 撤销后截图 | NotAuthorized | 动作后 `get_inputs` 只有 `0:0:wlr_virtual_keyboard_v1` 与 `0:0:wlr_virtual_pointer_v1`；唯一输出仍是 HEADLESS-1 640×480 |
+
+`/proc/net/tcp` 在探针期间采了 93 行，涉及 5907 的只有三类：`00000000:1713` 监听（`0.0.0.0:5907`，状态 0A），以及 `0100007F:1713` 与 `0100007F:A05C` 互为对端的 ESTABLISHED（`127.0.0.1:5907` 与 `127.0.0.1:41052`）。已建立连接的两端都是 `127.0.0.1`，没有连到别的地址。`/proc/net/dev` 只有 lo。宿主上不存在 `/tmp/cu26-no-bind/sock`。
+
+同容器、探针结束之后又起了产品二进制：`/tmp/pawork --computer-native wayland --instance cu26nobind --approval-mode ask-for-writes gui serve --socket /tmp/pawork-data/gui.sock`。日志有 `pawork gui serving on /tmp/pawork-data/gui.sock`。该进程的 netns 仍是 `net:[4026532241]`。socket 在容器 tmpfs 上，宿主没有 `/tmp/pawork-data`。这次 `gui serve` 没有客户端，没有 Run，所以它自己没有拨 5907。拨号闭合的证据是同一 netns 里的探针，不是这次空转的二进制。
+
+安全属性（容器仍在运行时采集）：
+
+| 项 | 观测 |
+| --- | --- |
+| 根文件系统 | `ReadonlyRootfs=true`；`/` 为只读 `fuse-overlayfs` |
+| 能力 | 命令行 `--cap-drop=ALL`。inspect 的 CapDrop 仍展开成 rootless 默认可授予的那一组，CapAdd 为空。容器内五项能力集为 0 |
+| 特权 | `Privileged=false`，`SecurityOpt=["no-new-privileges"]`，`UsernsMode=private`，`uid=1000(cu26)` |
+| 网络 | `NetworkMode=none`。PortBindings 为 `{}`，`podman port` 为空 |
+| 宿主挂载 | `HostConfig.Binds` 为 `[]`，`Mounts` 为 `[]`。没有 `/sock`。Devices 为 `[]`。没有 `/dev/input`、没有 `/dev/dri`。OCI 仍自带 `/dev/null`、`zero`、`urandom`、`shm`、`pts`、`tty` |
+| 可写处 | tmpfs：`/tmp`、`/run`、`/home`，加上运行时的 `/dev` 与 `/dev/shm` |
+
+宿主 x11vnc：探针前、探针中、`podman stop` 之后都是 pid 2068374（display `:7`），starttime tick 都是 35920946，两条监听的 fd 仍是 8 和 9，netns 仍是 `net:[4026531840]`。本刀没有向该 pid 发信号。
+
+和 CU-23 / CU-26 完成条件的对照：
+
+- guest 控制通道上的宿主目录 bind 这一刀去掉了。Host↔guest 走容器内 `127.0.0.1:5907`。
+- 没有端口发布，network none、只读根、CapDrop 没有退回。
+- 本刀没有把 GUI socket 挂到宿主。容器外 Desktop 要连这个 Host，才需要一个只含 GUI socket 的目录挂载。那是 Desktop↔Host，不是 guest 控制通道；本刀没有加，所以 Binds 是空的。
+- 真实 Provider 需要出网。同一 netns 保持 network none 时，容器里的 `gui serve` 到不了 Provider。上一节的 GPUI + 真实 Provider 证据仍然依赖当时的 socket 目录，没有在这个无 bind 形态里重跑。因此不把 CU-26 标成完成。
+- 运行时自带最小 `/dev`。镜像仍是本盒的 Sway 1.10.1 / wlroots 0.18.2。探针 grant 代替 GUI 审批。
+
+证据在 `/tmp/cu26-no-bind/`（`out/probe/probe.jsonl`、`out/guest/click.bin`、`out/guest/typed.txt`、`tcp-5907.txt`、`security.tsv`、`mounts.json`、`inside.txt`、`binary-host.txt`、`host-5907-*.txt`）。不入库。
+
+## 阻塞与剩余（切片 3 之后；2026-10-15 无宿主 bind 之后更新）
+
+- **专用容器：进行中，不是「环境缺失」**。rootless Podman 可用。最小容器里的探针链路，以及同一镜像上的 GPUI 真窗口审批加真实 Provider，都已通过（见「专用容器最小验收」和「专用容器上的 GUI 审批与真实 Provider」）。guest 控制通道上的宿主目录 bind 已在「无宿主 bind」去掉：拨号进程与 guest 同 netns，`Binds=[]`。还没做的是把那一轮 GPUI + 真实 Provider 放进这个无 bind 形态。同一 netns 保持 network none 时没有出网；容器外 Desktop 若要连 GUI socket，那是另一条 Desktop↔Host 挂载，本刀没有加。不要把本刀写成 CU-26 完成。
 - ~~**正式链路缺真实 Provider、二进制进程与真窗口**~~：2026-10-14 已补上（见「二进制 Host + GPUI 真窗口验收」）。2026-10-13 的 `cu26_live` 仍是脚本 Provider、非二进制、非真窗口。~~`resolve` 误报「未安装」~~：离线替身已修（见「resolve 误报「未安装」」），2026-10-15 已在真实 Sway 上复验空闲 22 秒后的重拨（见「点击中途 Partial 与 resolve 复验」）。~~Desktop Computer 面板在 Run 结束后列出 0 条观测~~：根因是尾窗只覆盖最近 300 条事件，离线已改为有界回填；满页未到 head 时 Host `complete=false`，客户端停在窗口上沿而不顺游标扫回（见「面板列出 0 条观测」）；没有重开 GPUI 真窗口复核。
 - ~~**ComputerTargetList 能力矩阵与 Wayland 表面不符**~~：已修（2026-10-13，见「ComputerTargetList 能力矩阵修复」）。`target_capabilities` 对 `guest.wayland.*` 改为按 bundle_id 前缀对齐 `WaylandSurface::admit_action`，未新增族，wire 与 Desktop 映射不变。
 - **`AppFamily` 没有 Wayland 取值**：`WaylandSurface` 沿用 CU-21 guest 的 `Browser` 标签，只作身份字段，Host 能力闸不看族；GUI 目标列表的能力矩阵已改为按 bundle_id 前缀识别 Wayland 目标，不再依赖族（见上一条）；网站目标在这里因 `current_origin` 恒为 None 而 fail-closed。新增族会改 app / desktop 的穷举映射与 GUI 展示，留给后续。
@@ -398,5 +451,9 @@ Partial 与回执丢失 Targeted regressions: `wayland::tests::step_delay_is_off
 专用容器上的 GUI 审批与真实 Provider Validated: `cargo build --offline -p pawork -p pawork-desktop --bins`（exit 0）；同一镜像 `8038d17eb623` 上容器 `cu26-wayland-gui` 的 guest，加上容器外 helper netns 里的 `pawork --computer-native wayland gui serve` 与 `DISPLAY=:9` 的 `pawork-desktop`。成功 Run `run-gui-1fd787-18debab5f352e56e-2` 为 `completed`。没有改产品代码，没有新跑离线测试。
 
 专用容器上的 GUI 审批与真实 Provider Targeted regressions: none（本刀只有容器验收和文档）。
+
+无宿主 bind Validated: `podman build -t localhost/pawork-cu26-wayland:nobind`（镜像 `9588f50534e2`，基于 `8038d17eb623` 只换入口）；`/tmp/cu26-no-bind/run.sh`（探针退出码 0，`probe.jsonl` 各阶段如上表，`click.bin` / `typed.txt` 如上）。容器运行中采集了 `podman inspect` 与 `/proc`。没有改产品代码，没有新跑离线测试。
+
+无宿主 bind Targeted regressions: none（本刀只有容器验收和文档）。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
