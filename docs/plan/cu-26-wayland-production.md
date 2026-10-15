@@ -1,6 +1,6 @@
 # CU-26 · Wayland 隔离后台生产后端
 
-> 状态：进行中。切片 1（guest 侧专用 seat 客户端与 compositor 权威身份）已落地：有离线定向回归，并在本机 headless Sway 1.10.1 做了真实 smoke。切片 2 的代码已实现、离线替身回归已通过：guest 帧协议加了 capture / input，`computer_guest --wayland` 提供服务，Host 侧新增 `WaylandSurface` 与按截图租约派发的点击 / 按键。切片 3 已接线、离线回归已通过：`computer_native` 工具暴露 `observed_click` / `observed_keys`，App 新增 `ComputerNativeMode::Wayland` 并选用 `NativeHost::wayland()`，CLI 接受 `--computer-native wayland`；默认入口未改，仍是 `host`。本机经 Host 链路的 smoke 已在独立 user + network namespace 内通过（`wayland_host_probe` → `NativeHost::wayland()` → 5907 → `computer_guest --wayland` → headless Sway，见下文「本机 Host 链路 smoke 复试」）。同日又在同类 netns 内跑通了 `pawork gui serve` 同款装配：`ComputerNativeMode::Wayland` + `GuiApprovalHost` + token 认证的本地 socket；`computer_native` 的每次调用和目标批准都经 GUI Connection Protocol 完成，持久 ObservationList / ObservationImageRead 可读（见下文「GUI Host 装配链路验收」）。这一轮的 Provider 是脚本替身，没有起 `pawork` 二进制进程，也没有 GPUI 真窗口。2026-10-14 已补上二进制 Host、GPUI 真窗口审批与真实 Provider `glm-coding / glm-5.3-flash`（见「二进制 Host + GPUI 真窗口验收」）。2026-10-15 在同类 netns 里用 `wayland_host_probe --boundaries` 补了撤销、派发前取消、断线与 scope 让出的真实 Sway 证据（见「撤销 / 取消 / 断线 / 让出」）。2026-10-15 已在 rootless podman 里跑通最小专用容器验收（见「专用容器最小验收」）。CU-23 的无宿主 bind 全文，以及该容器内的 GUI 审批和真实 Provider，仍未做，完成条件未满足。更新：2026-10-15。
+> 状态：进行中。切片 1（guest 侧专用 seat 客户端与 compositor 权威身份）已落地：有离线定向回归，并在本机 headless Sway 1.10.1 做了真实 smoke。切片 2 的代码已实现、离线替身回归已通过：guest 帧协议加了 capture / input，`computer_guest --wayland` 提供服务，Host 侧新增 `WaylandSurface` 与按截图租约派发的点击 / 按键。切片 3 已接线、离线回归已通过：`computer_native` 工具暴露 `observed_click` / `observed_keys`，App 新增 `ComputerNativeMode::Wayland` 并选用 `NativeHost::wayland()`，CLI 接受 `--computer-native wayland`；默认入口未改，仍是 `host`。本机经 Host 链路的 smoke 已在独立 user + network namespace 内通过（`wayland_host_probe` → `NativeHost::wayland()` → 5907 → `computer_guest --wayland` → headless Sway，见下文「本机 Host 链路 smoke 复试」）。同日又在同类 netns 内跑通了 `pawork gui serve` 同款装配：`ComputerNativeMode::Wayland` + `GuiApprovalHost` + token 认证的本地 socket；`computer_native` 的每次调用和目标批准都经 GUI Connection Protocol 完成，持久 ObservationList / ObservationImageRead 可读（见下文「GUI Host 装配链路验收」）。这一轮的 Provider 是脚本替身，没有起 `pawork` 二进制进程，也没有 GPUI 真窗口。2026-10-14 已补上二进制 Host、GPUI 真窗口审批与真实 Provider `glm-coding / glm-5.3-flash`（见「二进制 Host + GPUI 真窗口验收」）。2026-10-15 在同类 netns 里用 `wayland_host_probe --boundaries` 补了撤销、派发前取消、断线与 scope 让出的真实 Sway 证据（见「撤销 / 取消 / 断线 / 让出」）。2026-10-15 已在 rootless podman 里跑通最小专用容器验收，同日用同一镜像复跑仍通过（见「专用容器最小验收」）。CU-23 的无宿主 bind 全文，以及该容器内的 GUI 审批和真实 Provider，仍未做，完成条件未满足。更新：2026-10-15。
 
 [返回 ROADMAP](../ROADMAP.md#未完成任务)
 
@@ -275,7 +275,7 @@ podman run -d --name cu26-wayland --init --read-only --cap-drop=ALL \
 | 可写处 | tmpfs：`/tmp`、`/run`、`/home`，加上运行时的 `/dev` 与 `/dev/shm` |
 | 5907 | 容器内 guest 听 `0.0.0.0:5907`，但唯一接口是 lo，socat 只把它接到 Unix socket。宿主 `127.0.0.1:5907` 与 `[::1]:5907` 在探针期间仍是 x11vnc pid 1878046 |
 
-宿主 x11vnc：探针开始（04:57:45 PDT）与结束（04:57:48 PDT）的 pid、lstart（`Wed Oct 14 22:52:41 2026`）、netns 与两条监听都相同。内核 starttime 换算也是这个 lstart，elapsed 约 6 小时，进程在本刀之前就在跑。构建开始时（04:40:03 PDT）记下的 lstart 是 `22:37:53`，和后来的 starttime 对不上；本刀脚本没有向该 pid 发信号，`/tmp/x11vnc:7.log` 的 mtime 仍是 2026-10-14 10:47。不把这条差解释成本刀重启了 x11vnc。
+宿主 x11vnc：探针开始（04:57:45 PDT）与结束（04:57:48 PDT）的 pid、当时的 lstart、netns 与两条监听都相同。本刀脚本没有向该 pid 发信号。`ps lstart` 在不同时刻显示过 `Wed Oct 14 22:37:53 2026`、`22:52:41` 和 `23:02:08`，pid 始终是 1878046。复跑前后记下的 `/proc/1878046/stat` starttime tick 都是 33215211，包装进程 1878049 的 tick 是 33215266；按当时 btime `1791711976`、HZ=100 换算，1878046 的启动时刻是 2026-10-14 23:02:08.11 PDT，与复跑当时的 `ps lstart` 一致。更早快照里的 lstart 与现在按 starttime tick 换算出的 23:02:08 不一致。复跑前后 tick 相同，不把这条差解释成本刀重启了 x11vnc。
 
 和 CU-23 / 完成条件的差距（所以本任务仍是进行中，ROADMAP 不删）：
 
@@ -286,7 +286,11 @@ podman run -d --name cu26-wayland --init --read-only --cap-drop=ALL \
 - 探针 grant 代替 GUI 审批。没有在这个容器里跑 `pawork --computer-native wayland`、GPUI 真窗口或真实 Provider。
 - foot 首帧有 `C locale is not UTF-8` 警告，文本仍按字节写对。
 
-证据在 `/tmp/cu26-container/`（`out/probe.jsonl`、`before.jpg`、`after_click.jpg`、`after_return.jpg`、`out/guest/click.bin`、`out/guest/typed.txt`、`security.tsv`、`inside.txt`、`host-5907-*.txt`）。不入库。
+证据在 `/tmp/cu26-container/`（`out/probe.jsonl`、`before.jpg`、`after_click.jpg`、`after_return.jpg`、`out/guest/click.bin`、`out/guest/typed.txt`、`security.tsv`、`inside.txt`、`host-5907-*.txt`）。首轮产物另存 `/tmp/cu26-container/run1/`。不入库。
+
+## 同日复跑（2026-10-15）
+
+同一镜像 `8038d17eb623` 再用 `/tmp/cu26-container/run.sh` 跑一轮。镜像内包为 sway 1.10.1-2、libwlroots-0.18 0.18.2-3、foot 1.21.0-2、socat 1.8.0.3-1+deb13u1（`podman run --entrypoint dpkg … -l`）。容器 `716b2c544a8e`，探针退出码 0。阶段与首轮相同：未授权 bind 为 NotAuthorized，bind、截图、中心点击、文本与 Return 通过，过期租约 StaleHandle，撤销后截图 NotAuthorized。`click.bin` 仍是 `1b 5b 4d 20 56 32 1b 5b 4d 23 56 32`，`typed.txt` 仍是 `Pawork CU-26 container {ok}`。`ReadonlyRootfs=true`，容器内五项能力集为 0，`NetworkMode=none`，`/proc/net/dev` 只有 lo，PortBindings 为空，Binds 仍只有 socket 目录，没有 `/dev/input` 与 `/dev/dri`。容器 netns 为 `net:[4026532241]`（与宿主 `net:[4026531840]` 不同；已退出容器的命名空间号可以被新容器复用），进程 `uid=1000(cu26)`。token 未出现在日志。宿主 5907 的两条监听仍是 x11vnc pid 1878046 的 fd 8 与 fd 9。完成条件仍未满足，差距与上一节相同。
 
 ## 阻塞与剩余（切片 3 之后；2026-10-15 容器验收后更新）
 
@@ -313,7 +317,7 @@ GUI Host 装配验收 Targeted regressions: `cu26_wayland_gui_serve_assembly`（
 
 撤销 / 取消 / 断线 / 让出 Targeted regressions: none（本刀只有探针示例和文档；真实 Sway 证据见上节）。
 
-专用容器最小验收 Validated: `podman version` / `podman info`；`podman run --rm --network=none --cap-drop=ALL --read-only --security-opt=no-new-privileges docker.io/library/busybox:1.36 echo podman-ok`；`podman build -t localhost/pawork-cu26-wayland:local`（镜像 `8038d17eb623`）；`/tmp/cu26-container/run.sh`（探针退出码 0，`probe.jsonl` 各阶段如上表）。没有改 guest / Host 代码，没有新跑离线测试。
+专用容器最小验收 Validated: `podman version` / `podman info`；`podman run --rm --network=none --cap-drop=ALL --read-only --security-opt=no-new-privileges docker.io/library/busybox:1.36 echo podman-ok`；`podman build -t localhost/pawork-cu26-wayland:local`（镜像 `8038d17eb623`）；`/tmp/cu26-container/run.sh`（探针退出码 0，`probe.jsonl` 各阶段如上表）。同日复跑同一脚本，容器 `716b2c544a8e`，探针退出码 0；`podman run --rm --network=none --cap-drop=ALL --read-only --entrypoint dpkg localhost/pawork-cu26-wayland:local -l` 核对 sway / wlroots / foot / socat 包版本。没有改 guest / Host 代码，没有新跑离线测试。
 
 专用容器最小验收 Targeted regressions: none（本刀只有容器验收和文档）。
 
