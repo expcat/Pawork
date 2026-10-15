@@ -459,10 +459,36 @@ Provider 出网是 `slirp4netns --configure --disable-host-loopback --userns-pat
 
 证据在 `/tmp/cu26-nobind-gui/`（`out/formal.json`、`out/observation-{1,2,3,4}.jpg`、`out/guest/click.bin`、`out/guest/typed.txt`、`approvals.log`、`security.tsv`、`mounts.json`、`inside.txt`、`tcp-5907-summary.json`、`host-proc.txt`、`host-5907-before.txt`、`host-5907-after.txt`）。不入库。
 
-## 阻塞与剩余（切片 3 之后；2026-10-15 无 bind GPUI 之后更新）
+## 无 bind 容器上的边界与观测列表（2026-10-15）
 
-- **专用容器：进行中，不是「环境缺失」**。rootless Podman 可用。最小容器里的探针链路，带 socket 目录时的 GPUI 真窗口审批加真实 Provider，以及无宿主 bind 形态上的 GPUI 真窗口审批加真实 Provider，都已通过（见「专用容器最小验收」、「专用容器上的 GUI 审批与真实 Provider」和「无 bind 形态上的 GPUI 与真实 Provider」）。guest 控制通道的 `HostConfig.Binds` 为 `[]`，Host 与 guest 同 netns，5907 的已建立连接两端都是 `127.0.0.1`。Desktop↔Host 没有加目录挂载。仍缺：该 netns 在 Run 期间有 slirp tap0（Provider 出网，不是 guest 控制 bind）；撤销、断线、让出和点击 Partial 没有在这个容器里重做；真窗口观测列表没有复核。不要把本刀写成 CU-26 完成。
-- ~~**正式链路缺真实 Provider、二进制进程与真窗口**~~：2026-10-14 已补上（见「二进制 Host + GPUI 真窗口验收」）。2026-10-13 的 `cu26_live` 仍是脚本 Provider、非二进制、非真窗口。~~`resolve` 误报「未安装」~~：离线替身已修（见「resolve 误报「未安装」」），2026-10-15 已在真实 Sway 上复验空闲 22 秒后的重拨（见「点击中途 Partial 与 resolve 复验」）。~~Desktop Computer 面板在 Run 结束后列出 0 条观测~~：根因是尾窗只覆盖最近 300 条事件，离线已改为有界回填；满页未到 head 时 Host `complete=false`，客户端停在窗口上沿而不顺游标扫回（见「面板列出 0 条观测」）；没有重开 GPUI 真窗口复核。
+同一镜像 `localhost/pawork-cu26-wayland:nobind`（`9588f50534e2`）。容器 `cu26-nobind-boundaries`（`ad87db45b87d`）覆盖入口为 `sleep`，在容器 tmpfs 里另起 headless Sway 与持续记录的 foot（`DECSET 1003`，原始字节同时写入 `events.bin` 与 `click.bin`）。`computer_guest` 用的是本机已带 `PAWORK_WAYLAND_STEP_DELAY_MS` 的调试二进制（镜像内那份没有这个变量），经 `podman cp` 放进 tmpfs，不是宿主目录 bind。探针 grant，没有 GPUI，没有真实 Provider，没有 slirp。
+
+安全属性：`HostConfig.Binds=[]`，`Mounts=[]`，`ReadonlyRootfs=true`，`NetworkMode=none`，PortBindings `{}`，`podman port` 为空。容器内五项能力集为 0，`uid=1000(cu26)`，`/proc/net/dev` 只有 `lo`，没有 `/sock`、`/dev/input`、`/dev/dri`。探针、guest 与容器同为 `net:[4026532241]`，宿主是 `net:[4026531840]`。采样里 5907 的 `TIME_WAIT` 对端都是 `127.0.0.1`；当场再握一条连接时，`ESTABLISHED` 是 `127.0.0.1:41996` 与 `127.0.0.1:5907` 互为对端。没有非 loopback 的 5907。宿主 5907 仍是 x11vnc pid 2068374，starttime tick 35920946。token 未出现在日志。
+
+| 探针 | 退出码 | 外部事实 |
+| --- | --- | --- |
+| `--boundaries` | 0 | `events.bin` 只有一次点击和 `SEAT-OK`、`AFTER-CANCEL-OK`、`LIVE-AGAIN`、`REDIAL-OK`、`YIELD-OK`。撤销三次 `NotAuthorized`，派发前取消为 `Cancelled`，断线为 `ProcessRestarted` / `WindowReplaced`，占用为 `TargetOccupied`，`close_scope` 后为 `ScopeClosed`，等待方再写入 `YIELD-OK`。`dispatch_paused=false`，没有独立接管入口 |
+| `--partial-receipt` | 0 | `partial 1/11`，新增字节只有 `I`；回执丢失为 `unknown_effect`，新增字节只有 `L`。随后 `AFTEROK` 为 `dispatched` |
+| `--click-partial` | 0（重开 compositor 之后） | 绝对移动 `1b 5b 4d 43 56 32`，`partial 1/2`，没有按下 / 释放。同一张租约再点为 `StaleHandle`。重新 bind 后的完整点击才是按下 + 释放 |
+
+第一次 `--click-partial` 和边界探针共用同一指针位置，移动没有新的鼠标上报，整段按下 / 释放一起落地，退出码 1。这不是容器网络或 bind 的问题。关掉 Sway 再只跑点击之后，上表的移动 Partial 成立。文本 Partial 与边界结果用的是重开之前的那一轮，没有作废。
+
+观测列表：没有新开 Provider Run。把上一轮无 bind GPUI 的会话库复制出来，Host 仍用 `podman unshare nsenter -n` 进入这个容器的 netns（`Binds` 仍是 `[]`，没有为这次复核加 slirp），Desktop 在 `DISPLAY=:9`。会话 `ses-2017ff-18debcbbab30b86d-1`，head=930；四张 JPEG 在 `tool_execution_completed` 的 sequence 271 / 404 / 495 / 518，尾窗从 631 起没有图。打开 Computer use 时连接曾断过一次；点 Retry 之后面板写着「4 observations」：一条 Latest、三条 History，预览是该 Run 的终端画面（含 `Pawork CU-26 nobind gui {ok}` 与 `GOT:`）。目标区是「No run is active」，因为这条 Run 已经结束。这是有界回填在真窗口上的结果，不是从 `result_json` 手工数出来的。
+
+### slirp tap0
+
+无 bind、无 Provider 的这一刀全程只有 `lo`。真实 Provider 要离开 netns 访问 `api.z.ai`，而 podman `network none` 没有默认路由。已经通过的 GPUI Run（`run-gui-2017ff-18debccb7db16a6e-2`）靠挂在同一 netns 上的 `slirp4netns` tap0 出网。两件事不能在同一次 Run 里同时成立：既要真实 Provider，又要全程只有 `lo`。
+
+正式部署因此把 tap0 定为例外，不把那次 Provider 证据拆掉：
+
+- guest 控制通道仍是容器内 `127.0.0.1:5907`，两端都是 loopback，`HostConfig.Binds` 保持 `[]`，不把 5907 发布到宿主。
+- 只有需要真实 Provider 的 Run 才允许在该 netns 上加 `slirp4netns` tap0。它不发布端口，不挂宿主目录，不承载 guest 控制连接。
+- 不需要出网的探针、撤销、Partial 保持只有 `lo`。
+
+## 阻塞与剩余（切片 3 之后；2026-10-15 无 bind 边界与观测列表之后更新）
+
+- **专用容器：进行中，不是「环境缺失」**。rootless Podman 可用。最小容器、带 socket 目录的 GPUI + 真实 Provider、无宿主 bind 的 GPUI + 真实 Provider，以及无 bind 容器内的撤销 / 取消 / 断线 / 让出 / 文本 Partial / 点击 Partial，都已有外部事实（见对应各节）。guest 控制通道的 `HostConfig.Binds` 为 `[]`，5907 的已建立连接两端都是 `127.0.0.1`。真窗口 Computer 面板在上一轮无 bind Run 结束后列出 4 条观测。Provider 出网的 tap0 是正式例外（见「slirp tap0」），不是把已通过的 Provider Run 拆掉的理由。仍缺：GUI Host 只进了容器 netns，不在能力集为 0 的 mount namespace 里。不要把本刀写成 CU-26 完成。
+- ~~**正式链路缺真实 Provider、二进制进程与真窗口**~~：2026-10-14 已补上（见「二进制 Host + GPUI 真窗口验收」）。2026-10-13 的 `cu26_live` 仍是脚本 Provider、非二进制、非真窗口。~~`resolve` 误报「未安装」~~：离线替身已修（见「resolve 误报「未安装」」），2026-10-15 已在真实 Sway 上复验空闲 22 秒后的重拨（见「点击中途 Partial 与 resolve 复验」）。~~Desktop Computer 面板在 Run 结束后列出 0 条观测~~：根因是尾窗只覆盖最近 300 条事件，离线已改为有界回填；满页未到 head 时 Host `complete=false`，客户端停在窗口上沿而不顺游标扫回（见「面板列出 0 条观测」）。2026-10-15 在无 bind 会话上重开 `DISPLAY=:9` 真窗口，Computer 面板列出 4 条观测（见「无 bind 容器上的边界与观测列表」）。
 - ~~**ComputerTargetList 能力矩阵与 Wayland 表面不符**~~：已修（2026-10-13，见「ComputerTargetList 能力矩阵修复」）。`target_capabilities` 对 `guest.wayland.*` 改为按 bundle_id 前缀对齐 `WaylandSurface::admit_action`，未新增族，wire 与 Desktop 映射不变。
 - **`AppFamily` 没有 Wayland 取值**：`WaylandSurface` 沿用 CU-21 guest 的 `Browser` 标签，只作身份字段，Host 能力闸不看族；GUI 目标列表的能力矩阵已改为按 bundle_id 前缀识别 Wayland 目标，不再依赖族（见上一条）；网站目标在这里因 `current_origin` 恒为 None 而 fail-closed。新增族会改 app / desktop 的穷举映射与 GUI 展示，留给后续。
 - **seat 级权限的固有限制**：三条协议的权限来自 socket 可达性，guest 内任何能连上 socket 的客户端（包括目标应用本身）都能截图或注入输入。`require_dedicated` 只能在调用时发现非虚拟设备或多余输出 / seat，无法阻止同 guest 内其它客户端创建虚拟设备。因此部署必须保证 guest 内只有 Pawork guest 服务和获批目标，sway 配置不带任何按键绑定。
@@ -508,5 +534,9 @@ Partial 与回执丢失 Targeted regressions: `wayland::tests::step_delay_is_off
 无 bind 形态上的 GPUI 与真实 Provider Validated: 同一镜像 `9588f50534e2` 上容器 `cu26-nobind-gui`（`Binds=[]`，`NetworkMode=none`），Host 经 `podman unshare nsenter -n` 进入该 netns 后 `pawork --computer-native wayland gui serve`，Desktop 在 `DISPLAY=:9`。成功 Run `run-gui-2017ff-18debccb7db16a6e-2` 为 `completed`。没有改产品代码，没有新跑离线测试。
 
 无 bind 形态上的 GPUI 与真实 Provider Targeted regressions: none（本刀只有容器验收和文档）。
+
+无 bind 容器上的边界与观测列表 Validated: 镜像 `9588f50534e2` 上容器 `cu26-nobind-boundaries`（`Binds=[]`，`NetworkMode=none`，`/proc/net/dev` 只有 lo）。容器内 `wayland_host_probe --boundaries`、`--partial-receipt`、`--click-partial` 的退出码分别为 0、0、0（点击那次是重开 compositor 之后）。`DISPLAY=:9` 打开上一轮会话的 Computer 面板，列出 4 条观测。没有改产品代码，没有新跑离线测试。
+
+无 bind 容器上的边界与观测列表 Targeted regressions: none（本刀只有容器验收、真窗口复核和文档）。
 
 Full workspace gate: NOT RUN（当前未设置全量门禁）。
