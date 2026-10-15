@@ -16,7 +16,7 @@
 
 ## 阻塞（2026-10-13）
 
-除「隔离 Xvnc / RFB」外，所有条目都要求真实 macOS 系统（ScreenCaptureKit、AX、TCC 授权、VoiceOver、系统 IME / 剪贴板）与真人操作，2026-10-13 的工作环境是 Linux 盒（Debian 13 x86_64，不是 macOS），无法推进。「隔离 Xvnc / RFB」依赖 `crates/computer-use/desktop/compose.yaml` 的专用桌面容器，该盒没有 Docker / Podman，同样未推进。本次没有条目从本页删除。
+除「隔离 Xvnc / RFB」外，所有条目都要求真实 macOS 系统（ScreenCaptureKit、AX、TCC 授权、VoiceOver、系统 IME / 剪贴板）与真人操作，2026-10-13 的工作环境是 Linux 盒（Debian 13 x86_64，不是 macOS），无法推进。「隔离 Xvnc / RFB」依赖 `crates/computer-use/desktop/compose.yaml` 的专用桌面容器，2026-10-13 该盒没有 Docker / Podman，同样未推进。2026-10-15 同一盒已有 rootless Podman 5.4.2，但本页的 Xvnc 验收没有因此重跑，条目不删除。
 
 ## 1. Computer use 本机后台
 
