@@ -921,10 +921,10 @@ mod tests {
                 window_count,
             }]
         }
-        fn resolve(&self, bundle_id: &str) -> Option<AppIdentity> {
+        fn resolve(&self, bundle_id: &str) -> Result<Option<AppIdentity>, TargetError> {
             self.bump();
             self.0.resolve.fetch_add(1, Ordering::SeqCst);
-            bundle_id.eq_ignore_ascii_case(BUNDLE).then(identity)
+            Ok(bundle_id.eq_ignore_ascii_case(BUNDLE).then(identity))
         }
         fn list_windows(
             &self,

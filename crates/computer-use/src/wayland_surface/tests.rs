@@ -30,6 +30,7 @@ struct State {
     input: Arc<AtomicUsize>,
     epoch: Arc<AtomicU64>,
     overlap: Arc<AtomicBool>,
+    fail_metadata: Arc<AtomicBool>,
     shift_capture: Arc<AtomicBool>,
     receipt: Arc<Mutex<Receipt>>,
     sent: Arc<Mutex<Vec<SeatInput>>>,
@@ -43,6 +44,7 @@ impl State {
             input: Arc::new(AtomicUsize::new(0)),
             epoch: Arc::new(AtomicU64::new(0)),
             overlap: Arc::new(AtomicBool::new(false)),
+            fail_metadata: Arc::new(AtomicBool::new(false)),
             shift_capture: Arc::new(AtomicBool::new(false)),
             receipt: Arc::new(Mutex::new(Receipt::Complete)),
             sent: Arc::new(Mutex::new(Vec::new())),
@@ -98,6 +100,9 @@ impl GuestApp for Fake {
 
     fn metadata(&mut self) -> Result<GuestMetadata, GuestError> {
         self.state.metadata.fetch_add(1, Ordering::SeqCst);
+        if self.state.fail_metadata.load(Ordering::SeqCst) {
+            return Err(GuestError::Unavailable("wayland metadata failed".into()));
+        }
         let mut windows = vec![self.state.window()];
         if self.state.overlap.load(Ordering::SeqCst) {
             windows.push(GuestWindow {
@@ -498,4 +503,146 @@ fn overlap_moved_frames_and_lost_receipts_are_never_clean_results() {
         .unwrap_err();
     assert_eq!(unfocused, TargetError::NotFocused);
     assert_eq!(double.state.inputs(), 3);
+}
+
+fn not_installed(error: &TargetError) -> bool {
+    matches!(
+        error,
+        TargetError::Invalid("no installed application resolves this bundle id")
+    )
+}
+
+#[test]
+fn idle_cached_link_resolve_and_bind_redial_instead_of_not_installed() {
+    let double = Double::start();
+    let host = double.host();
+    let scope = scope();
+    host.open_scope(&scope);
+    let discovered = host
+        .execute(&scope, NativeRequest::Discover, &|| false)
+        .unwrap();
+    assert!(
+        discovered.detail.contains(BUNDLE),
+        "guest is installed before the idle: {}",
+        discovered.detail
+    );
+    let primed = double.state.metadata.load(Ordering::SeqCst);
+
+    double.surface.sever_cached_link();
+    let denied = host
+        .execute(
+            &scope,
+            NativeRequest::Bind {
+                bundle_id: BUNDLE.into(),
+            },
+            &|| false,
+        )
+        .unwrap_err();
+    assert_eq!(
+        denied,
+        TargetError::NotAuthorized,
+        "a dead cached socket must reach the grant check, not look uninstalled"
+    );
+
+    double.surface.sever_cached_link();
+    let requested = host
+        .execute(
+            &scope,
+            NativeRequest::Request {
+                bundle_id: BUNDLE.into(),
+                origin: None,
+            },
+            &|| false,
+        )
+        .unwrap();
+    assert!(
+        requested
+            .detail
+            .contains("requested guest.wayland.cu26target"),
+        "{}",
+        requested.detail
+    );
+
+    host.grant(&scope, &target(), GrantKind::ForRun).unwrap();
+    double.surface.sever_cached_link();
+    let window = bind(&host, &scope);
+    assert!(!window.is_empty());
+    assert!(
+        double.state.metadata.load(Ordering::SeqCst) > primed,
+        "each idle call dials a fresh metadata read"
+    );
+}
+
+#[test]
+fn metadata_failure_is_not_reported_as_not_installed() {
+    let double = Double::start();
+    let host = double.host();
+    let scope = scope();
+    host.open_scope(&scope);
+    host.grant(&scope, &target(), GrantKind::ForRun).unwrap();
+
+    double.state.fail_metadata.store(true, Ordering::SeqCst);
+    let request = host
+        .execute(
+            &scope,
+            NativeRequest::Request {
+                bundle_id: BUNDLE.into(),
+                origin: None,
+            },
+            &|| false,
+        )
+        .unwrap_err();
+    let bind_error = host
+        .execute(
+            &scope,
+            NativeRequest::Bind {
+                bundle_id: BUNDLE.into(),
+            },
+            &|| false,
+        )
+        .unwrap_err();
+    for error in [&request, &bind_error] {
+        assert!(
+            matches!(error, TargetError::ProbeUnavailable(message) if message.contains("wayland metadata failed")),
+            "{error:?}"
+        );
+        assert!(!not_installed(error), "{error:?}");
+        assert_ne!(error, &TargetError::NotAuthorized);
+    }
+
+    double.state.fail_metadata.store(false, Ordering::SeqCst);
+    let absent = host
+        .execute(
+            &scope,
+            NativeRequest::Request {
+                bundle_id: "guest.wayland.absent".into(),
+                origin: None,
+            },
+            &|| false,
+        )
+        .unwrap_err();
+    assert!(
+        not_installed(&absent),
+        "a metadata answer that omits the bundle is not installed: {absent:?}"
+    );
+
+    let down =
+        WaylandSurface::test_dial(|| Err(GuestError::Disconnected("test guest dial failed")));
+    let host = NativeHost::new(down);
+    let scope = Scope::new("workspace", "down");
+    host.open_scope(&scope);
+    let unreachable = host
+        .execute(
+            &scope,
+            NativeRequest::Bind {
+                bundle_id: BUNDLE.into(),
+            },
+            &|| false,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(&unreachable, TargetError::ProbeUnavailable(message) if message.contains("dial failed")),
+        "{unreachable:?}"
+    );
+    assert!(!not_installed(&unreachable));
 }

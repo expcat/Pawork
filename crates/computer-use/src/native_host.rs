@@ -55,7 +55,10 @@ pub struct CapturedFrame {
 pub trait NativeSurface: NativeProbe + Clone + Send + Sync + 'static {
     fn activity(&self, bundle_id: &str) -> ActivityProof;
     fn discover(&self) -> Vec<AppSnapshot>;
-    fn resolve(&self, bundle_id: &str) -> Option<AppIdentity>;
+    /// `Ok(None)` means this surface answered and the bundle is not installed.
+    /// `Err` means it could not answer. Callers must not report that as
+    /// "not installed". Target authorization is a later check.
+    fn resolve(&self, bundle_id: &str) -> Result<Option<AppIdentity>, TargetError>;
     fn list_windows(
         &self,
         identity: &AppIdentity,
@@ -251,12 +254,12 @@ impl NativeSurface for HostSurface {
         }
     }
 
-    fn resolve(&self, bundle_id: &str) -> Option<AppIdentity> {
+    fn resolve(&self, bundle_id: &str) -> Result<Option<AppIdentity>, TargetError> {
         match &self.kind {
             #[cfg(target_os = "macos")]
-            HostSurfaceKind::Macos(native) => native.resolve_identity(bundle_id),
+            HostSurfaceKind::Macos(native) => Ok(native.resolve_identity(bundle_id)),
             #[cfg(not(target_os = "macos"))]
-            HostSurfaceKind::Unsupported(_) => None,
+            HostSurfaceKind::Unsupported(_) => Ok(None),
         }
     }
 
@@ -824,6 +827,14 @@ impl<S: NativeSurface> NativeHost<S> {
         Ok(info(detail))
     }
 
+    /// `Ok(None)` from the surface is "not installed". A probe or connection
+    /// error stays that error.
+    fn resolve_installed(&self, bundle_id: &str) -> Result<AppIdentity, TargetError> {
+        self.surface.resolve(bundle_id)?.ok_or(TargetError::Invalid(
+            "no installed application resolves this bundle id",
+        ))
+    }
+
     fn request_target(
         &self,
         scope: &Scope,
@@ -837,9 +848,7 @@ impl<S: NativeSurface> NativeHost<S> {
             ));
         }
         model_bundle(bundle_id)?;
-        let identity = self.surface.resolve(bundle_id).ok_or(TargetError::Invalid(
-            "no installed application resolves this bundle id",
-        ))?;
+        let identity = self.resolve_installed(bundle_id)?;
         let target = TargetIdentity::application(identity);
         self.lock().request_target(scope, &target)?;
         Ok(info(format!("requested {}", target.app().bundle_id)))
@@ -854,9 +863,7 @@ impl<S: NativeSurface> NativeHost<S> {
     ) -> Result<NativeOutput, TargetError> {
         self.require_scope(scope)?;
         model_bundle(bundle_id)?;
-        let resolved = self.surface.resolve(bundle_id).ok_or(TargetError::Invalid(
-            "no installed application resolves this bundle id",
-        ))?;
+        let resolved = self.resolve_installed(bundle_id)?;
         let target = TargetIdentity::application(resolved.clone());
         {
             let registry = self.lock();

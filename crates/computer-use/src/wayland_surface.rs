@@ -72,6 +72,19 @@ impl WaylandSurface {
         *slot = None;
     }
 
+    /// Close the cached socket and leave it installed, so the next call sees
+    /// a dead peer the way an idle guest read-timeout does.
+    #[cfg(test)]
+    pub fn sever_cached_link(&self) {
+        let mut slot = self
+            .link
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if let Some(link) = slot.as_mut() {
+            link.sever();
+        }
+    }
+
     fn with_link<T>(
         &self,
         op: impl FnOnce(&mut GuestLink) -> Result<T, GuestError>,
@@ -100,6 +113,20 @@ impl WaylandSurface {
 
     fn metadata(&self) -> Result<GuestMetadata, TargetError> {
         self.with_link(|link| link.metadata()).map_err(map_wayland)
+    }
+
+    /// Read guest metadata for resolve. A dead cached socket (the guest
+    /// frame server closes it after its 20s read budget) is dialed once
+    /// more. A second failure, or any metadata error the guest actually
+    /// answered with, stays a probe error.
+    fn metadata_for_resolve(&self) -> Result<GuestMetadata, TargetError> {
+        match self.with_link(|link| link.metadata()) {
+            Ok(metadata) => Ok(metadata),
+            Err(GuestError::Disconnected(_)) => {
+                self.with_link(|link| link.metadata()).map_err(map_wayland)
+            }
+            Err(error) => Err(map_wayland(error)),
+        }
     }
 
     fn issued<'a>(
@@ -323,19 +350,19 @@ impl NativeSurface for WaylandSurface {
             .collect()
     }
 
-    fn resolve(&self, bundle_id: &str) -> Option<AppIdentity> {
+    fn resolve(&self, bundle_id: &str) -> Result<Option<AppIdentity>, TargetError> {
         if !bundle_id.starts_with(WAYLAND_BUNDLE_PREFIX) {
-            return None;
+            return Ok(None);
         }
-        let metadata = self.metadata().ok()?;
-        metadata
+        let metadata = self.metadata_for_resolve()?;
+        Ok(metadata
             .apps
             .iter()
             .find(|app| app.bundle_id == bundle_id)
             .map(|app| AppIdentity {
                 bundle_id: app.bundle_id.clone(),
                 family: AppFamily::Browser,
-            })
+            }))
     }
 
     fn list_windows(

@@ -608,6 +608,15 @@ impl GuestLink {
             discard(&mut stream);
         }
     }
+
+    /// Shut the cached socket down but leave it installed. Tests use this
+    /// to imitate the guest closing an idle connection.
+    #[cfg(test)]
+    pub(crate) fn sever(&mut self) {
+        if let Some(stream) = self.stream.as_mut() {
+            let _ = stream.shutdown(Shutdown::Both);
+        }
+    }
 }
 
 fn decode_body<T: for<'de> Deserialize<'de>>(value: &Value, field: &str) -> Result<T, GuestError> {

@@ -191,14 +191,24 @@
 
 Desktop 为通过这次验收做了一处最小改动：`apps/desktop/src/ui/mod.rs` 只在 macOS 抓取 `raw_window_handle`。gpui 0.2.2 的 X11 `window_handle` 是 `unimplemented!()`，不改则 Linux 首帧 panic。没有重跑定向测试。
 
-未完成：专用容器仍不能建。`WaylandSurface::resolve` 把 guest 元数据错误折叠成 None。同一 Host 进程、同一会话里，失败 Run `run-gui-1c1a3c-18de5a3c37013b1b-2` 的 `discover` 成功，`request` 成功（`requested guest.wayland.cu26target`），第一次 `bind` 为未授权（`target is not authorized…`），第二次 `bind` 才回报 `no installed application resolves this bundle id`；该 Run 随后因 `http timeout error from https://api.z.ai` 而 `run_failed`，不是这次 bind 之后立刻重试成功。成功 Run `run-gui-1c1a3c-18de5b4aa01fb2e3-4` 的七次调用没有这条「未安装」错误。更早的 attempt 2（另一 Host、会话 `ses-1c05b5-18de59375428ef5e-1`）是 `request` 报「未安装」、随后 `bind` 报未授权。Run 结束后 Computer 面板「Observation evidence」为 0 observations，原因未查；四张 JPEG 是从该 Run 落库的 `tool_calls.result_json` 解出的，不是面板读回。撤销、接管、断线、取消仍无真实环境证据。
+未完成：专用容器仍不能建。验收当时 `WaylandSurface::resolve` 把 guest 元数据错误折叠成 None（修复见下文「resolve 误报「未安装」」）。同一 Host 进程、同一会话里，失败 Run `run-gui-1c1a3c-18de5a3c37013b1b-2` 的 `discover` 成功，`request` 成功（`requested guest.wayland.cu26target`），第一次 `bind` 为未授权（`target is not authorized…`），第二次 `bind` 才回报 `no installed application resolves this bundle id`；该 Run 随后因 `http timeout error from https://api.z.ai` 而 `run_failed`，不是这次 bind 之后立刻重试成功。成功 Run `run-gui-1c1a3c-18de5b4aa01fb2e3-4` 的七次调用没有这条「未安装」错误。更早的 attempt 2（另一 Host、会话 `ses-1c05b5-18de59375428ef5e-1`）是 `request` 报「未安装」、随后 `bind` 报未授权。Run 结束后 Computer 面板「Observation evidence」为 0 observations，原因未查；四张 JPEG 是从该 Run 落库的 `tool_calls.result_json` 解出的，不是面板读回。撤销、接管、断线、取消仍无真实环境证据。
 
 本轮 Validated: 无新增 Cargo 测试。只读核对 `/tmp/cu26s6/proc-evidence.txt`、`desktop-proc.txt`、`out/formal.json`、`out/typed.txt`、`out/click.bin`、`out/tree-after.json` 与上表截图。
+
+## resolve 误报「未安装」（2026-10-14）
+
+根因是两层，都有会话时间戳和代码对应，不是目标真的没装，也不是代际或批准被写错。
+
+guest 帧服务在 `serve_connection` 里用 `arm` 把读超时设成 `IO_BUDGET`（20 秒）。超时被 `read_exact` 收成 `GuestError::Disconnected("guest read failed")`，服务端关掉这条连接。Host 的 `WaylandSurface` 仍缓存着那条 `GuestLink`。下一次 `metadata` 在死套接字上失败，`with_link` 会丢掉缓存，但 `resolve` 当时写的是 `metadata().ok()?`，任何失败都变成 `None`。`NativeHost` 的 `request` / `bind` 把 `None` 写成 `Invalid("no installed application resolves this bundle id")`。批准检查在 `resolve` 成功之后，所以这条路径根本走不到 `NotAuthorized`。
+
+`/tmp/cu26s6/data/cu26bin/session.db` 里，失败 Run `run-gui-1c1a3c-18de5a3c37013b1b-2` 的 discover、request、第一次 bind 相邻执行间隔约 10 秒，都过了 `resolve`（第一次 bind 是未授权）。第二次 bind 的工具调用在第一次 bind 完成后约 5.7 秒就发出，但 `tool_approval_requested` 到 `approved_once` 停了 66726 毫秒；执行时刻比上一次 guest 接触晚 72441 毫秒，回报未安装。attempt 2（`/tmp/cu26s6/attempt2/data-cu26bin/session.db`，Run `run-gui-1c05b5-18de593a6c923c32-2`）的 request 批准等待 17228 毫秒，距 discover 完成 22707 毫秒，报未安装；再过 10460 毫秒的 bind 是未授权——失败那次已经清掉死连接，下一次重新拨号，`resolve` 又成功了。空闲来自下一次 guest 往返之前的批准等待（加上模型间隔），不是目标消失。成功 Run `…-4` 的相邻工具执行间隔是 10–18 秒，都短于 20 秒，没有这条错误。
+
+修复：`NativeSurface::resolve` 改为 `Result<Option<AppIdentity>, TargetError>`。`Ok(None)` 才是未安装（不是 `guest.wayland.` 前缀，或元数据成功但没有该 bundle）。`GuestError::Disconnected` 重拨一次；第二次仍失败，或 guest 以 `Unavailable` 回答，按 `ProbeUnavailable` 上抛。`NotAuthorized` 仍是批准闸。离线替身把缓存套接字掐断，不睡满 20 秒，覆盖空闲后的第一次 request / bind，以及元数据失败和拨号失败的错误类型。没有改 guest 的 20 秒读预算，也没有重跑真实 Sway。同一签名下，X11 `GuestSurface::resolve` 也不再把元数据失败收成 None，但没有 Wayland 这条重拨。`discover` 在自己的第一次元数据失败时仍返回空列表，不在这一刀。
 
 ## 阻塞与剩余（切片 3 之后；2026-10-14 更新）
 
 - **专用容器环境缺失**：本机没有 Docker / Podman，CU-23 规格的专用 Wayland 容器（只读 rootfs、network none、CapDrop=ALL、无宿主 bind）无法建立，也无法验证「容器只把 5907 发布到宿主 loopback」这一部署形态。network none 与「发布端口」本身互相冲突，需要在部署设计中改为仅 loopback 的端口发布（同 CU-21），或改用 Unix socket 挂载，并重新评审。完成条件里的专用容器形态仍待此项。2026-10-14 的二进制 Host 验收用的是 `unshare -rn` 里的 headless Sway，不是该容器。
-- ~~**正式链路缺真实 Provider、二进制进程与真窗口**~~：2026-10-14 已补上（见「二进制 Host + GPUI 真窗口验收」）。2026-10-13 的 `cu26_live` 仍是脚本 Provider、非二进制、非真窗口。剩余：`resolve` 误报「未安装」仍待修（成功 Host 的 `session.db` 里是失败 Run 第二次 `bind` 的现象，该 Run 以 Provider HTTP 超时结束；更早 attempt 2 的 `request` 也报过「未安装」，随后 `bind` 为未授权）。Desktop Computer 面板在 Run 结束后列出 0 条观测（原因未查）。
+- ~~**正式链路缺真实 Provider、二进制进程与真窗口**~~：2026-10-14 已补上（见「二进制 Host + GPUI 真窗口验收」）。2026-10-13 的 `cu26_live` 仍是脚本 Provider、非二进制、非真窗口。~~`resolve` 误报「未安装」~~：已按离线替身修掉（见「resolve 误报「未安装」」）；没有用真实 Sway 再跑一遍。Desktop Computer 面板在 Run 结束后列出 0 条观测（原因未查）。
 - ~~**ComputerTargetList 能力矩阵与 Wayland 表面不符**~~：已修（2026-10-13，见「ComputerTargetList 能力矩阵修复」）。`target_capabilities` 对 `guest.wayland.*` 改为按 bundle_id 前缀对齐 `WaylandSurface::admit_action`，未新增族，wire 与 Desktop 映射不变。
 - **`AppFamily` 没有 Wayland 取值**：`WaylandSurface` 沿用 CU-21 guest 的 `Browser` 标签，只作身份字段，Host 能力闸不看族；GUI 目标列表的能力矩阵已改为按 bundle_id 前缀识别 Wayland 目标，不再依赖族（见上一条）；网站目标在这里因 `current_origin` 恒为 None 而 fail-closed。新增族会改 app / desktop 的穷举映射与 GUI 展示，留给后续。
 - **seat 级权限的固有限制**：三条协议的权限来自 socket 可达性，guest 内任何能连上 socket 的客户端（包括目标应用本身）都能截图或注入输入。`require_dedicated` 只能在调用时发现非虚拟设备或多余输出 / seat，无法阻止同 guest 内其它客户端创建虚拟设备。因此部署必须保证 guest 内只有 Pawork guest 服务和获批目标，sway 配置不带任何按键绑定。
