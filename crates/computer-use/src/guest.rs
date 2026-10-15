@@ -16,6 +16,13 @@ pub const GUEST_PORT: u16 = 5906;
 pub const ENDPOINT: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), GUEST_PORT);
 pub const MIN_TOKEN_BYTES: usize = 16;
 pub const FIREFOX_BUNDLE_ID: &str = "guest.browser.firefox";
+/// CU-26 Wayland guest. A separate fixed port so a Host never mistakes the
+/// X11 Firefox guest for the Wayland seat guest or the other way round.
+pub const WAYLAND_GUEST_PORT: u16 = 5907;
+pub const WAYLAND_ENDPOINT: SocketAddr =
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), WAYLAND_GUEST_PORT);
+/// Wayland toplevels are named `guest.wayland.<app_id>`.
+pub const WAYLAND_BUNDLE_PREFIX: &str = "guest.wayland.";
 const MAX_FRAME: usize = 1024 * 1024;
 const IO_BUDGET: Duration = Duration::from_secs(20);
 
@@ -147,6 +154,67 @@ pub struct PressQuery {
     pub path: Vec<u32>,
 }
 
+/// Capture one already-identified window (CU-26). The guest refuses unless
+/// the generation still matches and nothing else paints over the window.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CaptureQuery {
+    pub window_id: u64,
+    pub generation: u64,
+}
+
+/// One window cut from a fresh whole-output frame. The geometry is the
+/// window rect the guest re-read after the frame; `jpeg` is base64.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GuestCapture {
+    pub window_id: u64,
+    pub generation: u64,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub image_width: u32,
+    pub image_height: u32,
+    pub jpeg: String,
+}
+
+/// Seat input against one window. Click points are window-local pixels;
+/// the guest adds the window origin it re-read just before sending.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SeatInput {
+    Click {
+        x: u32,
+        y: u32,
+    },
+    Text {
+        text: String,
+    },
+    Key {
+        key: String,
+        shift: bool,
+        control: bool,
+        alt: bool,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InputQuery {
+    pub window_id: u64,
+    pub generation: u64,
+    pub input: SeatInput,
+}
+
+/// `complete` means every planned step reached the seat (a sync round-trip),
+/// not that the target reacted. A partial receipt left nothing pressed.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InputReceipt {
+    pub window_id: u64,
+    pub generation: u64,
+    pub steps_sent: u32,
+    pub steps_total: u32,
+    pub complete: bool,
+}
+
 pub trait GuestApp {
     /// Called once after the handshake, before any operation on this connection.
     fn begin_session(&mut self) {}
@@ -156,6 +224,69 @@ pub trait GuestApp {
     /// version re-read and before the action. A true result means do not act.
     fn press(&mut self, query: &PressQuery, stop: &dyn Fn() -> bool)
         -> Result<Pressed, GuestError>;
+    fn capture(
+        &mut self,
+        _query: &CaptureQuery,
+        _stop: &dyn Fn() -> bool,
+    ) -> Result<GuestCapture, GuestError> {
+        Err(GuestError::Unavailable(
+            "this guest does not capture windows".into(),
+        ))
+    }
+    /// Same stop contract as [Self::press]; between steps a true stop ends
+    /// the sequence with a partial receipt and nothing left pressed.
+    fn input(
+        &mut self,
+        _query: &InputQuery,
+        _stop: &dyn Fn() -> bool,
+    ) -> Result<InputReceipt, GuestError> {
+        Err(GuestError::Unavailable(
+            "this guest does not send seat input".into(),
+        ))
+    }
+}
+
+const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+pub(crate) fn encode_base64(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = (u32::from(chunk[0]) << 16)
+            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        for (index, shift) in [18, 12, 6, 0].into_iter().enumerate() {
+            if index <= chunk.len() {
+                out.push(BASE64[(n >> shift & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+pub(crate) fn decode_base64(text: &str) -> Option<Vec<u8>> {
+    let bytes = text.as_bytes();
+    if bytes.len() % 4 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
+    for (index, chunk) in bytes.chunks(4).enumerate() {
+        let last = index + 1 == bytes.len() / 4;
+        let pad = chunk.iter().rev().take_while(|byte| **byte == b'=').count();
+        if pad > 2 || (pad > 0 && !last) {
+            return None;
+        }
+        let mut n = 0u32;
+        for byte in &chunk[..4 - pad] {
+            let value = BASE64.iter().position(|item| item == byte)? as u32;
+            n = n << 6 | value;
+        }
+        n <<= 6 * pad as u32;
+        let decoded = [(n >> 16) as u8, (n >> 8) as u8, n as u8];
+        out.extend_from_slice(&decoded[..3 - pad]);
+    }
+    Some(out)
 }
 
 pub fn ax_nodes(nodes: &[GuestNode]) -> Vec<crate::target::AxTreeNode> {
@@ -329,6 +460,37 @@ impl GuestLink {
         Self::handshake(stream, &token)
     }
 
+    /// Connect to the fixed loopback Wayland guest with the same token rule.
+    pub fn connect_wayland() -> Result<Self, GuestError> {
+        let token = token_from_env()?;
+        let stream = TcpStream::connect_timeout(&WAYLAND_ENDPOINT, Duration::from_secs(2))
+            .map_err(|_| GuestError::Disconnected("wayland guest unavailable at 127.0.0.1:5907"))?;
+        Self::handshake(stream, &token)
+    }
+
+    pub fn capture(&mut self, query: &CaptureQuery) -> Result<GuestCapture, GuestError> {
+        if query.window_id == 0 {
+            return Err(GuestError::Protocol("capture window is missing"));
+        }
+        let value = self.round_trip(&json!({"op":"capture","query":query}))?;
+        decode_body(&value, "capture")
+    }
+
+    /// Same receipt rule as [Self::press_stopping]: once the request is
+    /// fully written, a lost or unreadable reply means the input may have
+    /// reached the seat.
+    pub fn input_stopping(
+        &mut self,
+        query: &InputQuery,
+        stop: &dyn Fn() -> bool,
+    ) -> Result<InputReceipt, GuestError> {
+        if query.window_id == 0 {
+            return Err(GuestError::Protocol("input window is missing"));
+        }
+        let request = json!({"op":"input","query":query});
+        self.dispatch_stopping(&request, "input_ok", "receipt", INPUT_LOST, stop)
+    }
+
     pub fn metadata(&mut self) -> Result<GuestMetadata, GuestError> {
         let value = self.round_trip(&json!({"op":"metadata"}))?;
         decode_body(&value, "metadata")
@@ -360,11 +522,6 @@ impl GuestLink {
                 "press target is not a window element path",
             ));
         }
-        if stop() {
-            return Err(GuestError::Disconnected(
-                "cancelled before the guest action",
-            ));
-        }
         let request = json!({
             "op": "press",
             "window_id": query.window_id,
@@ -372,11 +529,27 @@ impl GuestLink {
             "tree_revision": query.tree_revision,
             "path": query.path,
         });
+        self.dispatch_stopping(&request, "press_ok", "pressed", PRESS_LOST, stop)
+    }
+
+    fn dispatch_stopping<T: for<'de> Deserialize<'de>>(
+        &mut self,
+        request: &Value,
+        ok_op: &str,
+        field: &str,
+        lost: &'static str,
+        stop: &dyn Fn() -> bool,
+    ) -> Result<T, GuestError> {
+        if stop() {
+            return Err(GuestError::Disconnected(
+                "cancelled before the guest action",
+            ));
+        }
         let write_result = {
             let Some(stream) = self.stream.as_mut() else {
                 return Err(GuestError::Disconnected("guest connection already dropped"));
             };
-            write_frame(&mut *stream, &request)
+            write_frame(&mut *stream, request)
         };
         if let Err(error) = write_result {
             self.drop_stream();
@@ -384,9 +557,9 @@ impl GuestLink {
         }
         let read_result = {
             let Some(stream) = self.stream.as_mut() else {
-                return Err(GuestError::Disconnected("press receipt lost"));
+                return Err(GuestError::Disconnected(lost));
             };
-            read_press_reply(stream, stop)
+            read_dispatch_reply(stream, stop, lost)
         };
         let reply = match read_result {
             Ok(reply) => reply,
@@ -396,10 +569,11 @@ impl GuestLink {
             }
         };
         let outcome = match reply.get("op").and_then(Value::as_str) {
-            Some("press_ok") => decode_body(&reply, "pressed")
-                .map_err(|_| GuestError::Disconnected("press receipt lost")),
+            Some(op) if op == ok_op => {
+                decode_body(&reply, field).map_err(|_| GuestError::Disconnected(lost))
+            }
             Some("error") => Err(guest_error_from_frame(&reply)),
-            _ => Err(GuestError::Disconnected("press receipt lost")),
+            _ => Err(GuestError::Disconnected(lost)),
         };
         if outcome.is_err() && !matches!(outcome, Err(GuestError::Unavailable(_))) {
             self.drop_stream();
@@ -415,7 +589,7 @@ impl GuestLink {
             write_frame(&mut *stream, request)?;
             let reply = read_frame(&mut *stream)?;
             match reply.get("op").and_then(Value::as_str) {
-                Some("metadata_ok" | "tree_ok" | "press_ok") => Ok(reply),
+                Some("metadata_ok" | "tree_ok" | "press_ok" | "capture_ok") => Ok(reply),
                 Some("error") => Err(guest_error_from_frame(&reply)),
                 _ => Err(GuestError::Protocol("unexpected guest reply")),
             }
@@ -432,6 +606,15 @@ impl GuestLink {
     fn drop_stream(&mut self) {
         if let Some(mut stream) = self.stream.take() {
             discard(&mut stream);
+        }
+    }
+
+    /// Shut the cached socket down but leave it installed. Tests use this
+    /// to imitate the guest closing an idle connection.
+    #[cfg(test)]
+    pub(crate) fn sever(&mut self) {
+        if let Some(stream) = self.stream.as_mut() {
+            let _ = stream.shutdown(Shutdown::Both);
         }
     }
 }
@@ -460,35 +643,41 @@ fn guest_error_from_frame(reply: &Value) -> GuestError {
     }
 }
 
-fn read_press_reply(stream: &mut TcpStream, stop: &dyn Fn() -> bool) -> Result<Value, GuestError> {
+const PRESS_LOST: &str = "press receipt lost";
+const INPUT_LOST: &str = "input receipt lost";
+
+fn read_dispatch_reply(
+    stream: &mut TcpStream,
+    stop: &dyn Fn() -> bool,
+    lost: &'static str,
+) -> Result<Value, GuestError> {
     let deadline = std::time::Instant::now() + IO_BUDGET;
     loop {
         if stop() || std::time::Instant::now() >= deadline {
             let _ = stream.shutdown(Shutdown::Both);
-            return Err(GuestError::Disconnected("press receipt lost"));
+            return Err(GuestError::Disconnected(lost));
         }
         stream
             .set_nonblocking(true)
-            .map_err(|_| GuestError::Disconnected("press receipt lost"))?;
+            .map_err(|_| GuestError::Disconnected(lost))?;
         let mut probe = [0u8; 1];
         let ready = match stream.peek(&mut probe) {
             Ok(0) => {
                 let _ = stream.set_nonblocking(false);
-                return Err(GuestError::Disconnected("press receipt lost"));
+                return Err(GuestError::Disconnected(lost));
             }
             Ok(_) => true,
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => false,
             Err(_) => {
                 let _ = stream.set_nonblocking(false);
-                return Err(GuestError::Disconnected("press receipt lost"));
+                return Err(GuestError::Disconnected(lost));
             }
         };
         stream
             .set_nonblocking(false)
-            .map_err(|_| GuestError::Disconnected("press receipt lost"))?;
+            .map_err(|_| GuestError::Disconnected(lost))?;
         if ready {
-            return read_frame(&mut *stream)
-                .map_err(|_| GuestError::Disconnected("press receipt lost"));
+            return read_frame(&mut *stream).map_err(|_| GuestError::Disconnected(lost));
         }
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -626,6 +815,43 @@ pub fn serve_connection(
                 let _ = stream.set_nonblocking(false);
                 reply
             }
+            "capture" | "input" => {
+                let Some(query) = request.get("query").cloned() else {
+                    let error = GuestError::Protocol("guest query is missing");
+                    let _ = write_frame(&mut stream, &error_frame(&error));
+                    discard(&mut stream);
+                    return Err(error);
+                };
+                let reply = if op == "capture" {
+                    match serde_json::from_value::<CaptureQuery>(query) {
+                        Ok(query) => match handler.capture(&query, &|| peer_gone(&stream)) {
+                            Ok(capture) => json!({"op":"capture_ok","capture":capture}),
+                            Err(error) => error_frame(&error),
+                        },
+                        Err(_) => {
+                            let error = GuestError::Protocol("capture query has the wrong shape");
+                            let _ = write_frame(&mut stream, &error_frame(&error));
+                            discard(&mut stream);
+                            return Err(error);
+                        }
+                    }
+                } else {
+                    match serde_json::from_value::<InputQuery>(query) {
+                        Ok(query) => match handler.input(&query, &|| peer_gone(&stream)) {
+                            Ok(receipt) => json!({"op":"input_ok","receipt":receipt}),
+                            Err(error) => error_frame(&error),
+                        },
+                        Err(_) => {
+                            let error = GuestError::Protocol("input query has the wrong shape");
+                            let _ = write_frame(&mut stream, &error_frame(&error));
+                            discard(&mut stream);
+                            return Err(error);
+                        }
+                    }
+                };
+                let _ = stream.set_nonblocking(false);
+                reply
+            }
             _ => {
                 let error = GuestError::Protocol("unknown guest op");
                 let _ = write_frame(&mut stream, &error_frame(&error));
@@ -665,6 +891,93 @@ mod tests {
             self.called.store(true, Ordering::SeqCst);
             Err(GuestError::Unavailable("idle".into()))
         }
+    }
+
+    #[test]
+    fn base64_round_trips_and_refuses_malformed_text() {
+        for len in 0..7 {
+            let bytes: Vec<u8> = (0..len).map(|index| (index * 37 + 250) as u8).collect();
+            let text = encode_base64(&bytes);
+            assert_eq!(text.len() % 4, 0);
+            assert_eq!(decode_base64(&text), Some(bytes));
+        }
+        assert_eq!(encode_base64(b"Pawork"), "UGF3b3Jr");
+        for bad in ["A", "AB=C", "A===", "QQ==QQ==", "@@@@"] {
+            assert_eq!(decode_base64(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn seat_ops_default_to_unavailable_and_a_bad_query_drops_the_connection() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let token = "0123456789abcdef";
+        let called = Arc::new(AtomicBool::new(false));
+        let server_called = Arc::clone(&called);
+        let server = thread::spawn(move || {
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().unwrap();
+                let mut handler = Idle {
+                    called: Arc::clone(&server_called),
+                };
+                let _ = serve_connection(stream, token, &mut handler);
+            }
+        });
+
+        let stream = TcpStream::connect(address).unwrap();
+        let mut link = GuestLink::handshake(stream, token).unwrap();
+        let capture = link
+            .capture(&CaptureQuery {
+                window_id: 1,
+                generation: 1,
+            })
+            .unwrap_err();
+        assert!(
+            matches!(capture, GuestError::Unavailable(message) if message.contains("does not capture"))
+        );
+        let input = link
+            .input_stopping(
+                &InputQuery {
+                    window_id: 1,
+                    generation: 1,
+                    input: SeatInput::Click { x: 0, y: 0 },
+                },
+                &|| false,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(input, GuestError::Unavailable(message) if message.contains("does not send"))
+        );
+        let stopped = link
+            .input_stopping(
+                &InputQuery {
+                    window_id: 1,
+                    generation: 1,
+                    input: SeatInput::Text { text: "a".into() },
+                },
+                &|| true,
+            )
+            .unwrap_err();
+        assert_eq!(
+            stopped,
+            GuestError::Disconnected("cancelled before the guest action")
+        );
+        drop(link);
+
+        let mut stream = TcpStream::connect(address).unwrap();
+        arm(&stream).unwrap();
+        write_frame(&mut stream, &json!({"op":"hello","token":token})).unwrap();
+        assert_eq!(read_frame(&mut stream).unwrap()["op"], json!("hello_ok"));
+        write_frame(
+            &mut stream,
+            &json!({"op":"input","query":{"window_id":1,"generation":1}}),
+        )
+        .unwrap();
+        assert_eq!(read_frame(&mut stream).unwrap()["code"], json!("protocol"));
+        let mut probe = [0; 1];
+        assert_eq!(stream.read(&mut probe).unwrap(), 0);
+        server.join().unwrap();
+        assert!(!called.load(Ordering::SeqCst));
     }
 
     #[test]

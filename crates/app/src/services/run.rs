@@ -1804,10 +1804,16 @@ mod tests {
             }]
         }
 
-        fn resolve(&self, bundle_id: &str) -> Option<pawork_computer_use::target::AppIdentity> {
-            bundle_id
+        fn resolve(
+            &self,
+            bundle_id: &str,
+        ) -> Result<
+            Option<pawork_computer_use::target::AppIdentity>,
+            pawork_computer_use::target::TargetError,
+        > {
+            Ok(bundle_id
                 .eq_ignore_ascii_case(NATIVE_BUNDLE)
-                .then(native_identity)
+                .then(native_identity))
         }
 
         fn list_windows(

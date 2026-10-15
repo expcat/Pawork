@@ -533,6 +533,55 @@ mod tests {
         );
     }
 
+    fn native_actions(core: &crate::AppCore) -> Vec<String> {
+        core.descriptors
+            .iter()
+            .find(|descriptor| descriptor.name == "computer_native")
+            .expect("computer_native registered")
+            .input_schema["properties"]["action"]["enum"]
+            .as_array()
+            .expect("action enum")
+            .iter()
+            .map(|action| action.as_str().expect("action").to_string())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn wayland_computer_native_is_selected_only_explicitly() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (mut core, _store_dir) = crate::testsupport::mock_core(Vec::new()).await;
+        assert_eq!(core.computer_native, crate::ComputerNativeMode::Host);
+        core.attach_workspace(dir.path()).expect("attach");
+        assert!(!core.native.isolated_desktop());
+        let host = native_actions(&core);
+        assert!(host.iter().any(|action| action == "launch"));
+        assert!(!host.iter().any(|action| action.starts_with("observed_")));
+
+        let (mut seat, _seat_store) = crate::testsupport::mock_core(Vec::new()).await;
+        seat.select_computer_native(crate::ComputerNativeMode::Wayland);
+        seat.attach_workspace(dir.path()).expect("attach");
+        assert!(std::ptr::eq(
+            std::sync::Arc::as_ptr(&seat.native) as *const (),
+            std::sync::Arc::as_ptr(&pawork_computer_use::wayland_surface::shared_wayland_host())
+                as *const (),
+        ));
+        assert_eq!(seat.native.environment_name(), "isolated_desktop");
+        let seat_actions = [
+            "discover",
+            "request",
+            "bind",
+            "screenshot",
+            "observed_click",
+            "observed_keys",
+        ];
+        assert_eq!(native_actions(&seat), seat_actions);
+        seat.remove_mcp_server("absent")
+            .await
+            .expect("rebuild the builtin registry");
+        assert_eq!(native_actions(&seat), seat_actions);
+        assert!(seat.target_states().is_empty());
+    }
+
     #[tokio::test]
     async fn resource_loader_injects_root_agents_md() {
         let workspace = tempfile::tempdir().expect("workspace");

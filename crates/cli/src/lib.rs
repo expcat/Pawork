@@ -82,7 +82,8 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub trust_workspaces: bool,
     /// 本次进程的 computer_native 表面。host 是本机后台（默认）；
-    /// isolated 选用容器内 Firefox GuestSurface。只覆盖本次运行，不写配置。
+    /// isolated 选用容器内 Firefox GuestSurface；wayland 选用 CU-26 专用
+    /// Wayland guest seat。只覆盖本次运行，不写配置。
     #[arg(long, global = true, value_name = "MODE", default_value = "host")]
     pub computer_native: String,
     #[command(subcommand)]
@@ -824,8 +825,9 @@ fn parse_computer_native(value: &str) -> Result<pawork_app::ComputerNativeMode, 
     match value {
         "host" => Ok(pawork_app::ComputerNativeMode::Host),
         "isolated" => Ok(pawork_app::ComputerNativeMode::Isolated),
+        "wayland" => Ok(pawork_app::ComputerNativeMode::Wayland),
         _ => Err(CliError::Usage(
-            "computer-native must be host or isolated".into(),
+            "computer-native must be host, isolated, or wayland".into(),
         )),
     }
 }
@@ -836,6 +838,32 @@ mod tests {
     use pawork_app::DEFAULT_INSTANCE;
 
     use super::*;
+
+    #[test]
+    fn computer_native_defaults_to_host_and_wayland_is_explicit() {
+        let cli = Cli::try_parse_from(["pawork", "sessions", "list"]).expect("parse");
+        assert_eq!(
+            parse_computer_native(&cli.computer_native).expect("default"),
+            pawork_app::ComputerNativeMode::Host
+        );
+        let cli =
+            Cli::try_parse_from(["pawork", "--computer-native", "wayland", "sessions", "list"])
+                .expect("parse");
+        assert_eq!(
+            parse_computer_native(&cli.computer_native).expect("wayland"),
+            pawork_app::ComputerNativeMode::Wayland
+        );
+        assert_eq!(
+            parse_computer_native("isolated").expect("isolated"),
+            pawork_app::ComputerNativeMode::Isolated
+        );
+        for bad in ["Wayland", "x11", ""] {
+            assert!(matches!(
+                parse_computer_native(bad),
+                Err(CliError::Usage(_))
+            ));
+        }
+    }
 
     #[test]
     fn parses_global_provider_model_and_chat_prompt() {

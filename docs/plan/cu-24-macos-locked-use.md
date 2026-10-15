@@ -1,6 +1,6 @@
 # CU-24 · macOS 锁屏使用独立设计与验证
 
-> 状态：设计与契约拒绝回归完成；特权组件未实施，系统安装、系统授权与真实锁屏验收待环境。更新：2026-10-13。
+> 状态：设计与契约拒绝回归完成；特权组件（authorization plug-in）未实施。阻塞：用户尚未明确启用锁屏功能并裁决特权方案；实施后的安装、系统授权与锁屏序列需真实 macOS 与用户系统手势。更新：2026-10-13。
 
 [返回 ROADMAP](../ROADMAP.md#未完成任务)
 
@@ -41,7 +41,13 @@
 
 ## 当前状态
 
-生产代码没有锁屏路径：`Environment` 只允许 `isolated_desktop` 与 `native_background`。`target::tests::locked_use_environment_is_rejected_by_the_contract` 钉住两值序列化，并证明 `environment: "locked_use"` 的完整 `TargetObservation` 反序列化失败；它是契约拒绝回归，不是锁屏验收。
+生产代码没有锁屏路径：`Environment` 只允许 `isolated_desktop` 与 `native_background`。`target::tests::locked_use_environment_is_rejected_by_the_contract` 钉住两值序列化，并证明 `environment: "locked_use"` 的完整 `TargetObservation` 反序列化失败；它是契约拒绝回归，不是锁屏验收。2026-10-13 对照 HEAD 复核，`Environment` 与该回归均在位。
+
+## 阻塞（2026-10-13）
+
+- 用户启用与裁决：锁屏使用需要用户明确启用，并单独裁决特权组件、签名与安装方式；该触发尚未满足，在此之前不实施 plug-in，也不在普通辅助进程里预埋锁屏路径。
+- 特权组件：authorization plug-in 运行在 macOS 授权子系统内，需系统侧 mechanism 注册与管理员授权，属于特权与安全语义变化，按仓库规则须先裁决再实施。
+- 真实环境：plug-in 安装 / 卸载、Screen Recording / Accessibility 授予与撤销、锁定 → 临时解锁 → 本地输入重锁序列只能在真实 macOS 上由用户手势完成。2026-10-13 的工作环境是 Linux 盒（Debian 13 x86_64），既不能构建或加载 macOS 授权插件，也没有锁屏与系统授权界面。
 
 ## 剩余工作
 

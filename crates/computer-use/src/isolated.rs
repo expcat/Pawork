@@ -378,12 +378,12 @@ impl NativeSurface for GuestSurface {
             .collect()
     }
 
-    fn resolve(&self, bundle_id: &str) -> Option<AppIdentity> {
-        let metadata = self.metadata().ok()?;
-        Self::firefox(&metadata, bundle_id).map(|app| AppIdentity {
+    fn resolve(&self, bundle_id: &str) -> Result<Option<AppIdentity>, TargetError> {
+        let metadata = self.metadata()?;
+        Ok(Self::firefox(&metadata, bundle_id).map(|app| AppIdentity {
             bundle_id: app.bundle_id.clone(),
             family: AppFamily::Browser,
-        })
+        }))
     }
 
     fn list_windows(

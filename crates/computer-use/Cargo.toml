@@ -34,6 +34,9 @@ block = "0.1"
 # 不带 async-io 时 zbus 编不过传输层。这不是只调用 blocking Connection API。
 zbus = { version = "=5.19.0", default-features = false, features = ["async-io", "blocking-api"] }
 async-io = "2.3"
+# CU-26 Wayland seat 客户端：SCM_RIGHTS 传 shm / keymap fd、memfd、
+# SO_PEERCRED；复用 workspace 已锁定版本，不引入 libwayland。
+libc = "0.2"
 
 # 仅 macOS 人工探针 examples（非产品路径）使用；objc / core-foundation /
 # core-graphics / libc / block 已由上方正式依赖覆盖。

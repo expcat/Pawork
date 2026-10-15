@@ -1201,8 +1201,11 @@ impl AppView {
                 data,
             } => {
                 // 探测页（limit=1）只习得 head：返回尾窗参数；尾窗内被
-                // 单页字节预算截断时按游标同代次续读（页数有界）。收敛
-                // 落库后，面板可见时为选中证据按需自动加载首图。
+                // 单页字节预算截断时按游标同代次续读（页数有界）。满页
+                // 未到 head 时 Host complete=false，apply 把窗口上沿
+                // 当成该窗结束，不顺游标扫回更新事件。尾窗 0 条时改为
+                // 更早的窗口。收敛落库后，面板可见时为选中证据按需自动
+                // 加载首图。
                 match self
                     .computer
                     .apply_observations(&session_id, request_id, &data)

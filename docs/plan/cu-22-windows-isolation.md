@@ -1,6 +1,6 @@
 # CU-22 · Windows 独立会话 / VM 后台能力
 
-> 状态：未实现；独立 Windows 会话 / VM 前置未满足。更新：2026-10-13。
+> 状态：未实现。阻塞：缺可用的独立 Windows 登录会话或专用 Windows VM（含系统镜像与授权）；当前只有非 macOS 平台的 `UnsupportedProbe` fail-closed 拒绝回归。更新：2026-10-13。
 
 [返回 ROADMAP](../ROADMAP.md#未完成任务)
 
@@ -38,6 +38,11 @@
 - 没有 Windows UIA / 捕获 / 输入实现。`crates/computer-use/src/native_host.rs` 的 `HostSurface::local()` 在 macOS 装箱 `MacosNative`，其它平台装箱 `UnsupportedProbe`（进程存活恒 false，窗口代际、树版本、origin 与尺寸恒 None）；回归 `target::tests::unsupported_probe_fails_closed` 只钉这条拒绝边界，不运行 Windows 分支。
 - `NativeHost::isolated()` 是 CU-21 的 Linux guest，不是 Windows 环境。transport 的 Windows Named Pipe 仍为 `cfg(windows)`，平台专项见 [ENV-02](env-02-platform-matrix.md)。
 - 2026-10-12 核查本机（Darwin arm64）的 hypervisor、应用目录、VM 存储与 Docker（仅 linux/aarch64），未发现可用的独立 Windows 客户机；未下载 Windows 系统或创建付费实例。
+- 2026-10-13 核查 Linux 盒（Debian 13 x86_64）：有 `/dev/kvm` 设备节点，但没有 QEMU / libvirt / VirtualBox / Docker / Podman，也没有 Windows 镜像或授权；同样未下载系统或创建实例。KVM 节点只说明理论上可嵌套虚拟化，是否在此准备 Windows VM（镜像来源、授权、工具安装）属用户决策，不由本任务代办。
+
+## 阻塞
+
+本任务全部剩余工作都需要真实 Windows 环境：UIA、窗口捕获、定向输入与 UIPI / 会话拒绝只能在 Windows 内核与桌面会话上实现和验收，交叉编译或 `UnsupportedProbe` 回归都不能替代。在用户提供客户机之前保持「未实现」，不在其它平台写 Windows 分支的假实现。
 
 ## 剩余工作
 

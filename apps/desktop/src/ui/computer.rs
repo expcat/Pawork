@@ -56,9 +56,14 @@ pub(super) const COMPUTER_STOP_PREFIX: &str = "computer-stop-";
 /// 同源；分页 / 重连 / 切换选择不错配。
 pub(super) type EvidenceKey = (u64, u32);
 
-/// 证据刷新的事件窗口（事件粒度）：只取会话尾部，更早历史不逐页全量
-/// 拉取（有界加载；截断如实标注）。
+/// 证据刷新的事件窗口（事件粒度）。尾窗已有观测时只覆盖这段，不逐页
+/// 拉完全量历史；截断如实标注。
 const OBSERVATION_EVENT_WINDOW: u64 = 300;
+/// 尾窗 0 条观测时，向更早事件回填的窗口上限（尾窗本身不计）。
+/// 真实模型在最后一张截图之后仍会写下数百条 thinking / text delta，
+/// 固定尾窗会把已落库的 JPEG 全部挤出列表。回填有界：本窗不再新增
+/// 观测、凑满渲染行数、或已到 sequence 1 即停。
+const OBSERVATION_MAX_BACKFILL: u32 = 8;
 /// 尾窗内预算截断（Host 单页 512 KiB 条目上限）时的同代次续读页数
 /// 上限；耗尽即如实截断落库（有界请求，不逐页追完全量历史）。
 const OBSERVATION_MAX_LIST_PAGES: u32 = 3;
@@ -181,10 +186,18 @@ pub(super) struct ComputerPanelState {
     pub observations: Vec<ObservationEvidenceEntry>,
     /// 证据查询代次（与目标列表代次独立；断线归零防迟到落地）。
     obs_request_id: u64,
-    /// 首查为 head 探测页（limit=1）；!complete 时同代次续读尾部窗口。
+    /// 首查为 head 探测页（limit=1）；!complete 时同代次续读当前窗口。
     obs_probe: bool,
-    /// 本轮查询已消费的尾窗 / 续读数据页数（探测页不计；0 = 尾窗首页）。
+    /// 当前窗口已消费的数据页数（探测页不计；0 = 该窗首页）。换回填窗时归零。
     obs_pages: u32,
+    /// 当前数据窗的 after_sequence（Host 从 after+1 起读）。探测页写入。
+    obs_floor: u64,
+    /// 尾窗为空后已经回填的窗口数（尾窗不计）。
+    obs_backfill: u32,
+    /// 当前窗口（含字节预算续读页）新纳入的观测条数。换窗时清零。
+    obs_window_added: usize,
+    /// 本轮尚未发布的观测（回填期间不改已展示列表；收敛时一次换上）。
+    obs_pending: Vec<ObservationEvidenceEntry>,
     /// 本轮查询开始前的最新证据身份（跟随最新判定用；多页累积期间
     /// self.observations 会被逐页改写，起点须在 begin 时钉住）。
     obs_previous_newest: Option<EvidenceKey>,
@@ -229,6 +242,10 @@ impl Default for ComputerPanelState {
             obs_request_id: 0,
             obs_probe: false,
             obs_pages: 0,
+            obs_floor: 0,
+            obs_backfill: 0,
+            obs_window_added: 0,
+            obs_pending: Vec::new(),
             obs_previous_newest: None,
             obs_fetch: ComputerFetch::Idle,
             obs_error: None,
@@ -380,6 +397,10 @@ impl ComputerPanelState {
     pub(super) fn begin_observation_loading(&mut self) -> u64 {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         self.obs_pages = 0;
+        self.obs_floor = 0;
+        self.obs_backfill = 0;
+        self.obs_window_added = 0;
+        self.obs_pending.clear();
         self.obs_previous_newest = self
             .observations
             .first()
@@ -397,10 +418,15 @@ impl ComputerPanelState {
 
     /// observation_list 回执落地。Host 分页按事件序推进：探测页（limit=1）
     /// 只习得当前 head（条目不落库——limit=1 页不代表尾窗），随后读
-    /// [head-窗口, head] 尾窗；尾窗内被单页字节预算截断（complete=false
-    /// 且 next_sequence=Some(游标)）时从游标同代次续读（页数有界，耗尽
-    /// 即如实标截断）。落库页合并本环全部条目（新→旧），保持选中证据
-    /// 身份（失效才回落最新）。返回续读查询参数；None = 本轮已收敛。
+    /// [head-窗口, head] 尾窗。Host 的 `complete` 只表示本页已扫到会话
+    /// head，或本页不足 limit 条；满页未到 head 时 `complete=false`，
+    /// 游标停在本页最后一条。尾窗内游标仍低于窗口上沿才是字节预算截断，
+    /// 从游标同代次续读（页数有界，耗尽即如实标截断）。游标已到窗口上沿
+    /// 则本窗结束，不顺着游标扫回更新的事件。尾窗 0 条且更早仍有事件时，
+    /// 按同样窗口向更早回填（有界）：本窗仍新增观测则再往前一窗，本窗不再
+    /// 新增、凑满行数或已到 sequence 1 则停。尾窗已有观测时不回填。收敛
+    /// 时一次换上本轮条目（新→旧，按身份去重），保持选中证据身份（失效
+    /// 才回落最新）。返回续读 / 回填查询参数；None = 本轮已收敛。
     pub(super) fn apply_observations(
         &mut self,
         session_id: &str,
@@ -415,42 +441,91 @@ impl ComputerPanelState {
         if self.obs_probe {
             self.obs_probe = false;
             let after = data.head_sequence.saturating_sub(OBSERVATION_EVENT_WINDOW);
-            // 尾窗外还有更早事件（after ≥ 1）即如实标注截断。
+            self.obs_floor = after;
+            self.obs_backfill = 0;
+            self.obs_window_added = 0;
+            // 尾窗外还有更早事件即先标截断；回填读到 sequence 1 后再清。
             self.obs_truncated = data.head_sequence > OBSERVATION_EVENT_WINDOW;
             return Some((Some(after), OBSERVATION_EVENT_WINDOW as u32));
         }
-        let mut entries = data.entries.clone();
-        // 数据页累积：尾窗首页整批替换，续读页追加（同一环请求）。
-        if self.obs_pages == 0 {
-            self.observations = entries;
-        } else {
-            self.observations.append(&mut entries);
-        }
-        if !data.complete {
+        let added = data.entries.len();
+        self.obs_pending.extend(data.entries.clone());
+        self.obs_window_added = self.obs_window_added.saturating_add(added);
+        if !self.observation_page_finished(data) {
             if let Some(cursor) = data.next_sequence {
                 if self.obs_pages < OBSERVATION_MAX_LIST_PAGES {
                     self.obs_pages += 1;
                     return Some((Some(cursor), OBSERVATION_EVENT_WINDOW as u32));
                 }
             }
-        }
-        // 收敛落库：续读上限耗尽或无游标的不完整页 → 已收条目即全部
-        // 结果，截断如实标注（complete 页的截断标记已由探测页锚定）。
-        if !data.complete {
+            // 续读上限耗尽或无游标：已收条目即全部结果。
             self.obs_truncated = true;
+            self.publish_observations(data.head_sequence);
+            return None;
         }
-        self.finalize_observations(data.head_sequence);
+        if self.should_backfill_observations() {
+            self.obs_backfill = self.obs_backfill.saturating_add(1);
+            let after = self.obs_floor.saturating_sub(OBSERVATION_EVENT_WINDOW);
+            self.obs_floor = after;
+            self.obs_pages = 0;
+            self.obs_window_added = 0;
+            return Some((Some(after), OBSERVATION_EVENT_WINDOW as u32));
+        }
+        if self.obs_floor == 0 {
+            self.obs_truncated = false;
+        }
+        self.publish_observations(data.head_sequence);
         None
     }
 
-    /// 本轮查询收敛：排序（新→旧）、落 Ready、按需保持 / 回落 / 跟随
-    /// 选中身份（起点为 begin 时钉住的上一轮最新，多页改写不干扰）。
+    /// 本页是否已经覆盖当前窗口。`complete` 为真时 Host 已扫到 head 或
+    /// 本页不足 limit。回填窗满页时 `complete` 仍为假，游标等于窗口上沿
+    /// （`obs_floor + 300`，不超过 head）：那是本窗结束。只有游标还低于
+    /// 上沿，才是字节预算把页截断，需要从游标续读。
+    fn observation_page_finished(&self, data: &ObservationListData) -> bool {
+        if data.complete {
+            return true;
+        }
+        let window_end = self
+            .obs_floor
+            .saturating_add(OBSERVATION_EVENT_WINDOW)
+            .min(data.head_sequence);
+        data.next_sequence
+            .is_some_and(|cursor| cursor >= window_end)
+    }
+
+    /// 尾窗没有任何观测时才向更早事件走。回填窗仍看到新图就再走一窗
+    /// （截图簇常跨过 300 条边界）；空窗且已经有图、或触到上限，即停。
+    fn should_backfill_observations(&self) -> bool {
+        if self.obs_backfill >= OBSERVATION_MAX_BACKFILL || self.obs_floor == 0 {
+            return false;
+        }
+        if self.obs_pending.len() >= OBSERVATION_MAX_ROWS {
+            return false;
+        }
+        if self.obs_backfill == 0 {
+            return self.obs_pending.is_empty();
+        }
+        self.obs_pending.is_empty() || self.obs_window_added > 0
+    }
+
+    fn publish_observations(&mut self, head: u64) {
+        self.observations = std::mem::take(&mut self.obs_pending);
+        self.finalize_observations(head);
+    }
+
+    /// 本轮查询收敛：排序（新→旧）、按 (sequence, part_index) 去重、落
+    /// Ready、按需保持 / 回落 / 跟随选中身份（起点为 begin 时钉住的上一轮
+    /// 最新，多页改写不干扰）。字节预算续读的 limit 仍是整窗，可能越过
+    /// 窗口上沿，把已经纳入的更新观测再带一次。
     fn finalize_observations(&mut self, head: u64) {
         self.observations.sort_by(|a, b| {
             b.sequence
                 .cmp(&a.sequence)
                 .then(b.part_index.cmp(&a.part_index))
         });
+        self.observations
+            .dedup_by(|a, b| a.sequence == b.sequence && a.part_index == b.part_index);
         self.obs_fetch = ComputerFetch::Ready;
         self.obs_error = None;
         self.obs_head = head;
@@ -2823,6 +2898,22 @@ mod tests {
         serde_json::from_value(value).expect("frozen ObservationListData shape")
     }
 
+    /// 稠密事件序上 Host 的一页：满 `OBSERVATION_EVENT_WINDOW` 条且上沿
+    /// 未到 head 时 `complete=false`，游标是本页最后一条。扫到 head 或
+    /// 不足一窗则为 `complete=true`。
+    fn host_window_page(
+        entries: Vec<ObservationEvidenceEntry>,
+        head: u64,
+        after: u64,
+    ) -> ObservationListData {
+        let end = after.saturating_add(OBSERVATION_EVENT_WINDOW);
+        if end >= head {
+            observation_list_data(entries, head, true, None)
+        } else {
+            observation_list_data(entries, head, false, Some(end))
+        }
+    }
+
     fn observation_chunk(
         sequence: u64,
         part_index: u32,
@@ -3067,6 +3158,272 @@ mod tests {
             None
         );
         assert_eq!(state.obs_head, 1005);
+    }
+
+    /// 尾窗被流式 delta 占满时回填更早窗口。形状取自 CU-26 会话
+    /// `ses-1c1a3c-18de5a39153fbe3f-1`：head=1243，四张 JPEG 在
+    /// 586 / 718 / 836 / 926，944 之后没有 `tool_execution_completed`。
+    /// 旧逻辑只读 [944, 1243]，面板得到 0 条。
+    #[test]
+    fn observation_empty_tail_backfills_past_streaming_deltas() {
+        const HEAD: u64 = 1243;
+        let mut state = ComputerPanelState::default();
+        state.begin_loading("s1");
+        let request = state.begin_observation_loading();
+        state.note_observation_dispatch(true);
+        assert_eq!(
+            state.apply_observations(
+                "s1",
+                request,
+                &observation_list_data(Vec::new(), HEAD, true, None)
+            ),
+            Some((
+                Some(HEAD - OBSERVATION_EVENT_WINDOW),
+                OBSERVATION_EVENT_WINDOW as u32
+            ))
+        );
+        assert!(state.obs_truncated);
+        // 探测页不改已展示列表。
+        assert!(state.observations.is_empty());
+
+        // 尾窗 [944, 1243]：0 条，且已到 head（complete=true）→ 回填 after=643。
+        let tail = HEAD - OBSERVATION_EVENT_WINDOW;
+        state.note_observation_dispatch(false);
+        assert_eq!(
+            state.apply_observations("s1", request, &host_window_page(Vec::new(), HEAD, tail)),
+            Some((
+                Some(HEAD - 2 * OBSERVATION_EVENT_WINDOW),
+                OBSERVATION_EVENT_WINDOW as u32
+            ))
+        );
+        assert!(state.observations.is_empty(), "回填未收敛前保留上一轮列表");
+
+        // [644, 943]：三张动作后观测。Host 满页未到 head，complete=false，
+        // 游标停在 943。必须回填 after=343，不能顺游标再读 [944, 1243]。
+        let mid = HEAD - 2 * OBSERVATION_EVENT_WINDOW;
+        state.note_observation_dispatch(false);
+        assert_eq!(
+            state.apply_observations(
+                "s1",
+                request,
+                &host_window_page(
+                    vec![
+                        observation_entry(718, 0, Some("run-4")),
+                        observation_entry(836, 0, Some("run-4")),
+                        observation_entry(926, 0, Some("run-4")),
+                    ],
+                    HEAD,
+                    mid,
+                )
+            ),
+            Some((
+                Some(HEAD - 3 * OBSERVATION_EVENT_WINDOW),
+                OBSERVATION_EVENT_WINDOW as u32
+            ))
+        );
+
+        // [344, 643]：授权截图。同样 complete=false。仍新增了观测，再探一窗。
+        let older = HEAD - 3 * OBSERVATION_EVENT_WINDOW;
+        state.note_observation_dispatch(false);
+        assert_eq!(
+            state.apply_observations(
+                "s1",
+                request,
+                &host_window_page(vec![observation_entry(586, 0, Some("run-4"))], HEAD, older)
+            ),
+            Some((
+                Some(HEAD - 4 * OBSERVATION_EVENT_WINDOW),
+                OBSERVATION_EVENT_WINDOW as u32
+            ))
+        );
+
+        // [44, 343]：不再新增。满页游标在上沿，停，不顺游标扫回。截断保持。
+        let stop = HEAD - 4 * OBSERVATION_EVENT_WINDOW;
+        state.note_observation_dispatch(false);
+        assert_eq!(
+            state.apply_observations("s1", request, &host_window_page(Vec::new(), HEAD, stop)),
+            None
+        );
+        assert_eq!(
+            state
+                .observations
+                .iter()
+                .map(|entry| entry.sequence)
+                .collect::<Vec<_>>(),
+            vec![926, 836, 718, 586]
+        );
+        assert_eq!(state.evidence_selected, Some((926, 0)));
+        assert!(state.obs_truncated);
+        assert_eq!(state.obs_fetch, ComputerFetch::Ready);
+    }
+
+    /// 回填窗里的字节预算截断仍同窗续读；续读若越过窗口上沿，不把游标
+    /// 当成下一跳，并按身份去掉重复条目。
+    #[test]
+    fn observation_backfill_budget_continues_inside_window_and_dedups() {
+        const HEAD: u64 = 1243;
+        let mut state = ComputerPanelState::default();
+        state.begin_loading("s1");
+        let request = state.begin_observation_loading();
+        state.note_observation_dispatch(true);
+        let tail = state
+            .apply_observations(
+                "s1",
+                request,
+                &observation_list_data(Vec::new(), HEAD, false, Some(1)),
+            )
+            .expect("probe")
+            .0
+            .expect("tail after");
+        state.note_observation_dispatch(false);
+        let mid = state
+            .apply_observations("s1", request, &host_window_page(Vec::new(), HEAD, tail))
+            .expect("empty tail backfills")
+            .0
+            .expect("mid after");
+        assert_eq!(mid, tail - OBSERVATION_EVENT_WINDOW);
+
+        // 预算停在 800，低于窗口上沿 943：同窗续读，不跳到更早的窗。
+        state.note_observation_dispatch(false);
+        assert_eq!(
+            state.apply_observations(
+                "s1",
+                request,
+                &observation_list_data(
+                    vec![observation_entry(718, 0, Some("run-4"))],
+                    HEAD,
+                    false,
+                    Some(800),
+                )
+            ),
+            Some((Some(800), OBSERVATION_EVENT_WINDOW as u32))
+        );
+        assert!(state.observations.is_empty());
+
+        // 续读越过上沿，并再次带上 718。窗口结束，回填更早的空窗，不跟 1100。
+        state.note_observation_dispatch(false);
+        assert_eq!(
+            state.apply_observations(
+                "s1",
+                request,
+                &observation_list_data(
+                    vec![
+                        observation_entry(718, 0, Some("run-4")),
+                        observation_entry(836, 0, Some("run-4")),
+                    ],
+                    HEAD,
+                    false,
+                    Some(1100),
+                )
+            ),
+            Some((
+                Some(mid - OBSERVATION_EVENT_WINDOW),
+                OBSERVATION_EVENT_WINDOW as u32
+            ))
+        );
+        let older = mid - OBSERVATION_EVENT_WINDOW;
+        state.note_observation_dispatch(false);
+        assert_eq!(
+            state.apply_observations("s1", request, &host_window_page(Vec::new(), HEAD, older)),
+            None
+        );
+        assert_eq!(
+            state
+                .observations
+                .iter()
+                .map(|entry| entry.sequence)
+                .collect::<Vec<_>>(),
+            vec![836, 718]
+        );
+    }
+
+    /// 尾窗已经有观测时不回填；短会话读到 sequence 1 后不再标截断。
+    #[test]
+    fn observation_backfill_stops_for_nonempty_tail_and_session_start() {
+        let mut state = ComputerPanelState::default();
+        state.begin_loading("s1");
+        let request = state.begin_observation_loading();
+        state.note_observation_dispatch(true);
+        state.apply_observations(
+            "s1",
+            request,
+            &observation_list_data(Vec::new(), 500, true, None),
+        );
+        state.note_observation_dispatch(false);
+        assert_eq!(
+            state.apply_observations(
+                "s1",
+                request,
+                &observation_list_data(
+                    vec![observation_entry(480, 0, Some("r1"))],
+                    500,
+                    true,
+                    None,
+                )
+            ),
+            None,
+            "尾窗已有观测，不向 after=0 再查"
+        );
+        assert_eq!(state.evidence_selected, Some((480, 0)));
+        assert!(state.obs_truncated);
+
+        let request = state.begin_observation_loading();
+        state.note_observation_dispatch(true);
+        assert_eq!(
+            state.apply_observations(
+                "s1",
+                request,
+                &observation_list_data(Vec::new(), 120, true, None)
+            ),
+            Some((Some(0), OBSERVATION_EVENT_WINDOW as u32))
+        );
+        state.note_observation_dispatch(false);
+        assert_eq!(
+            state.apply_observations(
+                "s1",
+                request,
+                &observation_list_data(Vec::new(), 120, true, None)
+            ),
+            None
+        );
+        assert!(state.observations.is_empty());
+        assert!(!state.obs_truncated, "已从 sequence 1 扫完");
+        assert_eq!(state.obs_fetch, ComputerFetch::Ready);
+    }
+
+    /// 整段都没有观测时，回填停在窗口上限，不把会话逐页拉完。
+    #[test]
+    fn observation_backfill_is_bounded_when_no_evidence_exists() {
+        let head = OBSERVATION_EVENT_WINDOW * (u64::from(OBSERVATION_MAX_BACKFILL) + 3);
+        let mut state = ComputerPanelState::default();
+        state.begin_loading("s1");
+        let request = state.begin_observation_loading();
+        state.note_observation_dispatch(true);
+        let mut after = state
+            .apply_observations(
+                "s1",
+                request,
+                &observation_list_data(Vec::new(), head, true, None),
+            )
+            .expect("probe anchors the tail")
+            .0
+            .expect("tail after");
+        assert_eq!(after, head - OBSERVATION_EVENT_WINDOW);
+        for step in 0..=OBSERVATION_MAX_BACKFILL {
+            state.note_observation_dispatch(false);
+            let next =
+                state.apply_observations("s1", request, &host_window_page(Vec::new(), head, after));
+            if step == OBSERVATION_MAX_BACKFILL {
+                assert_eq!(next, None, "回填窗口触顶后停止");
+            } else {
+                let older = next.expect("继续回填").0.expect("after");
+                assert_eq!(older, after - OBSERVATION_EVENT_WINDOW);
+                after = older;
+            }
+        }
+        assert!(state.observations.is_empty());
+        assert!(state.obs_truncated);
+        assert_eq!(state.obs_fetch, ComputerFetch::Ready);
     }
 
     /// 图像分块重组：偏移连续、base64 合法、总量 ≤ 条目申报；eof 时
