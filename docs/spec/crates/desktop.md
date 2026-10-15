@@ -593,7 +593,7 @@ Context 投影回归覆盖目录 context window 的 0 哨兵显示为 unavailabl
 
 ## 8. 注意事项与已知限制
 
-- **Linux X11 窗口句柄（2026-10-14）**：`AppView::render` 只在 macOS 抓取 `raw_window_handle`。gpui 0.2.2 的 X11 `X11Window::window_handle` 是 `unimplemented!()`，非测试构建在 Linux 首帧会 panic；原生 WebView 只有 macOS 实现，Linux 上没有消费者。本机 `DISPLAY=:9`（Xvfb、xfwm4 `--compositor=off`、lavapipe）上 `pawork-desktop` 真窗口已连上 `pawork gui serve` 并完成 CU-26 的审批点击，见 [CU-26](../../plan/cu-26-wayland-production.md)。最小化后 lavapipe 交换链不再呈现，是这次验收的观察，不是产品契约。
+- **Linux X11 窗口句柄（2026-10-14）**：`AppView::render` 只在 macOS 抓取 `raw_window_handle`。gpui 0.2.2 的 X11 `X11Window::window_handle` 是 `unimplemented!()`，非测试构建在 Linux 首帧会 panic；原生 WebView 只有 macOS 实现，Linux 上没有消费者。本机 `DISPLAY=:9`（Xvfb、xfwm4 `--compositor=off`、lavapipe）上 `pawork-desktop` 真窗口已连上 `pawork gui serve` 并完成 CU-26 的审批点击，见 [computer-use](computer-use.md) 第 6 节。最小化后 lavapipe 交换链不再呈现，是这次验收的观察，不是产品契约。
 - **gpui 前台执行器无 tokio reactor（历史崩溃教训）**：在 `cx.spawn` 的前台执行器上 await client 调用，会在 `receive_frame` 内部的 `tokio::time` 直接 panic。连接期握手 / ack / `subscribe_all` 与事件泵**必须**全部跑在 `runtime.spawn` 上，gpui 侧只经 channel 消费结果。`--probe-smoke` 走 `platform.block_on` 自带 runtime，暴露不了这类回归，因此生产窗口启动仍是必需门禁。
 - **Changes 面只读**（用户拍板 2026-08-24）：B12（2026-10-08）归档了无消费者的 StageService / HunkStageService。冻结 git_stage 仍三通道不可用，接线仍是 BK-GIT-02，须 Accepted ADR，不得从 UI 直接调用 Git。`@` 补全浮层与「已加载规则」分区无 Host 出口（`@` 端到端展开在 host 侧 crates/app，不在本 crate）。
 - **host `diff_*` 固定解析 latest 会话**：数据会话与当前查看会话不一致时，UI 以 banner「Showing changes for latest session X — not the active session.」与 popover 提示行如实标注，不静默张冠李戴。
