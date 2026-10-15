@@ -367,13 +367,13 @@ CU-21 增 `gui_host/tests/cu21_live.rs::cu21_isolated_firefox`：默认 ignored�
 
 AC-04 延伸既有 `recorded_operations_save_and_load_as_real_skill`：种入持久操作历史后，正式 Host preview / save 创建真实 `SKILL.md` 与 `manifest.toml`，再以不同 run ID 调用正式 `chat_turn_with_run_id`。`ScriptedProvider` 的测试专用请求捕获联合核对技能正文、持久 `resources.injected` 的 `active_skill` / ID / 字节数及 `RunCompleted`；同一工作区撤销信任后再次 Run，不注入该技能。测试装配显式安装现有资源加载器并在内存设置信任，不代表原操作执行、GUI 点击、真实 Provider 或系统验收。
 
-`scripts/ui-fixture.sh` 经 `scripts/cargo-build.sh` 定位本次 artifact；入口回归覆盖隔离 root、marker 与 barrier 拒绝，过长 socket 路径在编译前失败并报告中文错误。构建与入口回归的证据边界见 [验证规格](../verification.md#41-按用途选择入口)。
+UI fixture 直接运行 `ui_fixture` Rust example；隔离 root、marker、seed 路径与重放验证由 example 及本包测试承载，使用说明见 [fixture README](../../../fixtures/ui/README.md#7-直接运行-fixture)。独立驱动、扫描脚本及其自测已移除，不再宣称脚本层的 socket 长度与进程归属检查。构建与测试的证据边界见 [验证规格](../verification.md#41-按用途选择入口)。
 
 ENV-06 沿用 `gui_host::handlers::recording::tests` 两条既有回归：Unix 保存 / ResourceLoader 加载、重复不覆盖及 AlreadyExists 文案，Secret / 路径 / source / symlink 拒绝；`cfg(not(unix))` 主路径断言 Unsupported 固定文案与零产物，不以 skip 或提前 return 代替拒绝。2026-10-09 在 macOS 执行 `cargo test -p pawork-app --offline --lib --features ui-fixture gui_host::handlers::recording::tests`，2 passed / 302 filtered；非 Unix 分支未编译、未原生执行，不证明非 Unix 支持。
 
 网关回归：`cargo test -p pawork-app --offline --lib gateway_`。`gateway_tests.rs` 集成宿主测试以真实 loopback HTTP + wiremock 验证模型路由、两种响应、usage/strict、鉴权撤销与 Host/Origin 拒绝；其中 Go 路径同时断言普通 / SSE 请求的上游会话头存在且互不相同，session ID 不进入 JSON 正文；生图路径验证普通 JSON 的 `output.choices` 归一、非流式上游请求和 HTTP 200 错误正文拒绝 / 脱敏。阻塞 provider 验证流式超时错误、断开取消和部分记账。原生视频回归验证一次异步提交、查询 / 失败码脱敏、固定参数及无效请求拒绝。独立 gateway 包的 `tokens` 测试验证多客户端、摘要存储、权限与撤销。测试不访问真实模型。
 
-live-smoke 由 feature 显式选择，缺环境直接失败；验证非空流式文本、唯一成功终态与 `resume_messages` 可恢复的助手内容。普通 `bash scripts/test.sh app` 开启 ui-fixture、不开 live-smoke，不请求真实 Provider；真实模型按 [验证规格](../verification.md) 执行。
+live-smoke 由 feature 显式选择，缺环境直接失败；验证非空流式文本、唯一成功终态与 `resume_messages` 可恢复的助手内容。普通 `cargo test --offline --tests -p pawork-app --features ui-fixture` 开启 ui-fixture、不开 live-smoke，不请求真实 Provider；真实模型按 [验证规格](../verification.md) 执行。
 
 `ui_fixture_projection` 核对全部已登记 workspace 的根目录、快照 id/name 集合及每个 session 的归属，不依赖返回顺序。
 
@@ -394,7 +394,7 @@ B14 起，严格装配回归走 `from_config` 加 `MemoryBackend`：未知 provi
 默认验证命令：
 
 ```bash
-bash scripts/test.sh app
+cargo test --offline --tests -p pawork-app --features ui-fixture
 ```
 
 UI fixture 属显式 opt-in 验证资产；其集成测试与 example 均声明
@@ -454,7 +454,7 @@ UI-6b 扩展已有 key 端到端用例：添加第二个 key、持 Run 读锁选
 
 提交前复核扩展现有 `slow_upstream_queries_allow_writes_heartbeat_and_drop_on_disconnect`：对 ModelList 和账户额度查询分别模拟持读锁等待上游，同连接写命令等待写锁；释放上游后两条响应按各自 request_id 正确返回，等待期间心跳可用、断连取消未完成查询。旧 `FuturesUnordered` 实现先复现写命令超时，连接级 `JoinSet` 修复后通过。
 
-任务消耗扩展现有 Gateway 回归：带小说 / 分部 / 章节的 Chat 元数据不送上游、call ID、全量汇总分页、token client 隔离、本地操作幂等与伪 Token 拒绝、图像 / 无 usage / 失败记录、断连部分用量、视频持久重开 / 跨客户端拒绝 / 并发轮询不重复统计。运行 `bash scripts/test.sh app`。
+任务消耗扩展现有 Gateway 回归：带小说 / 分部 / 章节的 Chat 元数据不送上游、call ID、全量汇总分页、token client 隔离、本地操作幂等与伪 Token 拒绝、图像 / 无 usage / 失败记录、断连部分用量、视频持久重开 / 跨客户端拒绝 / 并发轮询不重复统计。运行 `cargo test --offline --tests -p pawork-app --features ui-fixture`。
 
 B20 定向回归：`run_start_accepts_next_turn_when_terminal_becomes_visible` 经正式 RunStart / RunCancel、MockProvider 和临时 SessionStore 验证收到取消终态即可发下一轮；`gui_event_bus_old_flush_does_not_clear_or_overtake_new_hold` 验证旧暂存先发布、新登记保留及新终态继续暂存。前者只替代外部 Provider，后者只证明总线并发边界。
 

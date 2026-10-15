@@ -40,7 +40,7 @@ listener 返回的 `GuiConnection` 提供 `receive` / `close` / `wait_done`；�
 
 ## 7. 测试与 golden 资产
 
-`bash scripts/test.sh gui-server`；原 app 的连接测试整体迁入，测试语义保留。
+`cargo test --offline --tests -p pawork-gui-server`；原 app 的连接测试整体迁入，测试语义保留。
 
 | 资产 | Target | 覆盖点 |
 | --- | --- | --- |

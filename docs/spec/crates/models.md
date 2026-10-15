@@ -51,7 +51,7 @@ B5 裁决（2026-10-08）：删除仅由本包测试消费的 `validate_context`
 
 ## 7. 测试与 golden 资产
 
-原 registry / negotiate / pricing 内联回归完整迁移，覆盖别名冲突、并发探测/取消、能力收窄、图片/视频与 hosted tools 拒绝、推理强度和整数计价。执行 `bash scripts/test.sh models`；跨适配器联动执行 `bash scripts/test.sh models providers`。本次不新增镜像测试。
+原 registry / negotiate / pricing 内联回归完整迁移，覆盖别名冲突、并发探测/取消、能力收窄、图片/视频与 hosted tools 拒绝、推理强度和整数计价。执行 `cargo test --offline --tests -p pawork-models`；跨适配器联动执行 `cargo test --offline --tests -p pawork-models -p pawork-providers --all-features`。本次不新增镜像测试。
 
 B5 保留既有 `merge_provider_catalog_feeds_v2_caps_into_evidence_without_name_match`、`purpose_filter_covers_four_capabilities_and_intersects`，改为直接调用保留入口；三源 / probe-only / override-only 断言改用 `capability_evidence_covers_all_three_sources`。仅移除已删除入口的上下文布尔包装测试、全量快照排序与枚举断言；能力收窄、嵌套图片及用途交集回归保留。嵌套视频检测与 App / providers 视频回归未修改，本轮未执行后两包的视频行为测试。
 

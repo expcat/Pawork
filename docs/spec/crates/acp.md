@@ -42,7 +42,7 @@ ACP `PROTOCOL_VERSION = 1`；v2、未知方法和除 `_meta` 外未知参数明�
 
 ## 7. 测试与 golden 资产
 
-`bash scripts/test.sh acp`。现行 golden 为 `fixtures/v1` 十二份与 `fixtures/v2` 一份；未接入测试、且已与现行握手参数分叉的 `initialize-request.json` 已删除。
+`cargo test --offline --tests -p pawork-acp`。现行 golden 为 `fixtures/v1` 十二份与 `fixtures/v2` 一份；未接入测试、且已与现行握手参数分叉的 `initialize-request.json` 已删除。
 
 | 资产 | 覆盖点 |
 | --- | --- |

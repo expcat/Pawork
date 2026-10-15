@@ -48,7 +48,7 @@ Chat / Video 请求可带 `pawork_usage: Option<TaskUsageContext>`，此元数�
 
 ## 7. 测试与 golden 资产
 
-token 原回归随迁，运行 `bash scripts/test.sh gateway`。真实 `AppCore` + HTTP + 模拟上游联调保留在 `crates/app/src/gateway_tests.rs`，覆盖目录、普通/SSE、撤销、拒绝、取消、租约和用量；运行 `cargo test -p pawork-app --offline --lib gateway_`。不以单独 token 测试代替宿主集成。
+token 原回归随迁，运行 `cargo test --offline --tests -p pawork-gateway`。真实 `AppCore` + HTTP + 模拟上游联调保留在 `crates/app/src/gateway_tests.rs`，覆盖目录、普通/SSE、撤销、拒绝、取消、租约和用量；运行 `cargo test -p pawork-app --offline --lib gateway_`。不以单独 token 测试代替宿主集成。
 
 原生视频回归覆盖实际路由、异步提交 / 查询、换账号后仍查询原账号、畸形状态 / 身份 / URL / 超大正文拒绝、固定生成参数、未知字段拒绝、鉴权、错误消息脱敏与不重复提交；等待上游时断连或停止 Host 均取消并释放租约，视频秒数不伪造为 token 用量。
 

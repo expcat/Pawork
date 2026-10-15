@@ -19,7 +19,7 @@ projection 进入 Desktop。fixture 数据只通过协议到达 UI，生产代�
 运行时 fixture root（一律不入库，示例中以 `<root>` 指代）：
 
 ```text
-<root>/.pawork-ui-fixture   marker JSON（preparing → ready；clean 认存在性，
+<root>/.pawork-ui-fixture   marker JSON（preparing → ready；
                             serve/self-check 只接受 ready）
 <root>/manifest.json        {fixture_version, now_ms, seeded_at_ms, 文件摘要}
 <root>/data/                隔离数据目录语义（session.db、gui.token、
@@ -35,7 +35,7 @@ projection 进入 Desktop。fixture 数据只通过协议到达 UI，生产代�
 时间锚点：默认 `FIXTURE_NOW_MS = 1767225600000`（2026-01-01T00:00:00Z），
 可被 `seed --now-ms` 覆盖；所有 offset 相对锚点重锚。workspace 路径只允许
 `${ROOT}/<relative>`，diff/tool/PTY 路径只允许不含 `.` / `..` 的相对路径；
-seed 在任何写入前校验引用、枚举与路径，扫描器另拦截绝对路径资产。
+seed 在任何写入前校验引用、枚举与路径。
 git 基线固定作者/日期/消息，并隔离用户/系统 Git 配置及 `GIT_*` 路由环境，
 不触发全局签名或 hook，也不能被环境重定向到 fixture root 外。
 
@@ -135,10 +135,9 @@ SIGINT 按默认语义终止。输出不含日期、随机数、主机名或环�
 | 文件 | 写入方 | 语义 |
 | --- | --- | --- |
 | `host_ready` | example serve | bind 完成后写；读方据此确认 host 可连接 |
-| `host_restarted` | 驱动脚本 | restart-host 流程（停旧起新）观察到第二次 host_ready 后写 |
-| `drop_socket.request` | driver / 脚本 | 请求 host drop 全部连接句柄（保持监听） |
+| `drop_socket.request` | 手动取证方 | 请求 host drop 全部连接句柄（保持监听） |
 | `drop_socket.done` | example serve | 已完成 drop，读方据此继续 |
-| `serve_stop.request` | 驱动脚本 | 请求 host 优雅停机（abort accept 任务后 close listener）；stop_host 优先用此路径，5s 未退出再信号升级 |
+| `serve_stop.request` | 手动取证方 | 请求 host 优雅停机（abort accept 任务后 close listener） |
 | `replay_complete` | example self-check | 二次连接 Resume Replay 验证通过后写 |
 | `timeline_stable` | Desktop（W4） | timeline 稳定（settle_seq 单调自增、session_id、entry_count） |
 | `approval_visible` | Desktop（W4） | 审批卡可见（含 tool 名）；消失时由 Desktop 删除该文件 |
@@ -147,26 +146,10 @@ Desktop 在开始连接、打开会话或收到任一 ControllerEvent 时先删�
 `timeline_stable` / `approval_visible`，只在新的静默窗口重新写入，读方不得
 把旧生命周期遗留的存在性当成本轮完成。
 
-## 7. 启动 / 清理 / 扫描
+## 7. 直接运行 fixture
 
-统一入口 `scripts/ui-fixture.sh`（root 型子命令必须显式 `--root`，禁止
-指向默认数据目录；完整用法见脚本 usage）：
-
-```bash
-ROOT="$(mktemp -d /tmp/pawork-ui-fixture.XXXXXX)"
-scripts/ui-fixture.sh seed --root "$ROOT"          # 生成/重建（幂等）
-scripts/ui-fixture.sh serve --root "$ROOT"         # 后台 host，等 host_ready
-scripts/ui-fixture.sh desktop --root "$ROOT"       # 后台 Desktop，连 root 内 socket
-scripts/ui-fixture.sh self-check --root "$ROOT"    # Resume Replay 验证
-scripts/ui-fixture.sh drop-socket --root "$ROOT"   # 断连场景（host 保持监听）
-scripts/ui-fixture.sh restart-host --root "$ROOT"  # 停旧起新（Desktop 走重连）
-scripts/ui-fixture.sh down --root "$ROOT"          # 停进程，保留数据与 barrier
-scripts/ui-fixture.sh clean --root "$ROOT"         # 只删带 marker 的 root
-scripts/ui-fixture.sh scan                         # 敏感信息扫描（默认本目录）
-```
-
-example 支持的冻结 CLI（driver 使用同一 feature 先构建，再直接启动产物，
-避免长期存活的 `cargo run` 包装进程占用 Cargo）：
+独立驱动和敏感信息扫描脚本已移除；数据集与 Rust example 保留。
+必须显式指定隔离 `--root`，禁止指向默认数据目录。example 支持的 CLI：
 
 ```bash
 cargo run -p pawork-app --offline --features ui-fixture --example ui_fixture -- seed --root <dir> [--now-ms <i64>]
@@ -174,6 +157,13 @@ cargo run -p pawork-app --offline --features ui-fixture --example ui_fixture -- 
 cargo run -p pawork-app --offline --features ui-fixture --example ui_fixture -- self-check --root <dir>
 cargo run -p pawork-app --offline --features ui-fixture --example ui_fixture -- snapshot-dump --root <dir> --out <file>
 ```
+
+自动化验收先用相同 feature 执行 `cargo build --example ui_fixture`，从
+Cargo `--message-format=json` 的 `compiler-artifact.executable` 取本次
+产物路径，再直接启动产物，避免长期存活的 `cargo run` 包装进程占用 Cargo。
+`serve`、`self-check` 和 Desktop 需独立终端/进程，不能并发运行 Cargo。
+需要 Desktop 时先运行 `scripts/build.sh`，再以 fixture 的 socket/token
+和隔离数据目录启动该次构建的 Desktop；`scripts/start.sh` 只启动正式实例。
 
 ### expected/snapshot.json 再生
 
@@ -184,7 +174,7 @@ desktop 的 `ui_fixture_expected_snapshot_rebuilds_groups_and_status` 单测
 
 ```bash
 ROOT="$(mktemp -d /tmp/pawork-ui-fixture.XXXXXX)"
-scripts/ui-fixture.sh seed --root "$ROOT"
+cargo run -p pawork-app --offline --features ui-fixture --example ui_fixture -- seed --root "$ROOT"
 cargo run -p pawork-app --offline --features ui-fixture --example ui_fixture -- snapshot-dump \
   --root "$ROOT" --out fixtures/ui/expected/snapshot.json
 ```
@@ -192,27 +182,17 @@ cargo run -p pawork-app --offline --features ui-fixture --example ui_fixture -- 
 seed.json 数据集或 host snapshot 段结构变化后须再生并同批提交；再生不得
 携带 `--now-ms`（golden 固定使用默认锚点 `FIXTURE_NOW_MS`）。
 
-清理边界：driver 先 realpath root，拒绝 `/`、默认数据目录、仓库、home 及
-其危险重叠，并在会创建/使用 socket 的命令前拒绝超过 103 bytes 的 Unix
-socket 路径（macOS 普通 `mktemp -d` 路径可能过长，须使用上例 `/tmp` 短
-模板）；`down` / `clean` 不受该长度闸门限制，仍可恢复或清理旧的过长 root。
-`clean` 只删除存在 `.pawork-ui-fixture` marker 的精确目录，
-缺失 marker 一律拒绝。进程停止前核对 PID 的 command line 必须同时匹配
-fixture root 与 host/desktop 形态；陈旧或复用 PID 不发信号，也不再用宽泛
-`pgrep` 正则兜底；INT → TERM → KILL 每次升级前重新核对归属，避免等待窗口
-内 PID 复用后误杀。`down` 只停进程、不动数据。
-
-敏感信息扫描：`python3 scripts/ui-fixture-scan.py [root ...]`（默认扫本
-目录；可追加运行时 fixture root）。命中 exit 2，规则与掩码口径见该脚本
-头部文档；只读取 regular file，但 `auth.json` 即使是 symlink 等非 regular
-项也按文件名 fail-closed；回归测试 `python3 scripts/test_ui_fixture_scan.py`。
+停止和清理由取证方负责：先请求 `serve_stop.request` 或停止自己启动的
+进程，核对 PID 与 fixture root 后再处理临时目录；只清理自己创建且具有
+`.pawork-ui-fixture` marker 的精确 root。使用 `/tmp` 短路径，避免 Unix
+socket 长度限制。`scripts/clean.py` 只处理 Cargo 构建产物，不处理 fixture 数据。
 
 ## 8. 安全与红线
 
 - 不访问网络、不使用真实凭证；占位 token 形状文本（例如伪造的 key 样例）
-  一律禁止出现，扫描器按前缀 / 赋值形状 / 64 位 hex token 形状拦截。
+  一律禁止出现；检入前核对 token 前缀、key 赋值与 64 位 hex token 形状。
 - fixture data 目录禁止出现 auth.json；seed.json 路径只允许 `${ROOT}`
   占位；文档中的用户目录示例一律写 `/Users/<name>`、`/home/<name>` 占位形。
-- Secret（明文 token）不写入数据库与日志；扫描报告对命中值掩码输出。
+- Secret（明文 token）不写入数据库、日志与取证报告。
 - 本目录资产是测试输入，不改变生产 UI 行为；发现生产代码出现 demo 分支
   属于架构红线违规。

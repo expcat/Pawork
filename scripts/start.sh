@@ -3,30 +3,20 @@
 set -euo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-source "$repo_dir/scripts/cargo-build.sh"
 runtime_dir="$repo_dir/target/pawork-desktop-runtime"
 pawork_bin=""
 desktop_bin=""
 host_log="$runtime_dir/host.log"
 macos_bundle="$runtime_dir/Pawork.app"
-command_mode="${1:-start}"
 instance_name="${PAWORK_DESKTOP_INSTANCE:-desktop}"
 trust_workspaces="${PAWORK_DESKTOP_TRUST_WORKSPACES:-0}"
 approval_mode="${PAWORK_DESKTOP_APPROVAL_MODE:-}"
 
-usage() {
-  printf 'Usage: %s [build|start]\n' "${0##*/}"
-  printf 'Start defaults: instance=desktop; approval and trust follow global configuration.\n'
-}
-
-build_binaries() {
-  local binaries args=(--offline -p pawork -p pawork-desktop --bins)
-  cd "$repo_dir"
-  if [[ "$(uname -s)" == Darwin ]]; then args+=(--features gpui/runtime_shaders); fi
-  binaries=$(cargo_build_artifacts pawork,pawork-desktop cargo build "${args[@]}")
-  pawork_bin="${binaries%%$'\n'*}"
-  desktop_bin="${binaries#*$'\n'}"
-}
+if [[ $# -eq 1 && ( "$1" == -h || "$1" == --help ) ]]; then
+  printf 'Usage: %s\nBuild and start Pawork host and desktop.\n' "${0##*/}"
+  exit 0
+fi
+[[ $# -eq 0 ]] || { printf 'Usage: %s\n' "${0##*/}" >&2; exit 2; }
 
 host_is_running() {
   local status_output
@@ -49,25 +39,6 @@ prepare_macos_bundle() {
   fi
 }
 
-case "$command_mode" in
-  build)
-    [[ $# -eq 1 ]] || { usage >&2; exit 2; }
-    build_binaries
-    exit 0
-    ;;
-  start)
-    [[ $# -le 1 ]] || { usage >&2; exit 2; }
-    ;;
-  -h|--help|help)
-    usage
-    exit 0
-    ;;
-  *)
-    usage >&2
-    exit 2
-    ;;
-esac
-
 case "$approval_mode" in
   ""|always-ask|ask-for-writes|ask-for-dangerous|never-ask|read-only)
     ;;
@@ -81,7 +52,9 @@ case "$trust_workspaces" in
   *) printf 'PAWORK_DESKTOP_TRUST_WORKSPACES must be 0 or 1.\n' >&2; exit 2 ;;
 esac
 
-build_binaries
+binaries=$("$repo_dir/scripts/build.sh")
+pawork_bin="${binaries%%$'\n'*}"
+desktop_bin="${binaries#*$'\n'}"
 mkdir -p "$runtime_dir"
 
 host_was_started=0

@@ -71,7 +71,7 @@ stdio 经 SandboxBackend，环境清空并拒绝 Provider Secret 透传；HTTP �
 
 ## 7. 测试与 golden 资产
 
-原 MCP 内联测试随源码迁移，执行 `bash scripts/test.sh mcp tools`。包括配置拒绝、HTTP 安全、Secret 域、工具权限/预算、单注册表、超时/重连/取消及沙箱子进程。公开源码 SDK 隔离测试的路径随迁，不删除拒绝回归。
+原 MCP 内联测试随源码迁移，执行 `cargo test --offline --tests -p pawork-mcp -p pawork-tools`。包括配置拒绝、HTTP 安全、Secret 域、工具权限/预算、单注册表、超时/重连/取消及沙箱子进程。公开源码 SDK 隔离测试的路径随迁，不删除拒绝回归。
 
 B13 删除的四项测试只覆盖已退出的 OAuth API：未过期 bearer 不刷新、到期刷新并写回、PKCE 换码后元数据无明文、connector 注入 bearer 且 Debug 不泄漏。它们不能证明现行 SecretRef HTTP 路径。PKCE state 拒绝、刷新轮换、持久化与 Debug 脱敏的仍有效锚点在 `pawork-auth`，不是 MCP 产品验收。本包仍保留 HTTP/transport Debug 脱敏、明文 HTTP 携密拒绝和 OAuth 命名空间拒绝。
 

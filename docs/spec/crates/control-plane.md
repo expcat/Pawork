@@ -192,7 +192,7 @@ UI-6b G2：`QuotaUnit::Percent` 表示整数百分点，与协议镜像同形；
 - `audit.rs`（4）：**`audit_event_v1_jsonl_matches_frozen_fixture`——与 `fixtures/audit/event-v1.jsonl` 逐字节比对**，并断言 fixture 单行、`\n` 结尾、不含 `prompt` / `secret` / `tool_output`；validate 拒绝路径；append 拒绝重复 id；重开后文件行数与解析出的 tenant 保持。
 - `decision.rs`（6）：`sanitize_reason` 脱敏与截断、gate / kind 标签稳定；既有 `gate_and_kind_strings_are_stable` 同时验证 Retention 的 `as_str` / serde 序列化 / 反序列化。`rbac.rs`（6）：deny-first 合并、角色权限表。`tenant.rs`（8）：引擎 `check_*` 决策分支（预算 / 白名单 / 权限）与 `set_policy` 覆盖。`identity.rs`（3）：默认哨兵身份、JSON 往返与空白身份拒绝。
 
-默认验证命令：`bash scripts/test.sh control-plane`（实际 `cargo test --offline --tests -p pawork-control-plane`，默认 sqlite）。
+默认验证命令：`cargo test --offline --tests -p pawork-control-plane`（默认 sqlite）。
 
 任务日志新增两项必要回归：`journal_migrates_preserves_usage_and_resumes_video_without_double_counting`（v3 升级、历史费用保留、重开、视频确认状态与 JSON 损坏拒绝）与 `journal_report_scopes_retries_and_aggregates_all_pages_and_currencies`（Memory/SQLite 客户端隔离、补交、父任务作用域、全量汇总 + 分页、多币种与准确下钻）。
 

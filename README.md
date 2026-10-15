@@ -9,8 +9,9 @@ Pawork 用 Rust 从零实现一个编码智能体（Coding Agent）平台核心�
 ## 快速开始
 
 ```bash
-./scripts/pawork-desktop.sh start # 构建正式 Host/Desktop 并打开 UI
-./scripts/pawork-desktop.sh build # 仅构建正式 Host/Desktop
+./scripts/start.sh              # 构建正式 Host/Desktop 并打开 UI
+./scripts/build.sh              # 仅构建正式 Host/Desktop
+./scripts/clean.py --dry-run     # 预览超过 7 天的旧构建产物
 ./target/debug/pawork chat       # 流式多轮对话
 ./target/debug/pawork models     # 各通道聚合的模型列表
 ./target/debug/pawork sessions list
@@ -19,7 +20,7 @@ Pawork 用 Rust 从零实现一个编码智能体（Coding Agent）平台核心�
 
 Desktop 启动脚本不加载 fixture、seed 或测试 profile。它默认使用独立的真实实例 `desktop`，避免把日常 CLI 会话混入 UI 检查；可用 `PAWORK_DESKTOP_INSTANCE=<name>` 覆盖。脚本默认跟随用户 Global 配置中的审批默认与逐项目信任（未设时只读、不信任），Settings 修改后重启仍在。`PAWORK_DESKTOP_APPROVAL_MODE=ask-for-dangerous` 可显式覆盖当次审批，`PAWORK_DESKTOP_TRUST_WORKSPACES=1` 可显式信任当次进程中的工作区；`0` 表示不注入信任覆盖、跟随保存值。上述参数只在脚本新启 Host 时生效；若复用已运行实例，则沿用该 Host 的设置。Desktop 退出时只关闭脚本自己启动的 Host，日志位于 `target/pawork-desktop-runtime/host.log`。
 
-脚本从本次 Cargo 构建消息定位 Host/Desktop，支持自定义 target 目录；内容未变时复用现有 macOS bundle。测试与构建入口的选择见[验证规格](docs/spec/verification.md#41-按用途选择入口)。
+`scripts/` 只保留启动、构建、清理三个入口。构建脚本从本次 Cargo 消息定位 Host/Desktop，支持自定义 target 目录；内容未变时复用现有 macOS bundle。清理脚本保留每组最新构建代，确认预览后去掉 `--dry-run` 执行。测试直接使用 Cargo，必要 feature 见[验证规格](docs/spec/verification.md#41-按用途选择入口)。
 
 凭证经 `pawork auth` 写入 `~/.pawork/auth.json`；env 变量仅作遗留 fallback。Secret 红线：key/token 不入日志、事件与任何可提交文件。
 
@@ -58,7 +59,7 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 ├── apps/                # pawork（CLI 宿主 + composition root）、desktop（GPUI GUI）
 ├── schemas/             # protocol typegen 检入的 .d.ts
 ├── fixtures/            # 测试夹具
-├── scripts/             # 维护脚本
+├── scripts/             # start.sh / build.sh / clean.py
 ├── design/              # GUI P0–P2 三张阶段视觉基准图
 └── docs/                # 架构、设计、Spec、参照
 ```

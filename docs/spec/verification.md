@@ -71,31 +71,48 @@ E3/E4 证据必须包含日期、环境/版本、输入范围、实际结果和�
 
 | 改动范围 | 命令 | 证据边界 |
 | --- | --- | --- |
-| 文档/格式 | `bash scripts/mock/gate.sh --level 0` | ROADMAP 与当前所有改动 Markdown 的相对链接存在性、diff；不证明产品行为 |
-| 包内或紧相关操作 | `bash scripts/test.sh <包名>...` | 生产代码驱动的单测/集成；自动补必要 feature，实际选择用 `--print` 查看 |
-| CLI/SDK 子进程链 | `bash scripts/test.sh --host` | 先构建当前 pawork 并经 artifact 消息定位本次产物（config 的 target-dir/build.target 不会导致误测旧二进制），再运行真实 headless 子进程；缺二进制不能跳过成成功 |
-| Desktop 状态/操作/布局 | `bash scripts/test.sh desktop` | GPUI 模拟操作与实际布局；不能证明系统 IME、WebKit 页面效果或真窗口像素 |
-| mock/fixture/构建入口变化 | `bash scripts/mock/gate.sh --level 0,2` | 测试工具的 HTTP 回放、凭证/配置恢复、脱敏、UI 扫描与脚本调度；quota 探针对空窗、失败、过期缓存与缺失 provenance fail-closed；不算真实 Provider 验收 |
-| 正式 Host/Desktop 构建 | `bash scripts/pawork-desktop.sh build` | 同一次 Cargo 调用构建两个正式二进制，按 artifact 消息校验产物；不证明真窗口行为 |
+| 文档/格式 | `git diff --check`，并核对改动 Markdown 的相对链接 | 不证明产品行为 |
+| 包内或紧相关操作 | `cargo test --offline --tests -p pawork-<包名>`；多包追加 `-p`，必要 feature 见下表 | 生产代码驱动的单测/集成；不把未编译目标记为通过 |
+| CLI/SDK 子进程链 | 先运行 `scripts/build.sh`，再按下方命令设置 `PAWORK_BIN` 执行 `spawn_e2e` | 本次正式 Host 的真实 headless 子进程；缺二进制不能跳过成成功 |
+| Desktop 状态/操作/布局 | `cargo test --offline --bins -p pawork-desktop`（macOS 加 `--features gpui/runtime_shaders`） | GPUI 模拟操作与实际布局；不能证明系统 IME、WebKit 页面效果或真窗口像素 |
+| 正式 Host/Desktop 构建 | `./scripts/build.sh` | 同一次 Cargo 调用构建两个正式二进制，按 artifact 消息校验产物；不证明真窗口行为 |
 | 真实 Provider/OS/窗口/隔离桌面 | 对应包 Spec 的专项步骤 | 必须记录外部效果和前置条件；未执行不算通过 |
 
-GUI 连接测试归 gui-server，ACP fixtures / floor 归 acp，MCP 测试归 mcp，网关 token 测试归 gateway；AppCore + HTTP / 模拟上游联调在 app。正式宿主用 `--host` 验证，包内 MockHost 不能代替。依赖边界检查使用 `cargo metadata` / `cargo tree -p pawork --edges normal`，核对无环、Desktop / Engine 边界和第三方闭包。
+必要测试 feature 须由调用方显式选择；多包同次运行时用 `包名/feature` 限定，逗号分隔：
+
+| 包 | 追加的 `--features` |
+| --- | --- |
+| providers | `pawork-providers/anthropic,pawork-providers/chatgpt-oauth,pawork-providers/xai-oauth,pawork-providers/glm-coding,pawork-providers/opencode-go,pawork-providers/qwen-token-plan,pawork-providers/deepseek,pawork-providers/kimi-platform,pawork-providers/kimi-code`；只验证 models/providers 时也可用 `--all-features` |
+| storage | `pawork-storage/compaction,pawork-storage/checkpoint,pawork-storage/protected` |
+| protocol | `pawork-protocol/typegen` |
+| orchestration | `pawork-orchestration/git` |
+| transport | `pawork-transport/memory` |
+| app | `pawork-app/ui-fixture`；不启用 `live-smoke` |
+| client | `pawork-client/probe-self-test`；真实子进程另选 `spawn-e2e` |
+
+真实 Host 子进程验证（Bash；构建失败时停止，不运行后续测试）：
+
+```bash
+set -euo pipefail
+binaries=$(./scripts/build.sh)
+PAWORK_BIN="${binaries%%$'\n'*}" cargo test --offline -p pawork-client --features spawn-e2e --test spawn_e2e
+```
+
+GUI 连接测试归 gui-server，ACP fixtures / floor 归 acp，MCP 测试归 mcp，网关 token 测试归 gateway；AppCore + HTTP / 模拟上游联调在 app。正式宿主用上面的 `spawn_e2e` 命令验证，包内 MockHost 不能代替。依赖边界检查使用 `cargo metadata` / `cargo tree -p pawork --edges normal`，核对无环、Desktop / Engine 边界和第三方闭包。
 
 不使用测试数或覆盖率配额驱动删减。便宜且有独立边界意义的单测可以保留；golden 检查外部格式兼容，不属于应删除的实现副本。
 
-UI 取证工具须提供真实失败信号：`ui-fixture.sh desktop` 清除旧 `timeline_stable` 后等待新实例就绪——barrier 必须是本进程启动后写入的有效 JSON（`settle_seq>=1`、`at_ms` 不早于启动时刻），进程提前退出、PID 归属变化或超时均失败；fixture 与 desktop 构建产物同样经 artifact 消息定位。`ui-ax-dump.swift` 无窗口、AX 权限不足、没有应用 identifier 或动作失败均非零；`ui-key-event.swift` 投递前确认目标 PID 在前台且具备事件投递权限。操作效果仍须由窗口状态与外部事实核对。
+`scripts/` 仅保留 [start.sh](../../scripts/start.sh)、[build.sh](../../scripts/build.sh)、[clean.py](../../scripts/clean.py)。测试包装、mock 服务编排、UI fixture 驱动、扫描与 AX/HID 脚本已移除，其自测随工具移除；生产安全、持久化/重放和协议/解析回归仍由对应 Rust 包承载。Provider HTTP/SSE 回归继续使用包内 wiremock 与 fixture，UI 数据集仍可按 [fixture 说明](../../fixtures/ui/README.md#7-直接运行-fixture) 直接运行 Rust example。
 
-`test.sh --host`、`ui-fixture.sh` 和 `pawork-desktop.sh` 共用 [cargo-build.sh](../../scripts/cargo-build.sh) 定位产物；缺产物、构建失败均非零，测试 harness 不能当正式二进制。`--print` 不运行 Cargo；Desktop 的 `runtime_shaders` 仅在 macOS 选择，启动参数在编译前校验，内容相同的 bundle 文件不重复覆盖。Rust 子进程回归由实际 spawn / 握手判断 Host 可用。
-
-mock 服务端点、媒体与场景回归在 [server_smoke.py](../../scripts/mock/server_smoke.py)；usage 形状共用 `capture.check_usage`，覆盖三窗、percent、日历与 1970 下界拒绝。回归覆盖实际 HTTP / 流内错误、截断、定速与复位。OAuth 自测退出时关闭线程与临时目录；mock 八通道 seed 显式指定隔离 home。L2 包含 UI 扫描回归。
+`start.sh` 调用 `build.sh`，缺产物、构建失败均非零，测试 harness 不能当正式二进制。`build.sh` 的 stdout 按 Host、Desktop 顺序各输出一个路径；Desktop 的 `runtime_shaders` 仅在 macOS 选择。审批/信任参数在编译前校验，内容相同的 bundle 文件不重复覆盖。真窗口操作效果仍须由窗口状态与外部事实核对，不沿用旧脚本的历史结果。
 
 ### 4.2 构建时间与缓存空间
 
-- 用 `bash scripts/test.sh --log /tmp/pawork-tests.log <包名>...` 一次保存完整 stdout/stderr；日志追加，每条命令记录耗时和退出码，失败仍非零退出。`--host` 与 `desktop` 同样支持；`--print` 不创建日志。不要用 `... | tail` 丢掉中间结果和原始退出码，也不要为补日志重复整批验证。
+- 需要日志时在 Bash 中用 `set -o pipefail` 后运行 `cargo test … 2>&1 | tee /tmp/pawork-tests.log`，保留完整输出与失败退出码。不要用 `... | tail` 丢掉中间结果和原始退出码，也不要为补日志重复整批验证。
 - 同批相关包放在一次调用中以统一 feature；单个缺陷优先按包 Spec 选 `--lib` / `--test` 和过滤器。类型检查用 `cargo check`，需要实际行为证据时仍跑测试。保持单 Cargo 进程，复用默认 `target/`。
 - 构建统一经仓库 `.cargo/config.toml` 的 `rustc-wrapper = "kache"`。kache 生效时自动关闭并清理 incremental；dev/test 仍为 `debug="line-tables-only"`、`split-debuginfo="unpacked"`，不要为日常提速反复改 profile、RUSTFLAGS、toolchain 或切换链接器，避免制造不同构建指纹。kache store 须与仓库同 APFS 卷（本机 `~/.config/kache/config.toml` → `/Volumes/SSD/.kache`），容量由 kache GC 自动管理。
-- target/ 死代清理继续用脚本（kache 只接管 incremental，deps/build 死代仍随指纹变化累积）：空闲时先运行 `python3 scripts/clean-stale-incremental.py --dry-run`，审阅后执行同一命令去掉 `--dry-run`；不与 Cargo 同时清理，不运行 `cargo clean`。incremental 按 7 天年龄清理，deps/examples/build 还保留每组最新 hash 构建代；年龄不是不可达证明，较少使用的 feature 组合可能需要重编译。不要每天清理仍在使用的缓存。
-- 真窗口与 mock 验收结束后使用对应脚本的 stop/清理入口，并核对原实例 PID 已退出。对遗留进程先核对命令和实例再定点停止，避免后台空转持续占用 CPU。
+- target/ 死代清理继续用脚本（kache 只接管 incremental，deps/build 死代仍随指纹变化累积）：空闲时先运行 `python3 scripts/clean.py --dry-run`，审阅后执行同一命令去掉 `--dry-run`；不与 Cargo 同时清理，不运行 `cargo clean`。incremental 按 7 天年龄清理，deps/examples/build 还保留每组最新 hash 构建代；年龄不是不可达证明，较少使用的 feature 组合可能需要重编译。不要每天清理仍在使用的缓存。
+- `start.sh` 在 Desktop 退出时只停止自己启动的 Host。手动验收结束后核对原实例 PID；对遗留进程先核对命令和实例再定点停止，避免后台空转持续占用 CPU。
 
 ## 5. 当前验收缺口
 

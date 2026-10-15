@@ -185,7 +185,7 @@ CU-06 沿用 Surface，补 `semantic_unknown_effect_is_kept_and_element_refusal_
 
 CU-07 补 `targeted_partial_keeps_platform_counts_and_refusal_is_not_resent`。正式 Tool / Scheduler / NativeHost 保留平台 Partial 2/6 与 ProcessRestarted；替身进程实际置为退出，后置复核返回 observation_failure、无图，已消费句柄不重发；Shift+Control+Left 参数穿过工具层，NotFocused 明确不可重试且零派发。计数由替身给定，仅验证结果传播；真实 UTF-16 分块、目标复核和释放纪律复用同版库锚点。
 
-默认验证命令：`bash scripts/test.sh tools`（无 `tests/` 目录，用例全部在 `--lib`）。
+默认验证命令：`cargo test --offline --tests -p pawork-tools`（无 `tests/` 目录，用例全部在 `--lib`）。
 
 | 文件 | 覆盖点 |
 | --- | --- |

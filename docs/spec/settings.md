@@ -111,7 +111,7 @@
 | Advanced | 只读连接、API、capabilities 与 resume/ack 运行状态，无用户配置项 |
 | About | 只读版本、Host 数据目录与支持信息，无用户配置项 |
 
-macOS 外观路径：`~/Library/Application Support/dev.pawork.pawork/desktop.json`；Linux `$XDG_CONFIG_HOME/pawork/desktop.json`（缺省 `~/.config/pawork/desktop.json`）；Windows `%APPDATA%/pawork/pawork/config/desktop.json`。外观与 Host 配置各自拥有文件，避免跨进程覆盖业务键。正式 `scripts/pawork-desktop.sh` 默认不再注入审批/信任覆盖；显式环境参数仍可覆盖当次启动。
+macOS 外观路径：`~/Library/Application Support/dev.pawork.pawork/desktop.json`；Linux `$XDG_CONFIG_HOME/pawork/desktop.json`（缺省 `~/.config/pawork/desktop.json`）；Windows `%APPDATA%/pawork/pawork/config/desktop.json`。外观与 Host 配置各自拥有文件，避免跨进程覆盖业务键。正式 `scripts/start.sh` 默认不再注入审批/信任覆盖；显式环境参数仍可覆盖当次启动。
 
 ## 元数据
 

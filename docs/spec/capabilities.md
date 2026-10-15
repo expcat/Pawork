@@ -79,7 +79,7 @@ UI-6b G2：Go 存储账号可读取官方三窗已用百分比与重置时刻；
 
 此外存在 feature 门控的 Anthropic Messages adapter 和可配置 OpenAI-compatible 入口。它们不构成新增 `CHANNEL_REGISTRY` 产品通道；实际启用能力以宿主 feature、配置和 `pawork models` 返回为准。
 
-本地 Provider 模拟：仓库随附九通道 fixture 与场景库，可用 `scripts/mock/run-instance.sh` 拉起隔离实例（独立 data dir / auth / `--instance mock`），把 Global config 的 base_url、OAuth 端点临时指向本地 mock server，并在 `stop` 时恢复。该环境覆盖对话流、工具流、取消、错误归一、OAuth device 登录与额度三窗等本地仿真回归；不能替代真实 Provider 冒烟或真实非零额度验收。用法与运维边界见 [operations.md](operations.md#31-本地-provider-mock开发回归用)。
+Provider 本地回归使用包内 wiremock / MockProvider 与 fixture，按 [验证规格](verification.md#41-按用途选择入口) 直接运行 Cargo。独立 mock 服务及其 Global config 注入脚本已移除；本地回归不能替代真实 Provider 冒烟或真实非零额度验收。开发运行入口见 [operations.md](operations.md#31-开发运行入口)。
 
 ## 4. Desktop 可见面
 

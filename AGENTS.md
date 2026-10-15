@@ -43,7 +43,7 @@
 
 ## 5. 验证决策
 
-测试以真实用途、结果完整性和边界拒绝为准，不以数量或实现细节副本为目标。先选受影响的操作与包，再运行 `bash scripts/test.sh <包名>...`：同一次 Cargo 调用补齐所选包的必要 feature，避免默认 feature 漏跑。Desktop 单独用 `bash scripts/test.sh desktop`；真实 Host 子进程用 `bash scripts/test.sh --host`。命令与证据边界见 [验证规格](docs/spec/verification.md)。
+测试以真实用途、结果完整性和边界拒绝为准，不以数量或实现细节副本为目标。先选受影响的操作与包，直接运行定向 Cargo 命令；必要 feature 按 [验证规格](docs/spec/verification.md) §4.1 显式选择，同一次 Cargo 调用验证相关包，避免默认 feature 漏跑。Desktop 单独验证；真实 Host 子进程先用 `scripts/build.sh` 定位本次 Host 产物，再设置 `PAWORK_BIN` 执行 client 的 `spawn_e2e`。
 
 安全红线、持久化/重放、协议/解析回归不能因精简被丢弃；删除前必须有无效性依据或保留的替代锚点。Mock 只代替外部边界，fixture 工具自测不等于产品集成通过。显式选择的测试缺少环境时必须失败或如实记待验，禁止 `return` 假通过。普通任务不跑无关包、全 workspace 或真实 Provider；已有定向回归足够时不扩测。
 
@@ -56,7 +56,7 @@
 
 硬约束：
 
-- 禁止 `cargo clean`，仅清理本任务临时输出。构建统一经仓库 `.cargo/config.toml` 的 `rustc-wrapper = "kache"`：kache 生效时自动关闭并清理 incremental，产物按内容键跨 `target/` 复用；store 须与仓库同 APFS 卷（本机 `~/.config/kache/config.toml` 设 `cache.local_store = "/Volumes/SSD/.kache"`）。未安装 kache 时 Cargo 直接失败（`cargo install kache --locked`），单次绕过用 `RUSTC_WRAPPER= cargo …`。kache 只接管 incremental；`target/` 的 deps/build 死代仍随指纹变化累积，继续用 `python3 scripts/clean-stale-incremental.py` 按龄清理（先 `--dry-run`），禁止 `rm -rf target`。
+- 禁止 `cargo clean`，仅清理本任务临时输出。构建统一经仓库 `.cargo/config.toml` 的 `rustc-wrapper = "kache"`：kache 生效时自动关闭并清理 incremental，产物按内容键跨 `target/` 复用；store 须与仓库同 APFS 卷（本机 `~/.config/kache/config.toml` 设 `cache.local_store = "/Volumes/SSD/.kache"`）。未安装 kache 时 Cargo 直接失败（`cargo install kache --locked`），单次绕过用 `RUSTC_WRAPPER= cargo …`。kache 只接管 incremental；`target/` 的 deps/build 死代仍随指纹变化累积，继续用 `python3 scripts/clean.py` 按龄清理（先 `--dry-run`），禁止 `rm -rf target`。
 - 全会话同一时刻只允许一个 Cargo 进程；并行轨不得抢同一 `target/` 锁。审查者读 worker `/tmp` 日志，不再编译。
 - 文档或不影响构建行为的配置改动只做链接、格式与 diff 检查，不为形式完整跑编译。
 - 前一层失败先收敛原因，不盲目扩大范围。
@@ -101,13 +101,13 @@ Full workspace gate: NOT RUN（当前未设置全量门禁）
 ## 10. 验证命令模板
 
 ```bash
-bash scripts/test.sh <包名>...
-bash scripts/test.sh --print <包名>...  # 只预览实际 Cargo 命令
-bash scripts/test.sh desktop           # bin-only / 图形构建单独执行
-bash scripts/test.sh --host            # 当前 pawork 构建 + spawn_e2e
+cargo test --offline --tests -p pawork-<包名>  # 必要 feature 见验证规格 §4.1
+cargo test --offline --bins -p pawork-desktop --features gpui/runtime_shaders # macOS；其它平台省略 feature
+binaries=$(./scripts/build.sh) &&
+  PAWORK_BIN="${binaries%%$'\n'*}" cargo test --offline -p pawork-client --features spawn-e2e --test spawn_e2e
 ```
 
-入口不请求真实 Provider。Providers、storage、protocol、orchestration、transport、app 和 client 的必要 feature 由脚本显式选择；feature 组合只改变测试构建，不改变生产默认。需要更窄的回归时直接用包级 Spec 的 `cargo test -p … --test/--lib/--bin … <filter>`，报告实际目标与 feature，不能把未编译目标记为通过。无测试或仅需类型检查时用 `cargo check -p <crate> --offline`。合并/归档波才追加 `cargo tree` 断言；全量发布门禁仍单独定义。
+以上测试不请求真实 Provider。Providers、storage、protocol、orchestration、transport、app 和 client 的必要 feature 由调用方显式选择；feature 组合只改变测试构建，不改变生产默认。需要更窄的回归时直接用包级 Spec 的 `cargo test -p … --test/--lib/--bin … <filter>`，报告实际目标与 feature，不能把未编译目标记为通过。无测试或仅需类型检查时用 `cargo check -p <crate> --offline`。合并/归档波才追加 `cargo tree` 断言；全量发布门禁仍单独定义。`scripts/` 只保留 `start.sh`、`build.sh`、`clean.py`。
 
 以上与仓库内所有 Cargo 命令透明经 `.cargo/config.toml` 的 kache wrapper；单次绕过用 `RUSTC_WRAPPER= cargo …`（增量缓存只在绕过时期存在，详见 §5 硬约束）。
 

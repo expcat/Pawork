@@ -60,7 +60,7 @@ flowchart LR
 
 ### 3.1 启动
 
-1. 用户可运行 `./scripts/pawork-desktop.sh start` 构建并启动正式 Host/Desktop；脚本使用独立实例且不加载测试数据。也可手动启动 `pawork gui serve`。
+1. 用户可运行 `./scripts/start.sh` 构建并启动正式 Host/Desktop；脚本使用独立实例且不加载测试数据。也可手动启动 `pawork gui serve`。
 2. Desktop 按 `--socket` / `--instance` 或默认数据目录发现 endpoint/token。
 3. `pawork-client` 完成 token proof、API 版本协商和 capability 握手。
 4. 客户端 ack/subscribe，再请求 snapshot/resume 建立 projection baseline。

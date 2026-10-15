@@ -248,13 +248,13 @@ canonical `ToolResultContent.content` 中 Image 不再被编码器丢弃。Chat 
 
 `module_discipline::core_modules_do_not_reference_net_module` 继续约束本包的 usage/reasoning；迁出的 registry/pricing/negotiate/error 由 models 的无 HTTP/Provider 依赖边界隔离。
 
-HTTP/SSE contract 覆盖 Chat 文本、并行工具与 usage；定向回归覆盖 thinking、终态优先级与损坏流。`list_models_is_static_and_does_not_hit_network` 验证 Anthropic 静态目录能力及入口不发网。`bash scripts/test.sh providers` 显式启用九个通道 feature。
+HTTP/SSE contract 覆盖 Chat 文本、并行工具与 usage；定向回归覆盖 thinking、终态优先级与损坏流。`list_models_is_static_and_does_not_hit_network` 验证 Anthropic 静态目录能力及入口不发网。`cargo test --offline --tests -p pawork-providers --all-features` 显式启用九个通道 feature。
 
 三源能力收窄由 `capability_evidence` 合并测试覆盖；会话累计由同请求覆盖、跨请求累加和 `finish_request` 结算验证。
 
 2026-09-17 computer use：`request::tests::tool_result_images_map_across_chat_responses_and_anthropic` 覆盖 JPEG 工具结果在三协议的文字/图片保留、多个 tool response 顺序；`pawork-models` 的 `negotiate::tests::capability_gate_rejects_nested_tool_result_image_without_declaration` 覆盖不支持图片时拒绝。
 
-默认验证入口：`bash scripts/test.sh models providers`，一次 Cargo 调用显式启用九个通道 feature。直接运行不带 feature 的 `cargo test -p pawork-providers` 只选择默认 Anthropic，不能证明其余通道通过；需要更窄的回归时按下表明确选择 feature/target。Kimi 真实联网专项仍为显式 ignore，不计入本地通道回归通过。
+默认验证入口：`cargo test --offline --tests -p pawork-models -p pawork-providers --all-features`，一次 Cargo 调用显式启用九个通道 feature。直接运行不带 feature 的 `cargo test -p pawork-providers` 只选择默认 Anthropic，不能证明其余通道通过；需要更窄的回归时按下表明确选择 feature/target。Kimi 真实联网专项仍为显式 ignore，不计入本地通道回归通过。
 
 | 测试资产 | required-features | 覆盖点 |
 | --- | --- | --- |

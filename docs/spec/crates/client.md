@@ -111,9 +111,9 @@ UI-6b G2：crate 根增加 `ProviderAccountSelectionMode`、`QuotaOverviewQuery/
 
 ## 7. 测试与验证资产
 
-`spawn_e2e` 以实际 spawn/握手验证 headless 可用性；缺二进制或握手失败必须失败，不能跳过记绿。`bash scripts/test.sh --host` 先构建当前 Host，经 `scripts/cargo-build.sh` 定位正式产物并排除 test harness，再验证真实子进程。入口与证据边界见 [验证规格](../verification.md#41-按用途选择入口)。
+`spawn_e2e` 以实际 spawn/握手验证 headless 可用性；缺二进制或握手失败必须失败，不能跳过记绿。先用 `scripts/build.sh` 经 Cargo artifact 消息定位正式 Host 并排除 test harness，再设置 `PAWORK_BIN` 执行 `cargo test --offline -p pawork-client --features spawn-e2e --test spawn_e2e`。完整命令与证据边界见 [验证规格](../verification.md#41-按用途选择入口)。
 
-握手、授权和版本拒绝由真实连接与协议测试覆盖。`bash scripts/test.sh client` 显式启用 probe-self-test；`spawn-e2e` 须显式选择。
+握手、授权和版本拒绝由真实连接与协议测试覆盖。`cargo test --offline --tests -p pawork-client --features probe-self-test` 显式启用 probe-self-test；`spawn-e2e` 须显式选择。
 
 **`tests/probe.rs`（`--self-test` 13 场景，MemoryTransport 进程内装配；`probe-self-test` feature 显式启用）**
 
@@ -152,11 +152,11 @@ UI-6b G2：crate 根增加 `ProviderAccountSelectionMode`、`QuotaOverviewQuery/
 
 **`src/lib.rs` 内联（13）**：FrameWant 匹配矩阵（request-scoped vs 连接级 Error）、事件等待者与响应等待者互不饿死、并发 snapshot 往返串行化（第二个请求等第一个完成，request-scoped Error 与 Snapshot 各回各的调用方）、`next_event` 显式暴露 `ReplayUnavailable`、连接实例 request namespace 不重复、R-12 `snapshot_timeout_discards_connection`（超时废弃连接、后续请求报 Disconnected）等。
 
-默认验证入口：`bash scripts/test.sh client`（补齐 `probe-self-test`）；真实子进程入口为 `bash scripts/test.sh --host`。
+默认验证入口：`cargo test --offline --tests -p pawork-client --features probe-self-test`；真实子进程按 [验证规格](../verification.md#41-按用途选择入口) 构建 Host 并设置 `PAWORK_BIN` 后执行 `spawn_e2e`。
 
 lib 内联回归覆盖 FrameWant 路由与并发 snapshot 等待；client_tests 与 contract 覆盖握手、授权和版本拒绝。contract 主路径锁定 `host_data_dir` 原样透传，Host 重启后的真实 policy fail-closed 另由 Desktop U2 矩阵覆盖。
 
-opt-in 复跑：`bash scripts/test.sh client`（含 probe-self-test）；真实子进程用 `bash scripts/test.sh --host`。
+opt-in 复跑使用上面的 `probe-self-test` 命令；真实子进程另选 `spawn-e2e`。
 
 握手回归使用 headless `hello_ack.json` 的 1.9 fixture，握手回归断言协商结果 1.9，避免将旧 Host 响应误断言为当前 API_VERSION。
 

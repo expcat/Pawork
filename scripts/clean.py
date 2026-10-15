@@ -1,29 +1,9 @@
 #!/usr/bin/env python3
-"""Prune dead Cargo build generations under target/. Never wipe target/.
+"""按龄清理 target/ 的旧构建产物，保留 deps/examples/build 各组最新构建代。
 
-Cargo never deletes old build generations: every fingerprint change leaves
-orphaned incremental session dirs and stale deps/build artifacts behind.
-
-With kache as rustc-wrapper (repo .cargo/config.toml), kache itself strips
-and cleans incremental/ dirs on compile; this script remains responsible for
-deps/examples/build generations, which kache does not manage. kache-restored
-artifacts are clonefiles/hardlinks into the kache store, so deleting them
-from target/ never touches the store.
-
-Rules (all deletions also require mtime older than --days, default 7;
-or older than --older-than FILE's mtime — e.g. Cargo.toml after a
-profile/toolchain change, to collect generations the change killed):
-
-- incremental/<name>-<hash>/  Session dirs are write-once per build config;
-  a dir untouched for --days is either dead or cold (worst case: one clean
-  recompile of that crate). Registry deps have no incremental dirs.
-- deps/ and examples/         Artifacts are named <base>-<hash>[.ext].
-  Within each <base> group, keep the newest hash generation (by mtime);
-  delete older generations. Sole generations are never deleted, so a
-  still-current artifact is never removed no matter how old it is.
-- build/<name>-<hash>/        Same generation rule as deps.
-
-Use --dry-run to inspect before deleting.
+默认清理 target/debug 中超过 7 天的旧代；--dry-run 只预览，
+--root 可选择 target/release，--older-than FILE 可按文件时间划定清理界线。
+不清空 target，不修改 kache store；不要与 Cargo 同时运行。
 """
 from __future__ import annotations
 
