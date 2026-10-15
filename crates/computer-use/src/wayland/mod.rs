@@ -597,6 +597,10 @@ impl WaylandSeat {
                 return Ok(InputOutcome::Partial { steps_sent: sent });
             }
             self.tap(*keycode)?;
+            // After a tap is on the socket, wait before the next cancel
+            // check. Unset, this is zero. The CU-26 probe sets it so a
+            // real compositor can show a prefix before the rest is sent.
+            probe_step_delay();
         }
         self.sync()?;
         Ok(InputOutcome::Dispatched)
@@ -646,6 +650,25 @@ impl WaylandSeat {
             &mut self.output_state,
             &mut self.shm_formats,
         )
+    }
+}
+
+/// Pause between seat steps when `PAWORK_WAYLAND_STEP_DELAY_MS` is
+/// 1..=1000. Any other value, including unset, waits nothing. The delay
+/// does not add or drop Wayland events; it only opens the existing
+/// between-tap cancel check on a live compositor.
+fn probe_step_delay() {
+    std::thread::sleep(step_delay(
+        std::env::var("PAWORK_WAYLAND_STEP_DELAY_MS")
+            .ok()
+            .as_deref(),
+    ));
+}
+
+fn step_delay(raw: Option<&str>) -> Duration {
+    match raw.and_then(|text| text.parse::<u64>().ok()) {
+        Some(ms) if (1..=1000).contains(&ms) => Duration::from_millis(ms),
+        _ => Duration::ZERO,
     }
 }
 

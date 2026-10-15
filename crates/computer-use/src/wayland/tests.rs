@@ -5,6 +5,7 @@ use serde_json::json;
 use std::io::Read;
 use std::os::fd::RawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::time::Duration;
 
 fn global(name: u32, interface: &str, version: u32) -> Global {
     Global {
@@ -516,6 +517,19 @@ fn a_compositor_error_surfaces_with_its_reason() {
     ));
     drop(result);
     server.join().unwrap();
+}
+
+#[test]
+fn step_delay_is_off_unless_the_probe_sets_a_bounded_value() {
+    assert_eq!(super::step_delay(None), Duration::ZERO);
+    assert_eq!(super::step_delay(Some("")), Duration::ZERO);
+    assert_eq!(super::step_delay(Some("0")), Duration::ZERO);
+    assert_eq!(super::step_delay(Some("1001")), Duration::ZERO);
+    assert_eq!(super::step_delay(Some("-1")), Duration::ZERO);
+    assert_eq!(super::step_delay(Some("nope")), Duration::ZERO);
+    assert_eq!(super::step_delay(Some("200")), Duration::from_millis(200));
+    assert_eq!(super::step_delay(Some("1")), Duration::from_millis(1));
+    assert_eq!(super::step_delay(Some("1000")), Duration::from_millis(1000));
 }
 
 #[test]

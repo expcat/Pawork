@@ -1,6 +1,6 @@
 # CU-26 · Wayland 隔离后台生产后端
 
-> 状态：进行中。切片 1（guest 侧专用 seat 客户端与 compositor 权威身份）已落地：有离线定向回归，并在本机 headless Sway 1.10.1 做了真实 smoke。切片 2 的代码已实现、离线替身回归已通过：guest 帧协议加了 capture / input，`computer_guest --wayland` 提供服务，Host 侧新增 `WaylandSurface` 与按截图租约派发的点击 / 按键。切片 3 已接线、离线回归已通过：`computer_native` 工具暴露 `observed_click` / `observed_keys`，App 新增 `ComputerNativeMode::Wayland` 并选用 `NativeHost::wayland()`，CLI 接受 `--computer-native wayland`；默认入口未改，仍是 `host`。本机经 Host 链路的 smoke 已在独立 user + network namespace 内通过（`wayland_host_probe` → `NativeHost::wayland()` → 5907 → `computer_guest --wayland` → headless Sway，见下文「本机 Host 链路 smoke 复试」）。同日又在同类 netns 内跑通了 `pawork gui serve` 同款装配：`ComputerNativeMode::Wayland` + `GuiApprovalHost` + token 认证的本地 socket；`computer_native` 的每次调用和目标批准都经 GUI Connection Protocol 完成，持久 ObservationList / ObservationImageRead 可读（见下文「GUI Host 装配链路验收」）。这一轮的 Provider 是脚本替身，没有起 `pawork` 二进制进程，也没有 GPUI 真窗口。2026-10-14 已补上二进制 Host、GPUI 真窗口审批与真实 Provider `glm-coding / glm-5.3-flash`（见「二进制 Host + GPUI 真窗口验收」）。2026-10-15 在同类 netns 里用 `wayland_host_probe --boundaries` 补了撤销、派发前取消、断线与 scope 让出的真实 Sway 证据（见「撤销 / 取消 / 断线 / 让出」）。2026-10-15 已在 rootless podman 里跑通最小专用容器验收，同日用同一镜像复跑仍通过（见「专用容器最小验收」）。CU-23 的无宿主 bind 全文，以及该容器内的 GUI 审批和真实 Provider，仍未做，完成条件未满足。更新：2026-10-15。
+> 状态：进行中。切片 1（guest 侧专用 seat 客户端与 compositor 权威身份）已落地：有离线定向回归，并在本机 headless Sway 1.10.1 做了真实 smoke。切片 2 的代码已实现、离线替身回归已通过：guest 帧协议加了 capture / input，`computer_guest --wayland` 提供服务，Host 侧新增 `WaylandSurface` 与按截图租约派发的点击 / 按键。切片 3 已接线、离线回归已通过：`computer_native` 工具暴露 `observed_click` / `observed_keys`，App 新增 `ComputerNativeMode::Wayland` 并选用 `NativeHost::wayland()`，CLI 接受 `--computer-native wayland`；默认入口未改，仍是 `host`。本机经 Host 链路的 smoke 已在独立 user + network namespace 内通过（`wayland_host_probe` → `NativeHost::wayland()` → 5907 → `computer_guest --wayland` → headless Sway，见下文「本机 Host 链路 smoke 复试」）。同日又在同类 netns 内跑通了 `pawork gui serve` 同款装配：`ComputerNativeMode::Wayland` + `GuiApprovalHost` + token 认证的本地 socket；`computer_native` 的每次调用和目标批准都经 GUI Connection Protocol 完成，持久 ObservationList / ObservationImageRead 可读（见下文「GUI Host 装配链路验收」）。这一轮的 Provider 是脚本替身，没有起 `pawork` 二进制进程，也没有 GPUI 真窗口。2026-10-14 已补上二进制 Host、GPUI 真窗口审批与真实 Provider `glm-coding / glm-5.3-flash`（见「二进制 Host + GPUI 真窗口验收」）。2026-10-15 在同类 netns 里用 `wayland_host_probe --boundaries` 补了撤销、派发前取消、断线与 scope 让出的真实 Sway 证据（见「撤销 / 取消 / 断线 / 让出」）。2026-10-15 已在 rootless podman 里跑通最小专用容器验收，同日用同一镜像复跑仍通过（见「专用容器最小验收」）。CU-23 的无宿主 bind 全文，以及该容器内的 GUI 审批和真实 Provider，仍未做。2026-10-15 又在同类 netns 里用 `wayland_host_probe --partial-receipt` 打出真实 seat 上的 Partial 与回执丢失（见「Partial 与回执丢失」）。完成条件未满足。更新：2026-10-15。
 
 [返回 ROADMAP](../ROADMAP.md#未完成任务)
 
@@ -232,6 +232,22 @@ Host 的 `complete` 只表示这一页已经扫到会话 head，或这一页不�
 
 断线后的 `ProcessRestarted` 来自死连接上的存活读取失败，按键没有进 seat；下一次截图拨上新的 guest epoch，旧窗口代际变为 `WindowReplaced`。这不是 foot 进程真的重启。本轮取消都发生在 guest 请求写出之前，所以没有打出 Partial 或 `unknown_effect`；离线替身里的 partial 与回执丢失仍然只是替身。这不是专用容器，也没有 GPUI 真窗口或真实 Provider。
 
+## Partial 与回执丢失（2026-10-15，netns + headless Sway）
+
+证据目录 `/tmp/cu26-partial/`（不入库）。外层 `run.sh` 先记下宿主 5907，再执行 `timeout 180 unshare -rn /tmp/cu26-partial/smoke.sh`。netns 为 `net:[4026532237]`，宿主为 `net:[4026531840]`。Sway 1.10.1 headless + pixman，唯一输出 HEADLESS-1 640×480，`xwayland disable`；目标是 foot，`app_id=cu26target`，pid 2046155，前后都 focused。终端是 raw、无回显，每个字节追加到 `out/events.bin`。`computer_guest --wayland` 在 netns 内听 `0.0.0.0:5907`。探针 grant 代替 GUI 审批。宿主 `127.0.0.1:5907` 与 `[::1]:5907` 前后都是 x11vnc pid 1878046（display `:7`），`/proc/1878046/stat` 的 starttime tick 前后都是 33215211。本刀没有向该 pid 发信号。探针退出码 0。
+
+`type_text` 在每个字符发出之后、下一次取消检查之前，若 `PAWORK_WAYLAND_STEP_DELAY_MS` 落在 1..=1000，就等待这么多毫秒。未设置、0 或越界则等待 0。等待不增减 Wayland 事件，只是让真实 compositor 能在后续字符发出前看到前缀。本刀只给这个 netns 里的 guest 设了 200。离线 `step_delay_is_off_unless_the_probe_sets_a_bounded_value` 钉住这个边界。
+
+探针是 `wayland_host_probe --partial-receipt`。两条文本都是先等 `events.bin` 出现前缀，再动手，所以 guest 请求已经写出，而且至少有一个字符进了 seat。
+
+| 边界 | Host 结果 | 外部事实 |
+| --- | --- | --- |
+| Partial | `partial 1/11: computer action cancelled`，`input_dispatched=true`。前缀 `I` 出现后，探针只关掉自己连往 5907 的写方向（`shut_write=1`），继续读回执。动作后观测失败，原因字符串是 `target process exited or restarted` | `partial.delta` 只有 `I`。全文 `INSEATGHOST` 的 `GHOST` 没有出现。600ms 内 `events.bin` 长度不变。同一张截图再发 `RETRY1GHOST` 是 `StaleHandle`，这 11 个字节也没有写入。foot pid 仍是 2046155，没有退出；失败来自写方向关掉之后，后续 metadata 无法再证明实例，Host 按进程重启 fail-closed，partial 事实还在 |
+| 回执丢失 | `unknown_effect`，`input_dispatched=true`，`observation_failure=cancelled before the post-action observation`。取消标志在 `L` 进入 `events.bin` 之后才变为真，Host 放弃回执，不再读它 | `lost.delta` 只有 `L`。全文 `LOSTSEATGHOST` 的其余字节没有出现。600ms 内长度不变。同一张截图再发 `RETRY2GHOST` 是 `StaleHandle`。guest 日志有一条 `connection closed: guest write failed`，是 Host 已经关掉套接字之后，guest 写回执失败 |
+| 之后 | 重新 bind、截图，再发 `AFTEROK`，结果 `dispatched` | `events.bin` 全文是 `ILAFTEROK`。动作前 `get_inputs` 为 `[]`，动作后是 `0:0:wlr_virtual_keyboard_v1` 与 `0:0:wlr_virtual_pointer_v1` |
+
+这不是专用容器，也没有 GPUI 真窗口或真实 Provider。没有打出「点击只移动、不按键」的 Partial；外部事实是部分按键，不是 `click.bin`。CU-26 完成条件仍未满足。
+
 ## 专用容器最小验收（2026-10-15，进行中）
 
 本盒此前文档写「没有 Docker / Podman」。2026-10-15 复看时 rootless Podman 5.4.2 已经在（`podman version`；`podman info` 为 rootless、cgroupfs、crun、overlay，GraphRoot `/home/box/.local/share/containers/storage`）。没有安装 Docker Engine。先用已有的 `docker.io/library/busybox:1.36` 确认 `podman run --rm --network=none --cap-drop=ALL --read-only --security-opt=no-new-privileges` 能打印并退出。本刀没有 `sudo apt install`，也没有动宿主 x11vnc。
@@ -299,7 +315,8 @@ podman run -d --name cu26-wayland --init --read-only --cap-drop=ALL \
 - ~~**ComputerTargetList 能力矩阵与 Wayland 表面不符**~~：已修（2026-10-13，见「ComputerTargetList 能力矩阵修复」）。`target_capabilities` 对 `guest.wayland.*` 改为按 bundle_id 前缀对齐 `WaylandSurface::admit_action`，未新增族，wire 与 Desktop 映射不变。
 - **`AppFamily` 没有 Wayland 取值**：`WaylandSurface` 沿用 CU-21 guest 的 `Browser` 标签，只作身份字段，Host 能力闸不看族；GUI 目标列表的能力矩阵已改为按 bundle_id 前缀识别 Wayland 目标，不再依赖族（见上一条）；网站目标在这里因 `current_origin` 恒为 None 而 fail-closed。新增族会改 app / desktop 的穷举映射与 GUI 展示，留给后续。
 - **seat 级权限的固有限制**：三条协议的权限来自 socket 可达性，guest 内任何能连上 socket 的客户端（包括目标应用本身）都能截图或注入输入。`require_dedicated` 只能在调用时发现非虚拟设备或多余输出 / seat，无法阻止同 guest 内其它客户端创建虚拟设备。因此部署必须保证 guest 内只有 Pawork guest 服务和获批目标，sway 配置不带任何按键绑定。
-- ~~撤销、断线、派发前取消，以及占用 / `close_scope` 让出~~：2026-10-15 已在本机 netns + headless Sway 记录（见「撤销 / 取消 / 断线 / 让出」）。没有独立的用户接管产品入口；`WaylandSurface::activity` 恒为 Idle，`dispatch_paused` 在这轮为 false。AT-SPI、其它应用、其它 compositor、共享用户 seat、portal 许可、非 ASCII 文本（当前 keymap 只覆盖可打印 ASCII）仍未验证。动作进行到一半的 Partial，以及回执丢失，这轮没有打到：取消谓词在 guest 请求写出之前就返回了 Cancelled。
+- ~~撤销、断线、派发前取消，以及占用 / `close_scope` 让出~~：2026-10-15 已在本机 netns + headless Sway 记录（见「撤销 / 取消 / 断线 / 让出」）。没有独立的用户接管产品入口；`WaylandSurface::activity` 恒为 Idle，`dispatch_paused` 在这轮为 false。AT-SPI、其它应用、其它 compositor、共享用户 seat、portal 许可、非 ASCII 文本（当前 keymap 只覆盖可打印 ASCII）仍未验证。
+- ~~动作进行到一半的 Partial，以及回执丢失~~：2026-10-15 已在同类 netns + headless Sway 记录（见「Partial 与回执丢失」）。`--boundaries` 那一轮的取消仍然是 guest 请求写出之前的 Cancelled，没有改写成 Partial。点击序列中途的 Partial（只移动、不按键）这轮没有打。
 
 GUI Host 装配验收 Validated: `cargo test --offline -p pawork-app --features pawork-app/ui-fixture --lib --no-run`（rustfmt 后重建，exit 0，新文件无警告）；在 `unshare -rn /tmp/cu26s4/smoke.sh` 内运行该 lib 测试二进制 `--ignored --exact gui_host::tests::cu26_live::cu26_wayland_gui_serve_assembly`：1 passed；负向对照两项均按预期失败（无 guest、无门控）；`rustfmt --edition 2021 --check` 干净。没有重跑 app 全量单测：本次只新增一个 ignored 测试文件和一行 `mod` 声明，非测试代码零改动。
 
@@ -316,6 +333,10 @@ GUI Host 装配验收 Targeted regressions: `cu26_wayland_gui_serve_assembly`（
 撤销 / 取消 / 断线 / 让出 Validated: `cargo build --offline -p pawork-computer-use --example wayland_host_probe --bin computer_guest`；`timeout 200 unshare -rn /tmp/cu26-revoke/run.sh`（内层探针退出码 0，`out/summary.json` 的 check 全部为真）。没有改 `WaylandSurface` / guest 行为，没有新跑离线测试。
 
 撤销 / 取消 / 断线 / 让出 Targeted regressions: none（本刀只有探针示例和文档；真实 Sway 证据见上节）。
+
+Partial 与回执丢失 Validated: `cargo test --offline -p pawork-computer-use --lib step_delay_is_off_unless_the_probe_sets_a_bounded_value --bins --examples`（该过滤 1 passed；bin / example 过滤为 0）；`cargo build --offline -p pawork-computer-use --example wayland_host_probe --bin computer_guest`；`/tmp/cu26-partial/run.sh`（探针退出码 0，`out/summary.json` 的 check 全部为真，`events.bin` 为 `ILAFTEROK`）。
+
+Partial 与回执丢失 Targeted regressions: `wayland::tests::step_delay_is_off_unless_the_probe_sets_a_bounded_value`。真实 Sway 上的 Partial / `unknown_effect` 见上节，不是离线替身。
 
 专用容器最小验收 Validated: `podman version` / `podman info`；`podman run --rm --network=none --cap-drop=ALL --read-only --security-opt=no-new-privileges docker.io/library/busybox:1.36 echo podman-ok`；`podman build -t localhost/pawork-cu26-wayland:local`（镜像 `8038d17eb623`）；`/tmp/cu26-container/run.sh`（探针退出码 0，`probe.jsonl` 各阶段如上表）。同日复跑同一脚本，容器 `716b2c544a8e`，探针退出码 0；`podman run --rm --network=none --cap-drop=ALL --read-only --entrypoint dpkg localhost/pawork-cu26-wayland:local -l` 核对 sway / wlroots / foot / socat 包版本。没有改 guest / Host 代码，没有新跑离线测试。
 
