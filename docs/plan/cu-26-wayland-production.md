@@ -191,7 +191,7 @@
 
 Desktop 为通过这次验收做了一处最小改动：`apps/desktop/src/ui/mod.rs` 只在 macOS 抓取 `raw_window_handle`。gpui 0.2.2 的 X11 `window_handle` 是 `unimplemented!()`，不改则 Linux 首帧 panic。没有重跑定向测试。
 
-未完成：专用容器仍不能建。验收当时 `WaylandSurface::resolve` 把 guest 元数据错误折叠成 None（修复见下文「resolve 误报「未安装」」）。同一 Host 进程、同一会话里，失败 Run `run-gui-1c1a3c-18de5a3c37013b1b-2` 的 `discover` 成功，`request` 成功（`requested guest.wayland.cu26target`），第一次 `bind` 为未授权（`target is not authorized…`），第二次 `bind` 才回报 `no installed application resolves this bundle id`；该 Run 随后因 `http timeout error from https://api.z.ai` 而 `run_failed`，不是这次 bind 之后立刻重试成功。成功 Run `run-gui-1c1a3c-18de5b4aa01fb2e3-4` 的七次调用没有这条「未安装」错误。更早的 attempt 2（另一 Host、会话 `ses-1c05b5-18de59375428ef5e-1`）是 `request` 报「未安装」、随后 `bind` 报未授权。Run 结束后 Computer 面板「Observation evidence」为 0 observations，原因未查；四张 JPEG 是从该 Run 落库的 `tool_calls.result_json` 解出的，不是面板读回。撤销、接管、断线、取消仍无真实环境证据。
+未完成：专用容器仍不能建。验收当时 `WaylandSurface::resolve` 把 guest 元数据错误折叠成 None（修复见下文「resolve 误报「未安装」」）。同一 Host 进程、同一会话里，失败 Run `run-gui-1c1a3c-18de5a3c37013b1b-2` 的 `discover` 成功，`request` 成功（`requested guest.wayland.cu26target`），第一次 `bind` 为未授权（`target is not authorized…`），第二次 `bind` 才回报 `no installed application resolves this bundle id`；该 Run 随后因 `http timeout error from https://api.z.ai` 而 `run_failed`，不是这次 bind 之后立刻重试成功。成功 Run `run-gui-1c1a3c-18de5b4aa01fb2e3-4` 的七次调用没有这条「未安装」错误。更早的 attempt 2（另一 Host、会话 `ses-1c05b5-18de59375428ef5e-1`）是 `request` 报「未安装」、随后 `bind` 报未授权。Run 结束后 Computer 面板「Observation evidence」为 0 observations；四张 JPEG 是从该 Run 落库的 `tool_calls.result_json` 解出的，不是面板读回。原因与修复见下文「面板列出 0 条观测」。撤销、接管、断线、取消仍无真实环境证据。
 
 本轮 Validated: 无新增 Cargo 测试。只读核对 `/tmp/cu26s6/proc-evidence.txt`、`desktop-proc.txt`、`out/formal.json`、`out/typed.txt`、`out/click.bin`、`out/tree-after.json` 与上表截图。
 
@@ -205,10 +205,22 @@ guest 帧服务在 `serve_connection` 里用 `arm` 把读超时设成 `IO_BUDGET
 
 修复：`NativeSurface::resolve` 改为 `Result<Option<AppIdentity>, TargetError>`。`Ok(None)` 才是未安装（不是 `guest.wayland.` 前缀，或元数据成功但没有该 bundle）。`GuestError::Disconnected` 重拨一次；第二次仍失败，或 guest 以 `Unavailable` 回答，按 `ProbeUnavailable` 上抛。`NotAuthorized` 仍是批准闸。离线替身把缓存套接字掐断，不睡满 20 秒，覆盖空闲后的第一次 request / bind，以及元数据失败和拨号失败的错误类型。没有改 guest 的 20 秒读预算，也没有重跑真实 Sway。同一签名下，X11 `GuestSurface::resolve` 也不再把元数据失败收成 None，但没有 Wayland 这条重拨。`discover` 在自己的第一次元数据失败时仍返回空列表，不在这一刀。
 
+## 面板列出 0 条观测（2026-10-14）
+
+根因在 Desktop 的读取窗口，不在落库，也不是 Run 终态把观测清掉。
+
+`/tmp/cu26s6/data/cu26bin/session.db` 会话 `ses-1c1a3c-18de5a39153fbe3f-1`，`active_branch=main`，`head_sequence=1243`。成功 Run `run-gui-1c1a3c-18de5b4aa01fb2e3-4` 的四次带图 `tool_execution_completed` 在 sequence **586 / 718 / 836 / 926**（`computer_native`，content 第二段是 `image` / `source.kind=base64` / `image/jpeg`）。Host 的 `observation_list` 只认这种 Base64 Image part。944 及之后的 300 条事件是 `assistant_text_delta`（244）、`assistant_thinking_delta`（53）、以及各一条 `usage_updated` / `message_committed` / `run_completed`，没有 `tool_execution_completed`。
+
+Desktop 先用 `limit=1` 探 head，再读 `[head-300, head]`，也就是 `after_sequence=943`（Host 从 944 起）。这一窗的 Image part 是 0。面板因此显示「0 observations」，并因 head>300 带上「仅列出最近的观测记录」。`metadata.observation` 在这些事件里是观测 id 字符串，不是带 `image_width` 的对象，所以条目的宽高为空，但这不会把条目滤掉。脚本 Provider 的 GUI 装配能读到观测，是因为那次事件流短，四张图还在尾窗里。
+
+修复在 `apps/desktop/src/ui/computer.rs`：尾窗已经有观测时行为不变；尾窗是 0 条且更早还有事件时，按同样的 300 条窗口向更早回填，至多 8 窗或凑满 30 条。本窗仍新增观测就再往前一窗（四张图分在 643 与 343 两窗），本窗不再新增或已经读到 sequence 1 就停。回填完成前不改已经展示的列表。没有改 wire，也没有改 Host 扫描。
+
+Host 的 `complete` 只表示这一页已经扫到会话 head，或这一页不足 `limit` 条。回填窗正好 300 条、上沿还没到 head 时，`complete=false`，`next_sequence` 停在窗口上沿（例如 after=643 的页游标是 943）。客户端把「游标 ≥ 本窗上沿」当成该窗结束，只在游标仍低于上沿时按字节预算同窗续读。若把这个 `complete=false` 当成截断再顺着游标读，会重读更新的窗口，重复计入已经见过的图，并且把更早的截图再推迟一轮。续读的 `limit` 仍是整窗，可能越过上沿；收敛时按 `(sequence, part_index)` 去重。没有重开 GPUI 真窗口。定向回归用上述 sequence，并按 Host 的满页 `complete=false` 回放面板状态机：`cargo test -p pawork-desktop --offline --bin pawork-desktop -- observation_empty_tail_backfills_past_streaming_deltas observation_backfill_budget_continues_inside_window_and_dedups observation_backfill_stops_for_nonempty_tail_and_session_start observation_backfill_is_bounded_when_no_evidence_exists observation_tail_fetch_keeps_identity_and_follows_latest observation_image_chunks_reassemble_and_fail_closed observation_image_validation_budgets_and_full_frame_gif evidence_decode_receipt_isolated_and_loads_selection computer_panel_rejects_stale_receipts_and_resets_on_session_switch computer_panel_mark_stale_keeps_data_and_invalidates_old_responses computer_panel_finish_action_requires_matching_generation computer_action_id_roundtrip_uses_dynamic_escape computer_stop_requires_real_release_or_terminal_state computer_panel_ax_publishes_targets_and_gates_actions computer_panel_ax_publishes_observations_and_stop_gating`，15 passed / 0 failed。
+
 ## 阻塞与剩余（切片 3 之后；2026-10-14 更新）
 
 - **专用容器环境缺失**：本机没有 Docker / Podman，CU-23 规格的专用 Wayland 容器（只读 rootfs、network none、CapDrop=ALL、无宿主 bind）无法建立，也无法验证「容器只把 5907 发布到宿主 loopback」这一部署形态。network none 与「发布端口」本身互相冲突，需要在部署设计中改为仅 loopback 的端口发布（同 CU-21），或改用 Unix socket 挂载，并重新评审。完成条件里的专用容器形态仍待此项。2026-10-14 的二进制 Host 验收用的是 `unshare -rn` 里的 headless Sway，不是该容器。
-- ~~**正式链路缺真实 Provider、二进制进程与真窗口**~~：2026-10-14 已补上（见「二进制 Host + GPUI 真窗口验收」）。2026-10-13 的 `cu26_live` 仍是脚本 Provider、非二进制、非真窗口。~~`resolve` 误报「未安装」~~：已按离线替身修掉（见「resolve 误报「未安装」」）；没有用真实 Sway 再跑一遍。Desktop Computer 面板在 Run 结束后列出 0 条观测（原因未查）。
+- ~~**正式链路缺真实 Provider、二进制进程与真窗口**~~：2026-10-14 已补上（见「二进制 Host + GPUI 真窗口验收」）。2026-10-13 的 `cu26_live` 仍是脚本 Provider、非二进制、非真窗口。~~`resolve` 误报「未安装」~~：已按离线替身修掉（见「resolve 误报「未安装」」）；没有用真实 Sway 再跑一遍。~~Desktop Computer 面板在 Run 结束后列出 0 条观测~~：根因是尾窗只覆盖最近 300 条事件，离线已改为有界回填；满页未到 head 时 Host `complete=false`，客户端停在窗口上沿而不顺游标扫回（见「面板列出 0 条观测」）；没有重开 GPUI 真窗口复核。
 - ~~**ComputerTargetList 能力矩阵与 Wayland 表面不符**~~：已修（2026-10-13，见「ComputerTargetList 能力矩阵修复」）。`target_capabilities` 对 `guest.wayland.*` 改为按 bundle_id 前缀对齐 `WaylandSurface::admit_action`，未新增族，wire 与 Desktop 映射不变。
 - **`AppFamily` 没有 Wayland 取值**：`WaylandSurface` 沿用 CU-21 guest 的 `Browser` 标签，只作身份字段，Host 能力闸不看族；GUI 目标列表的能力矩阵已改为按 bundle_id 前缀识别 Wayland 目标，不再依赖族（见上一条）；网站目标在这里因 `current_origin` 恒为 None 而 fail-closed。新增族会改 app / desktop 的穷举映射与 GUI 展示，留给后续。
 - **seat 级权限的固有限制**：三条协议的权限来自 socket 可达性，guest 内任何能连上 socket 的客户端（包括目标应用本身）都能截图或注入输入。`require_dedicated` 只能在调用时发现非虚拟设备或多余输出 / seat，无法阻止同 guest 内其它客户端创建虚拟设备。因此部署必须保证 guest 内只有 Pawork guest 服务和获批目标，sway 配置不带任何按键绑定。
