@@ -511,7 +511,14 @@ impl WaylandSeat {
     }
 
     /// Absolute motion to an output pixel, then a balanced press / release.
+    /// Cancellation after the motion and before the press returns
+    /// [`InputOutcome::Partial`] with one step and does not send the button.
     /// Cancellation after the press still sends the release.
+    ///
+    /// When `PAWORK_WAYLAND_STEP_DELAY_MS` is 1..=1000, the motion is
+    /// round-tripped and that delay elapses before the button decision, so a
+    /// live compositor can report the move and a probe can drop the client
+    /// first. Unset, the check stays immediate and no extra round-trip is added.
     pub fn click(
         &mut self,
         x: u32,
@@ -539,8 +546,15 @@ impl WaylandSeat {
                 .uint(height),
         )?;
         self.conn.send(&Message::new(pointer, 4))?;
-        if cancelled() {
+        let pause = !configured_step_delay().is_zero();
+        if pause {
             self.sync()?;
+            probe_step_delay();
+        }
+        if cancelled() {
+            if !pause {
+                self.sync()?;
+            }
             return Ok(InputOutcome::Partial { steps_sent: 1 });
         }
         for state in [1, 0] {
@@ -655,14 +669,19 @@ impl WaylandSeat {
 
 /// Pause between seat steps when `PAWORK_WAYLAND_STEP_DELAY_MS` is
 /// 1..=1000. Any other value, including unset, waits nothing. The delay
-/// does not add or drop Wayland events; it only opens the existing
-/// between-tap cancel check on a live compositor.
+/// does not add or drop pointer or key events. `type_text` waits after
+/// each tap. `click` round-trips absolute motion and then waits, so the
+/// button decision can observe a dropped client.
 fn probe_step_delay() {
-    std::thread::sleep(step_delay(
+    std::thread::sleep(configured_step_delay());
+}
+
+fn configured_step_delay() -> Duration {
+    step_delay(
         std::env::var("PAWORK_WAYLAND_STEP_DELAY_MS")
             .ok()
             .as_deref(),
-    ));
+    )
 }
 
 fn step_delay(raw: Option<&str>) -> Duration {
