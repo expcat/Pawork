@@ -1,7 +1,7 @@
 //! Changes 面（R8 波 D）：Files / Summary 二级页签、文件清单、DiffView 与
 //! Inspector 折叠态的 ActivityPopover。数据全部来自 diff_list_files /
 //! diff_get 的 Host 响应；未拉取或失败时诚实显示 unavailable / 错误，不画
-//! 演示数据（design/README.md §8.5）。
+//! 演示数据（docs/gui-design.md §8）。
 
 use std::collections::BTreeMap;
 

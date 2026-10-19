@@ -1,7 +1,7 @@
 //! Button 基础组件（R8 波 B 轨 1）。
 //!
 //! 统一 mod.rs 中散置的手写按钮 div：variant 决定底色 / 文字色 / hover·active
-//! 映射（design/README.md §8.1），尺寸与内边距经 builder 透传；除有意新增的
+//! 映射（docs/gui-design.md §3.2），尺寸与内边距经 builder 透传；除有意新增的
 //! hover / active 外保持迁移前视觉不变。菜单浮层化后触发器不再内嵌面板，
 //! 面板统一走 Dropdown（轨 2）。
 
@@ -13,7 +13,7 @@ use gpui::{
 use crate::ui::components::focus_ring::focus_ring;
 use crate::ui::theme::{font, metrics, theme};
 
-/// 按钮形态：决定底色、文字色与 hover / active 映射（design/README.md §8.1）。
+/// 按钮形态：决定底色、文字色与 hover / active 映射（docs/gui-design.md §3.2）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ButtonVariant {
     /// accent.primary 主按钮；hover → accent.hover；禁用底 border.strong。

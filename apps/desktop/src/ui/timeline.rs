@@ -30,10 +30,8 @@ use crate::projection::{
 };
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::dropdown::Dropdown;
-use crate::ui::components::empty_state::EmptyState;
 use crate::ui::components::follow_scroll::BackToBottom;
 use crate::ui::components::icon::{icon_sized, Icon};
-use crate::ui::components::label::Label;
 use crate::ui::i18n::t;
 use crate::ui::theme::{dark, font, metrics};
 
@@ -765,8 +763,8 @@ impl AppView {
         .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
         .pt(px(metrics::TIMELINE_TOP_GAP))
         .pb(px(metrics::MSG_ENTRY_GAP));
-        // P0-3 空态：无条目时居中说明；无任务可直接在 Composer 开无归属对话，
-        // Ghost「New task」仍可达。Disconnected 保留旧条目时不进入本分支。
+        // 空态引导靠近 Composer；无任务可直接开无归属对话，
+        // 「New task」仍可达。Disconnected 保留旧条目时不进入本分支。
         let offline = !matches!(
             self.projection.connection,
             ConnectionState::Connected { .. }
@@ -788,7 +786,7 @@ impl AppView {
                 self.add_task_disabled_reason()
             });
             let new_task = Button::new("header-new-task")
-                .variant(ButtonVariant::Ghost)
+                .variant(ButtonVariant::Raised)
                 .track_focus(&self.header_new_task_focus)
                 .height(px(36.0))
                 .padding(ButtonPadding::Horizontal(metrics::SPACE_4))
@@ -833,26 +831,56 @@ impl AppView {
                     view.on_project_task_menu(None, window, cx);
                     cx.stop_propagation();
                 }));
-            EmptyState::new()
-                .icon(Icon::Task)
-                .gap(metrics::SPACE_4)
-                .px(metrics::TIMELINE_CONTENT_INSET)
+            div()
+                .id("workspace-welcome")
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h_0()
+                .items_center()
+                .justify_end()
+                .gap(px(metrics::SPACE_4))
+                .px(px(metrics::TIMELINE_CONTENT_INSET))
+                .pt(px(metrics::SPACE_6))
+                .pb(px(metrics::SPACE_8))
+                .overflow_y_scroll()
+                .child(
+                    div()
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .size(px(48.0))
+                        .rounded(px(metrics::SURFACE_RADIUS))
+                        .bg(dark().surface.raised)
+                        .text_color(dark().text.secondary)
+                        .child(icon_sized(Icon::Task, px(24.0))),
+                )
                 .child(
                     self.shell_element("workspace-empty-title")
-                        .child(Label::new(workspace_empty_title()).size(font::TITLE)),
+                        .flex_none()
+                        .text_size(font::DISPLAY)
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_center()
+                        .child(workspace_empty_title()),
                 )
                 .when(self.welcome_hint_visible(), |area| {
                     area.child(
-                        self.shell_element("workspace-empty-hint").child(
-                            Label::new(self.welcome_hint())
-                                .size(font::BODY)
-                                .color(dark().text.secondary),
-                        ),
+                        self.shell_element("workspace-empty-hint")
+                            .flex_none()
+                            .max_w(px(480.0))
+                            .text_size(font::BODY)
+                            .line_height(font::from_pixels(metrics::MSG_LINE_HEIGHT))
+                            .text_center()
+                            .whitespace_normal()
+                            .text_color(dark().text.secondary)
+                            .child(self.welcome_hint()),
                     )
                 })
                 .when(self.projection.active_session_id.is_none(), |area| {
                     area.child(
                         self.shell_element("workspace-empty-action")
+                            .flex_none()
                             .mt(px(metrics::SPACE_2))
                             .child(new_task),
                     )
@@ -860,6 +888,7 @@ impl AppView {
                 .when(self.welcome_bind_project_visible(), |area| {
                     area.child(
                         self.shell_element("workspace-empty-action")
+                            .flex_none()
                             .mt(px(metrics::SPACE_2))
                             .child(bind_project),
                     )

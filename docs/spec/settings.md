@@ -52,7 +52,7 @@
 
 ## ADR-056：OPT-3d/3e 同供应商多凭证最小切片与额度槽诚实空态（2026-09-06）
 
-状态：Accepted。GUI API 1.13 的多凭证共存与额度空态契约；账号选择、权威额度与重命名扩展分别见 ADR-059、ADR-060、ADR-061。视觉参考见 [供应商展开图](../../design/opt-settings-providers-expanded-v1.png)。
+状态：Accepted。GUI API 1.13 的多凭证共存与额度空态契约；账号选择、权威额度与重命名扩展分别见 ADR-059、ADR-060、ADR-061。界面规范见 [GUI 设计](../gui-design.md#9-settings)。
 
 - **D1 共存语义（修订 SET-4 A3 替换语义）**：`auth_set_key` 写入 API key 不再删除该 provider 的 OAuth default 条目；`oauth_finish` 写入 OAuth 不再删除 API key default 条目。替换语义缩窄为**同 kind 覆盖**：Replace API key 覆盖 api key default 条目，Replace OAuth 原子覆盖 oauth default 三账户，新登录未返回 refresh_token 时同批删除旧账号 refresh；只有刷新响应缺 refresh_token 时保留当前账号 refresh。Remove（`auth_logout`）维持 provider 级语义：删除该 provider 全部存储凭证（幂等）。运行期解析链不变：装配仍按通道固定顺序（api_key 通道只查 api key；xAI / Kimi Code api-key 优先、OAuth 兜底；ChatGPT 只走 OAuth），即「生效凭证」由通道形态决定，本切片不引入账户选择/亲和路由（账号选择与命名扩展见 ADR-059）。同 kind 多账户（两个 API key）不在本切片：存储层 `SecretBackend` 结构天然容纳，但选择语义与命名 UX 属 G1 账户池，签字稿未呈现。
 - **D1a 生效与互斥**：认证或供应商代理设置变化后，当前 adapter 标记失效；下一次 Run（即使 provider/model 未改变）重新装配。`AuthRemove` 与同 provider 的认证写入共用单飞闸，验证/授权尚未结束时返回 `busy`。API key 验证、OAuth device start/token exchange/refresh 与模型请求统一遵循该 provider 的 `use_proxy` 设置。
@@ -283,7 +283,7 @@ Settings 沿用参考设计的 1440×1024 深色语言和 8px 节奏，不另起
 - headless/ACP 不因 Desktop 功能自动获得 Secret 写入能力；registry 必须对各通道显式声明，首期可只对认证本机 GUI 开放。
 - Desktop/CLI 对同一 auth backend 的状态必须一致；GUI 设置后 `pawork auth list` / `pawork models` 能以脱敏方式核对。
 
-P2 视觉方向见 [desktop-ui-p2-settings-v4.png](../../design/desktop-ui-p2-settings-v4.png)；它不替代真实数据或安全证据。真实认证 / 目录矩阵与用户签字见 [ROADMAP](../ROADMAP.md)，验收要求见 [Desktop Spec](desktop.md#7-当前验收合同)。
+设置布局见 [GUI 设计](../gui-design.md#9-settings)。真实认证 / 目录矩阵与用户签字见 [ROADMAP](../ROADMAP.md)，验收要求见 [Desktop Spec](desktop.md#7-当前验收合同)。
 
 ## 7. 实现索引
 

@@ -175,11 +175,33 @@ impl AppView {
                             .bg(dark().surface.raised)
                             .child(
                                 div()
+                                    .text_size(font::PAGE_TITLE)
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(dark().text.primary)
+                                    .child(t("settings.appearance.sample_heading")),
+                            )
+                            .child(
+                                div()
                                     .text_size(font::BODY)
+                                    .line_height(font::from_pixels(metrics::MSG_LINE_HEIGHT))
                                     .text_color(dark().text.primary)
                                     .child(t("settings.appearance.sample_body")),
                             )
-                            .child(settings_copy(t("settings.appearance.sample_sub"))),
+                            .child(
+                                div()
+                                    .text_size(font::BASE)
+                                    .line_height(gpui::rems(1.4))
+                                    .text_color(dark().text.secondary)
+                                    .child(t("settings.appearance.sample_sub")),
+                            )
+                            .child(
+                                div()
+                                    .font_family(font::MONO)
+                                    .text_size(font::BODY)
+                                    .line_height(font::from_pixels(metrics::MSG_LINE_HEIGHT))
+                                    .text_color(dark().text.primary)
+                                    .child(t("settings.appearance.sample_code")),
+                            ),
                     )
                     .child(self.settings_note(
                         "settings-appearance-effect",

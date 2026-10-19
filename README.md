@@ -60,7 +60,6 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 ├── schemas/             # protocol typegen 检入的 .d.ts
 ├── fixtures/            # 测试夹具
 ├── scripts/             # start.sh / build.sh / clean.py
-├── design/              # GUI P0–P2 三张阶段视觉基准图
 └── docs/                # 架构、设计、Spec、参照
 ```
 
@@ -77,7 +76,7 @@ Pawork/                  # 仓库根 = Cargo workspace 根
 | [docs/spec/crates/](docs/spec/README.md#12-包级-spec) | 每包一篇 Spec（agent 辅助阅读主入口） |
 | [docs/spec/flows.md](docs/spec/flows.md) | 跨包核心链路 |
 | [docs/spec/settings.md](docs/spec/settings.md) | Settings Feature Spec |
-| [docs/gui-design.md](docs/gui-design.md) | Desktop GUI 设计（配套 [design/README.md](design/README.md)） |
+| [docs/gui-design.md](docs/gui-design.md) | Desktop GUI 的现行布局、字体与交互 |
 | [docs/references.md](docs/references.md) | 参照项目手册与调研附录 |
 | [AGENTS.md](AGENTS.md) | 工程约定与开发经验 |
 

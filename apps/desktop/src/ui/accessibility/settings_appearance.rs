@@ -96,9 +96,11 @@ impl AppView {
                 self.settings_element_bounds("settings-appearance-sample"),
             )
             .value(format!(
-                "{} {}",
+                "{} {} {} {}",
+                t("settings.appearance.sample_heading"),
                 t("settings.appearance.sample_body"),
-                t("settings.appearance.sample_sub")
+                t("settings.appearance.sample_sub"),
+                t("settings.appearance.sample_code")
             )),
         );
 

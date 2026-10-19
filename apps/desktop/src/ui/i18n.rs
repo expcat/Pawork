@@ -308,10 +308,12 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "The quick brown fox jumps over the lazy dog.",
             "敏捷的棕色狐狸跳过了懒狗。",
         ),
+        "settings.appearance.sample_heading" => ("Page title", "页面标题"),
         "settings.appearance.sample_sub" => (
             "Code, tools, and review stay readable at this size.",
             "代码、工具与审阅在此字号下保持清晰可读。",
         ),
+        "settings.appearance.sample_code" => ("let answer = 42;", "let answer = 42;"),
         "settings.appearance.scale_button" => ("Text size {}%", "字号 {}%"),
         "settings.appearance.state_current" => ("Current", "当前"),
         "settings.appearance.state_available" => ("Available", "可选"),

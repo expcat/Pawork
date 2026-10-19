@@ -60,16 +60,6 @@ impl EmptyState {
         self
     }
 
-    pub fn gap(mut self, gap: f32) -> Self {
-        self.gap = px(gap);
-        self
-    }
-
-    pub fn px(mut self, pad: f32) -> Self {
-        self.pad_x = px(pad);
-        self
-    }
-
     pub fn child(mut self, child: impl IntoElement) -> Self {
         self.children.push(child.into_any_element());
         self

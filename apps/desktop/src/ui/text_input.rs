@@ -1356,7 +1356,12 @@ impl Element for TextElement {
 impl Render for TextInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 固定单行输入也必须容纳当前字号的行高与 py_1 内边距。
-        let line_min_height = (font::BASE.0 * 1.5 + 0.5) * f32::from(window.rem_size());
+        let text_size = if self.soft_wrap && !self.code_editor {
+            font::BODY
+        } else {
+            font::BASE
+        };
+        let line_min_height = (text_size.0 * 1.5 + 0.5) * f32::from(window.rem_size());
         div()
             .flex()
             .key_context(if self.code_editor {
@@ -1419,7 +1424,10 @@ impl Render for TextInput {
             .px_2()
             .rounded_sm()
             .bg(dark().surface.raised)
-            .text_size(font::BASE)
+            .text_size(text_size)
+            .when(self.soft_wrap && !self.code_editor, |element| {
+                element.line_height(font::from_pixels(metrics::MSG_LINE_HEIGHT))
+            })
             .overflow_y_scroll()
             .when(self.read_only || self.code_editor, |element| {
                 element.overflow_x_scroll()

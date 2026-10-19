@@ -1,6 +1,6 @@
 //! FollowScroll 跟随滚动与回底控件（R8 波 B 轨 2）。
 //!
-//! 封装原 mod.rs 内联的 follow bool + 贴底判定（design/README.md §8.3）：
+//! 封装原 mod.rs 内联的 follow bool + 贴底判定（docs/gui-design.md §5）：
 //! 用户上滚脱钩自动跟随，滚回底部自动重挂；脱钩时滚动区右下浮出
 //! 「↓ 回到底部」控件，点击滚底并重挂，跟随态隐藏。
 

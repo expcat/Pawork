@@ -1,6 +1,6 @@
 //! Resources 页（R8 波 D）：MCP server 只读列表（mcp_list）。
 //! name / transport / state / tools 数 / last_error 全部来自 Host 响应；
-//! 「已加载规则」分区无 Host 出口，本波不画（design/README.md §8.5）。
+//! 「已加载规则」分区无 Host 出口，本波不画（docs/gui-design.md §8）。
 
 use gpui::{div, prelude::*, px, Context, ScrollHandle};
 

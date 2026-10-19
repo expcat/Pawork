@@ -603,7 +603,14 @@ impl AppView {
     }
 
     fn inspector_home_element(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut actions = div().flex().flex_col().w_full().max_w(px(360.0)).gap_2();
+        let mut actions = div()
+            .flex()
+            .flex_col()
+            .flex_none()
+            .w_full()
+            .max_w(px(360.0))
+            .mb_auto()
+            .gap_2();
         for tool in InspectorTab::ALL {
             let id = tool.button_id();
             let focus = self
@@ -675,16 +682,19 @@ impl AppView {
             );
         }
         div()
+            .id("inspector-home")
             .flex()
             .flex_col()
             .flex_1()
             .min_h_0()
-            .justify_center()
             .items_center()
-            .px_4()
+            .p_4()
             .gap_4()
+            .overflow_y_scroll()
             .child(
                 div()
+                    .flex_none()
+                    .mt_auto()
                     .text_size(font::SM)
                     .text_color(dark().text.secondary)
                     .child(t("inspector.home_hint")),

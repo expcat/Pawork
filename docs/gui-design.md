@@ -1,6 +1,6 @@
 # Pawork Desktop GUI 设计
 
-> 更新：2026-10-05。本文定义现行界面与交互合同；能力边界见 [Desktop Spec](spec/desktop.md) 与 [desktop crate](spec/crates/desktop.md)，未闭合验收见 [ROADMAP](ROADMAP.md)。行为以源码 / golden 为准，布局与冻结契约以 [架构文档](architecture.md) 为准。
+> 更新：2026-10-19。本文定义现行界面与交互合同；能力边界见 [Desktop Spec](spec/desktop.md) 与 [desktop crate](spec/crates/desktop.md)，未闭合验收见 [ROADMAP](ROADMAP.md)。行为以源码 / golden 为准，布局与冻结契约以 [架构文档](architecture.md) 为准。
 
 [任务日志与消耗 UI](spec/task-usage-ui.md#7-生产界面)定义侧栏「任务消耗」统计窗口及完整页面设计参考；生产数据通过 GUI API 1.26 查询调用日志，用户验收与消费者接入见路线图。
 
@@ -27,7 +27,7 @@ Pawork 是本机 Coding Agent 工作台：用户围绕一个任务阅读、输�
 
 页面文字与截图存在版本差异：文字称 minimap 在右侧、模型芯片在 Composer；所列 minimap 图标记在阅读区左侧，模型菜单从 Header 打开。因此只借鉴明确可见的层级与操作目的，不把其位置描述当成冻结合同。下文尺寸为 Pawork 界面合同，不冒充从 PI 像素测得。
 
-Codex Desktop、OpenCode、Zed、ZCode 等前阶段参照保留在 [功能设计](design.md) 与 [参照文档](references.md)。ZCode 只对照任务壳（审批 / Goal / 子代理可视化），不吸收完整 ADE。[历史设计资产](../design/README.md) 用于追溯，不覆盖本文目标和当前源码事实。
+Codex Desktop、OpenCode、Zed、ZCode 等前阶段参照保留在 [功能设计](design.md) 与 [参照文档](references.md)。ZCode 只对照任务壳（审批 / Goal / 子代理可视化），不吸收完整 ADE。
 
 ## 3. 当前界面合同
 
@@ -47,7 +47,7 @@ Composer 附件、模型用途、子代理、面板与 Settings 的交互见下�
 | TaskRail | 宽窗 288px；1080–1279px 为 240px；150% 字号为 320px |
 | Header | GUI2-01：64px 起，上下各 12px 内边距，内容可撑高 |
 | 阅读列 | 最大 880px，左右各至少 28px |
-| 字阶 | 页标题 20px、Header 18px、正文 16px / 26px、控件 14px、元信息 12px |
+| 字阶 | 首页标题 28px、设置页标题 24px、Header 18px、正文 / 消息输入 16px / 26px、控件 14px、辅助文字 12px |
 | 间距 / 圆角 | 4 / 8 / 12 / 16 / 24 / 32px；6 / 8 / 12px 圆角 |
 | 命中区 | 主动作 ≥36×36px，任务行改名 / 归档 ≥32×32px；focus ring 2px |
 | Composer | 卡片 110–220px，内边距 16px，动作 36px；项目 / Context 在外 |
@@ -56,6 +56,8 @@ Composer 附件、模型用途、子代理、面板与 Settings 的交互见下�
 | 模型管理 | 320px 宽、520px 高度上限，列表独立滚动 |
 
 调整共享值须同步可见布局、测高、键盘焦点与 AX，不靠估算矩形另造布局。
+
+字体沿用 GPUI 系统字体与中文 fallback，代码沿用 Menlo；字号继续通过 rem 随 100% / 125% / 150% 变化。
 
 模型用途与工具状态：模型菜单提供对话 / 识图 / 视频 / 搜索四个用途筛选，与名称搜索叠加；筛选只改变候选列表，不切换模型。纯生图模型保留在 Settings 目录和 Gateway 生图用途中，隐藏对话推理设置；能力徽标统一识图 / 生图 / 视频 / 搜索。Plan、目标、录制、绘图与视频窗口保留一个当前主动作，其余按钮用 Raised。已结束 Run 内缺少结果的工具显示「已停止」，组摘要、展开行与 AX 同源。未闭合验收见 [ROADMAP](ROADMAP.md)。
 
@@ -67,7 +69,7 @@ Composer 附件、模型用途、子代理、面板与 Settings 的交互见下�
 
 Header 左侧是任务标题与按需出现的 branch / live 状态 chip（无数据不留空洞），右侧是当前确有用途的动作（GUI3-07：查找 / 回合为 36×36 图标按钮，tooltip 承载快捷键）。默认 64px 起；不重复显示 Composer 的模型或账号额度。断线时解释与唯一 Primary「重试连接」留在主区 recovery，侧栏底部 Local 行只显示「本地 · 已断开」与 Ghost「重试」，原始错误不进底行。保留 Inspector 重开 / Activity 入口，面板布局保留唯一可达入口。
 
-首页只显示简短的「开始一个任务」及当前可用下一步，不添加宣传卡或假最近项目。Composer 固定底部；用户不必在首页与对话中寻找两套输入区。
+首页只显示简短的「开始对话」及当前可用下一步，不添加宣传卡或假最近项目。欢迎区靠近底部 Composer，上方保留留白；标题 28px 半粗，说明为最大 480px 的 16px / 26px 居中换行文本，下方沿用新建任务 / 绑定项目的真实入口，新建使用中性 Raised 按钮。Composer 固定底部；用户不必在首页与对话中寻找两套输入区。
 
 | 真实状态 | 呈现与动作 |
 | --- | --- |
@@ -150,6 +152,8 @@ Header 的查找入口 / `Cmd+F` 只查当前已加载用户 / 助手正文，�
 
 默认仍收起，明确点击 Header、Activity 或 Review 才打开；工具完成不自动抢占阅读区。宽窗同一 440px 面板并排；空间不足时显式打开则占用中央 Workspace，左侧任务栏保留，顶部提供「返回对话」。此时隐藏 Timeline / Composer 的渲染和离屏 AX，保留实体、草稿、阅读锚点与连接状态。
 
+工作面板的工具入口在可用高度足够时居中；小窗 / 大字号不足以容纳七项时从顶部开始纵向滚动，末项不落在底栏后。
+
 窗口变宽时将同一面板放回侧栏；变窄时仅已打开面板进入中央模式，未打开时保持对话。返回 / 关闭恢复原任务视图。切任务继续现有 workspace / session 隔离逻辑，不把上一任务的 Changes 或终端输入法预编辑带到新任务。收到审批时提示「返回对话处理审批」，不默认批准、不把审批埋进已隐藏视图。
 
 | 面板 | 当前并保持的能力 | 空态 / 失败的下一步 |
@@ -177,7 +181,7 @@ Settings 是独立目的地，保留九页顺序：Models & providers、Subagent
 
 返回按钮下增加「查找设置」，只查标题、公开说明与中英文别名；与 `Cmd+K` 共用页面 / 设置条目目录。选择命中先切页，再将实际行滚入视口并短暂标识（约 2 秒），焦点落在对应可操作控件或只读行。它是导航，不自动保存或修改值。当前能力不可用的页不出现可执行结果；Advanced 与本地 Appearance 按既有离线行为保留。导航按「模型 / 工作台 / 系统」分组；供应商卡头为 52px 单行（中性状态色点 · 名称 · 认证方式 · 连接 chip · chevron）；Approvals 为真实圆环 radio；Switch 关态 hover 不用主色。页导航图标已随 GUI3-05 落地（单色 SVG，必须在 Svg 上染色，默认 `text.primary`；Primary/Danger 上的 Send/Cancel 用 `on_accent`）。Manage models 弹层头行常驻 Refresh；加 key / OAuth 成功后自动重拉目录。
 
-设置内容继续全宽、左右 32px。每行清楚区分名称、说明、当前值和动作，描述与输入不过度并列；窄窗 / 大字号将控件移到下一行。导航选中只改变背景 / 字重，文字坐标不移动。除了供应商 / 账号这类实际分组，不给每个普通设置再包一层卡片。子代理权限与强度选项使用中性 Raised 选中态和主色文字，将实心主按钮留给保存动作。MCP 卡片分开显示本地化状态、传输 / 工具数与完整错误；错误独占可换行行，AX 使用同源状态词。
+设置内容继续全宽、左右 32px。每行清楚区分名称、说明、当前值和动作，描述与输入不过度并列；窄窗 / 大字号将控件移到下一行。导航选中只改变背景 / 字重，文字坐标不移动；分组标题在固定 20px 槽内显式使用随字号缩放的单行行高，150% 下文字完整。除了供应商 / 账号这类实际分组，不给每个普通设置再包一层卡片。子代理权限与强度选项使用中性 Raised 选中态和主色文字，将实心主按钮留给保存动作。MCP 卡片分开显示本地化状态、传输 / 工具数与完整错误；错误独占可换行行，AX 使用同源状态词。
 
 <a id="ui-6a-供应商更新2026-09-08"></a>
 <a id="ui-6b-账号交互更新2026-09-08"></a>
@@ -195,6 +199,8 @@ Settings 是独立目的地，保留九页顺序：Models & providers、Subagent
 - 普通 UI / AX summary 不泄露 credential 片段、endpoint 或 raw 错误。secure 输入只在认证编辑中出现，完整值不进 AX / 日志 / 搜索，离开设置清缓冲。OAuth 只展示 Host 返回的 HTTP(S) 授权链接和存在的 device code；到期收起动作。
 
 其余设置仍使用现有范围：Network 只写 Global proxy；Approvals 保持五档与项目信任；Tools & MCP 提供真实 Test / Remove，空态解释平台配置路径、配置节与重启刷新；Terminal 默认只影响之后新建；Appearance 只提供现有字号 / 中英文与深色主题说明；Advanced 保留离线连接诊断，About 以当前认证握手的 `host_data_dir` 为可用条件。
+
+外观页的即时字号样例包含 24px 半粗页标题、16px / 26px 正文、14px 辅助说明与 Menlo 代码，AX 按相同顺序读取。消息软换行输入使用 16px / 26px；设置字段与文件编辑仍为 14px，各自保持原有换行与保存方式。
 
 Host-backed 结果断线后标 stale，鼠标 / 键盘 / AX 写入同 gate；最终值以 Host 回执为准。账号、额度、目录权威细节见 [Settings Spec](spec/settings.md)。
 
@@ -233,7 +239,7 @@ Snapshot 不含历史正文。首连按 Snapshot / subscribe / SessionGet 分页
 
 <a id="8-opt-d-统一候选稿已签字"></a>
 
-历史视觉参考见 [设计资产](../design/README.md)，当前验收规则见 [验证规格](spec/verification.md)。
+当前验收规则见 [验证规格](spec/verification.md)。
 
 ### 聊天控制右侧工具（2026-09-16）
 

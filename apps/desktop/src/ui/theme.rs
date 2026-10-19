@@ -262,8 +262,12 @@ pub mod font {
     pub const BODY: Rems = from_pixels(16.0);
     /// 20px：页面与应用标题。
     pub const TITLE: Rems = from_pixels(20.0);
-    /// 11px：提示 / 标签 / 次级行。
-    pub const XS: Rems = from_pixels(11.0);
+    /// 24px：设置页面标题，与 16px 分区标题拉开层级。
+    pub const PAGE_TITLE: Rems = from_pixels(24.0);
+    /// 28px：首页引导标题。
+    pub const DISPLAY: Rems = from_pixels(28.0);
+    /// 12px：提示 / 标签 / 次级行，常驻文字不再低于 12px。
+    pub const XS: Rems = from_pixels(12.0);
     /// 12px：meta 与紧凑辅助文字。
     pub const SM: Rems = from_pixels(12.0);
     /// 14px：控件、列表与输入框正文。
@@ -515,7 +519,7 @@ pub mod metrics {
     pub const SCROLL_EPSILON: f32 = 1.0;
     /// 16：贴底吸附阈值。
     pub const SCROLL_BOTTOM_SLACK: f32 = 16.0;
-    /// 320：ActivityPopover 宽度（design/README.md §8.5）。
+    /// 320：ActivityPopover 宽度（docs/gui-design.md §8）。
     pub const ACTIVITY_POPOVER_WIDTH: f32 = 320.0;
     /// 144：当前只有 Changes 摘要时按内容收缩，不为未实现的 Agent 状态留空。
     pub const ACTIVITY_POPOVER_HEIGHT: f32 = 144.0;

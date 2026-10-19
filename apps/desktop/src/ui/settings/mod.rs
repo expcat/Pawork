@@ -1444,8 +1444,8 @@ impl AppView {
             .gap_2()
             .child(
                 div()
-                    .text_size(font::TITLE)
-                    .font_weight(FontWeight::MEDIUM)
+                    .text_size(font::PAGE_TITLE)
+                    .font_weight(FontWeight::SEMIBOLD)
                     .text_color(dark().text.primary)
                     .child(title),
             )
@@ -1643,6 +1643,7 @@ impl AppView {
             .items_end()
             .px(px(metrics::RAIL_INNER_PAD))
             .text_size(font::XS)
+            .line_height(font::XS)
             .text_color(dark().text.tertiary)
             .child(label)
             .into_any_element()

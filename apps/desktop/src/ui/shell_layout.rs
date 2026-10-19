@@ -1,6 +1,6 @@
 //! R2 Wave A 轨 2：窗口壳布局合同（F-01/F-02 / 响应式 / U1 不变量）。
 //!
-//! 合同（design/README.md §2 / GUI2-05）：宽窗三栏 TaskRail 288 / Workspace
+//! 合同（docs/gui-design.md §3.2 / GUI2-05）：宽窗三栏 TaskRail 288 / Workspace
 //! 弹性 / Inspector 440，StatusBar 30；窗口宽 1080–1279 时 rail 收敛 240，
 //! 显式打开的 Inspector 改为中央呈现（Workspace ≥560）；150% 文本缩放时
 //! rail 扩为 320，窗口不足 1320 时同样走中央。resolve 是 AppView::render

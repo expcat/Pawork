@@ -1,6 +1,6 @@
 //! Dropdown 浮层菜单基础组件（R8 波 B 轨 2）。
 //!
-//! 菜单形态与关闭语义按 design/README.md §8.2：面板经 deferred(anchored())
+//! 菜单形态与关闭语义按 docs/gui-design.md §10：面板经 deferred(anchored())
 //! 浮层化（不占布局流，开合不改变下层内容位置），occlude() 拦截下层点击与
 //! 滚轮；关闭路径 = 选择选项 / 再点触发器 / Escape / 外点（on_mouse_down_out，
 //! vendored gpui 0.2.2 已核实存在）。Escape 由宿主根节点 on_key_down 冒泡承接：

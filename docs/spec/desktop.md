@@ -29,7 +29,7 @@ Markdown、工具折叠与 Run 终态呈现见 [GUI 设计](../gui-design.md#ui-
 
 Pawork Desktop 是本机单窗口 GPUI Agent 工作台。它只负责呈现、输入和用户控制，通过 `pawork-client` 连接 `pawork gui serve`；业务状态、Provider、数据库、工具、Git、PTY 与安全决策均留在 CLI/AppCore 宿主。
 
-默认窗口为 1440×1024，当前只有深色主题。视觉 token、组件值与截图基准以 [design/README.md](../../design/README.md) 为准；本文只定义产品流程和可验收行为。
+默认窗口为 1440×1024，当前只有深色主题。视觉 token 与组件值见 [GUI 设计](../gui-design.md#32-共享视觉合同)，实现以当前源码为准；本文只定义产品流程和可验收行为。
 
 ## 2. 信息架构
 

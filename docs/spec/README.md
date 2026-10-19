@@ -62,7 +62,7 @@
 
 [flows.md](flows.md)：Agent loop、GUI 连接、事件持久化与重放、凭证与脱敏四条跨包链路的速览与红线；进单包前的全局定位用。
 
-不在本目录重复维护：布局与依赖边（[architecture.md](../architecture.md)）、逐符号 API（源码/rustdoc/golden）、当前活动线任务规划（[ROADMAP.md](../ROADMAP.md)）、工程约定（[AGENTS.md](../../AGENTS.md)）、视觉 token 明细（[GUI 视觉基准](../../design/README.md)）。
+不在本目录重复维护：布局与依赖边（[architecture.md](../architecture.md)）、逐符号 API（源码/rustdoc/golden）、当前活动线任务规划（[ROADMAP.md](../ROADMAP.md)）、工程约定（[AGENTS.md](../../AGENTS.md)）、视觉 token 明细（[GUI 设计](../gui-design.md#32-共享视觉合同)）。
 
 ## 2. 事实源优先级
 
@@ -97,7 +97,7 @@ Spec 中的能力状态不替代验证结论。某项“已实现”只说明生
 
 - 用户可见能力、产品边界或状态变化：同批更新 `product.md` / `capabilities.md`。
 - wire、schema、配置层级、Secret/Policy 语义变化：先完成 ADR（若需）与 golden，再更新 `contracts.md` / `security.md`。
-- Desktop 流程或可访问性变化：以 [gui-design.md](../gui-design.md) 和 [design/README.md](../../design/README.md) 为视觉/交互事实源，同批更新 `desktop.md`。
+- Desktop 流程或可访问性变化：同步 [gui-design.md](../gui-design.md) 的视觉 / 交互规范与 `desktop.md`；实现以当前源码为准。
 - **包级 Spec**：写入集改了模块树、对外 API、`pawork-*` 依赖边、feature 门、红线相关行为或测试资产时，同批更新该包 `crates/<pkg>.md`；冲突以源码为准并回写。固定八节结构：职责与边界 · 模块树 · 对外 API 面 · 关键行为与语义 · 依赖与 feature · 红线与不变量 · 测试与 golden 资产 · 相关文档。
 - 验证只记录实际执行的命令与证据；缺凭证、缺平台或未签字必须如实标为 pending/fail-closed。
 - 小功能直接在任务书写清需求；像 Settings 这样跨协议、Secret、Provider 与 Desktop 的功能才从 [feature-template.md](feature-template.md) 建独立 Feature Spec。
