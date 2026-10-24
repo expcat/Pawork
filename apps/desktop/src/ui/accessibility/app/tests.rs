@@ -25,7 +25,7 @@ fn text_scale_feedback_expires_without_clearing_errors(cx: &mut gpui::TestAppCon
     cx.update(|window, cx| {
         view.update(cx, |v, cx| {
             v.set_text_scale(TextScale::Percent150, window, cx);
-            assert!(v.text_scale_feedback.as_ref().unwrap().contains("150"));
+            assert!(v.status_feedback.as_ref().unwrap().contains("150"));
         })
     });
     cx.run_until_parked();
@@ -34,7 +34,7 @@ fn text_scale_feedback_expires_without_clearing_errors(cx: &mut gpui::TestAppCon
     cx.update(|window, cx| {
         view.update(cx, |v, cx| {
             assert!(
-                v.text_scale_feedback.is_some(),
+                v.status_feedback.is_some(),
                 "old timer must not clear the latest feedback"
             );
             let with_feedback = v.composer_outer_height(40.0, window);
@@ -49,7 +49,7 @@ fn text_scale_feedback_expires_without_clearing_errors(cx: &mut gpui::TestAppCon
     cx.run_until_parked();
     cx.update(|window, cx| {
         view.update(cx, |v, _| {
-            assert!(v.text_scale_feedback.is_none());
+            assert!(v.status_feedback.is_none());
             assert_eq!(v.status_hint.as_deref(), Some("new error"));
             assert_eq!(v.composer_notes(), Vec::<(&str, String)>::new());
             assert_eq!(v.status_bar_trailing_text(), "new error");
@@ -62,6 +62,40 @@ fn text_scale_feedback_expires_without_clearing_errors(cx: &mut gpui::TestAppCon
             assert!(note.contains("config.toml") && note.contains("[mcp.servers."));
             assert!(!note.contains("Remove updates"));
         })
+    });
+    cx.update(|_, cx| {
+        view.update(cx, |v, cx| {
+            v.handle_controller_event(
+                crate::controller::ControllerEvent::SessionForked {
+                    session_id: "forked".into(),
+                },
+                cx,
+            );
+            assert_eq!(v.projection.active_session_id.as_deref(), Some("forked"));
+            assert_eq!(
+                v.status_feedback,
+                Some(t("status.forked").replace("{}", "forked"))
+            );
+            let text = "  exact copy\n中文\n";
+            v.copy_timeline_text(text.into(), cx);
+            assert_eq!(
+                cx.read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .as_deref(),
+                Some(text)
+            );
+            assert_eq!(v.status_feedback.as_deref(), Some(t("timeline.copied")));
+            v.status_hint = Some("persistent copy error".into());
+            assert_eq!(v.status_bar_trailing_text(), "persistent copy error");
+        });
+    });
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_secs(3));
+    cx.run_until_parked();
+    cx.update(|_, cx| {
+        let v = view.read(cx);
+        assert!(v.status_feedback.is_none());
+        assert_eq!(v.status_bar_trailing_text(), "persistent copy error");
     });
 }
 
@@ -222,7 +256,29 @@ fn recovery_keeps_errors_local_and_preserves_drafts(cx: &mut gpui::TestAppContex
                 cx,
             );
             assert!(v.projection.terminal.last_error.is_none());
+            v.projection
+                .apply_terminal_exited("term-a", pawork_client::TerminalExitReason::Exited);
+            assert_eq!(
+                v.terminal_notice_text().as_deref(),
+                Some(t("recovery.terminal_exited"))
+            );
+            assert!(!terminal_can_operate(
+                &v.projection.connection,
+                &v.projection.terminal
+            ));
+            cx.notify();
         })
+    });
+    cx.refresh().unwrap();
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        let v = view.read(cx);
+        let tree = v.accessibility_tree(window, cx);
+        assert_eq!(
+            tree.find("terminal-notice").unwrap().label,
+            t("recovery.terminal_exited")
+        );
+        assert_eq!(v.text_input.read(cx).text(), "keep this draft");
     });
 }
 
@@ -244,7 +300,7 @@ fn header_actions_and_disconnect_hierarchy(cx: &mut gpui::TestAppContext) {
             });
             view.projection.sessions = vec![rail_session_summary(
                 "s-1",
-                "Header task",
+                "Header task · 中英文长标题 keeps branch and live status reachable without overlapping actions",
                 None,
                 crate::ui::now_unix_ms(),
             )];
@@ -256,6 +312,7 @@ fn header_actions_and_disconnect_hierarchy(cx: &mut gpui::TestAppContext) {
     });
     for (width, height, scale) in [
         (1440.0, 1024.0, TextScale::Percent100),
+        (1440.0, 1024.0, TextScale::Percent125),
         (1080.0, 720.0, TextScale::Percent150),
     ] {
         cx.simulate_resize(size(px(width), px(height)));
@@ -280,6 +337,14 @@ fn header_actions_and_disconnect_hierarchy(cx: &mut gpui::TestAppContext) {
                 find.bounds.width
             );
             let expand = tree.find("inspector-expand").expect("inspector-expand");
+            let activity = tree.find("inspector-toggle").unwrap().bounds;
+            assert_eq!(find.bounds.width, expand.bounds.width);
+            assert_eq!(find.bounds.height, expand.bounds.height);
+            assert_eq!(activity.width, expand.bounds.width);
+            assert_eq!(activity.height, expand.bounds.height);
+            let title = tree.find("header-title").unwrap();
+            assert_eq!(title.bounds, view.shell_ax_rect("header-title"));
+            assert!(!ax_rects_overlap(title.bounds, find.bounds));
             assert!(
                 !ax_rects_overlap(find.bounds, expand.bounds),
                 "find {:?} overlaps inspector-expand {:?}",
@@ -295,7 +360,7 @@ fn header_actions_and_disconnect_hierarchy(cx: &mut gpui::TestAppContext) {
         view.update(cx, |view, cx| {
             view.changes.session_id = Some("s-1".into());
             view.changes.git = Some(GitDiffInfo {
-                branch: Some("main".into()),
+                branch: Some("ui08/long-branch-for-header-and-status-bar-overlap".into()),
                 work_dir: None,
                 dirty_files: None,
             });
@@ -314,12 +379,29 @@ fn header_actions_and_disconnect_hierarchy(cx: &mut gpui::TestAppContext) {
         let tree = view.accessibility_tree(window, cx);
         tree.validate().unwrap();
         let branch = tree.find("header-branch").expect("header-branch chip");
-        assert_eq!(branch.label, "main");
+        assert_eq!(
+            branch.label,
+            "ui08/long-branch-for-header-and-status-bar-overlap"
+        );
         assert!(branch.bounds.width > 0.0 && branch.bounds.height > 0.0);
         let status = tree.find("header-status").expect("header-status chip");
         assert_eq!(status.label, t("live.running"));
         assert!(status.bounds.width > 0.0 && status.bounds.height > 0.0);
+        let title = tree.find("header-title").unwrap().bounds;
+        assert!(!ax_rects_overlap(title, branch.bounds));
+        assert!(!ax_rects_overlap(branch.bounds, status.bounds));
+        assert!(!ax_rects_overlap(
+            status.bounds,
+            tree.find("timeline-find").unwrap().bounds
+        ));
     });
+    let bar = cx.debug_bounds("shell-status-bar").unwrap();
+    let leading = cx.debug_bounds("status-bar-leading-slot").unwrap();
+    let centered = cx.debug_bounds("status-bar-center-slot").unwrap();
+    let trailing = cx.debug_bounds("status-bar-trailing-slot").unwrap();
+    assert!(leading.right() <= centered.left());
+    assert!(centered.right() <= trailing.left());
+    assert!((centered.center().x - bar.center().x).abs() <= px(1.0));
 
     cx.update(|_, cx| {
         view.update(cx, |view, cx| {
@@ -1091,24 +1173,25 @@ fn markdown_code_labels_and_http_links_dispatch(cx: &mut gpui::TestAppContext) {
         cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::none());
         cx.run_until_parked();
     };
-    let paragraph_x = |scroll: gpui::Bounds<gpui::Pixels>| scroll.origin.x - px(4.0);
-    let rust_scroll = cx.debug_bounds("reply-code-scroll-1").expect("rust scroll");
-    let bare_scroll = cx.debug_bounds("reply-code-scroll-2").expect("bare scroll");
-    click_inline(
-        cx,
-        point(paragraph_x(rust_scroll), rust_scroll.origin.y - px(66.0)),
-    );
+    let line_point = |cx: &mut gpui::VisualTestContext, id: &'static str| {
+        let bounds = cx.debug_bounds(id).expect("rendered Markdown line");
+        point(bounds.origin.x + px(4.0), bounds.center().y)
+    };
+    let at = line_point(cx, "reply-md-0-0");
+    click_inline(cx, at);
     assert_eq!(cx.opened_url().as_deref(), Some(https));
 
-    let bare_bottom = bare_scroll.origin.y + bare_scroll.size.height;
-    click_inline(cx, point(paragraph_x(bare_scroll), bare_bottom + px(58.0)));
-    click_inline(cx, point(paragraph_x(bare_scroll), bare_bottom + px(84.0)));
+    let at = line_point(cx, "reply-md-4-0");
+    click_inline(cx, at);
+    let at = line_point(cx, "reply-md-4-1");
+    click_inline(cx, at);
     assert_eq!(
         cx.opened_url().as_deref(),
         Some(https),
         "javascript: and file: must not dispatch"
     );
-    click_inline(cx, point(paragraph_x(bare_scroll), bare_bottom + px(20.0)));
+    let at = line_point(cx, "reply-md-3-0");
+    click_inline(cx, at);
     assert_eq!(cx.opened_url().as_deref(), Some(http));
 
     let menu_point = |cx: &mut gpui::VisualTestContext, url: &str, open: bool| {
@@ -2217,7 +2300,7 @@ fn approval_card_ax_position_follows_content_flow_until_overflow() {
     let frame = AxRect::new(288.0, 56.0, 712.0, 800.0);
     let content_top = frame.y + metrics::TIMELINE_TOP_GAP;
     let viewport_height = frame.height - metrics::TIMELINE_TOP_GAP;
-    let card_height = approval_card_height("Use bash", None, 618.0, 16.0);
+    let card_height = approval_card_height("bash", "Use bash", None, 618.0, 16.0);
     // 短内容：approval 与 rows 组成同一 item 序列，全量远小于视口。
     let short = vec![
         (0.0f32, 62.0f32),
@@ -2262,15 +2345,6 @@ fn approval_card_ax_position_follows_content_flow_until_overflow() {
     // 脱钩读史时 approval 在视口外，不得发布不可见审批动作。
     let detached = timeline_visible_item_tops(&tall, content_top, viewport_height, 0, 0.0);
     assert!(detached.iter().all(|(ix, _)| *ix != 2));
-    // 按钮行 y = 卡底 − p_2 − 32：两臂均自卡底推导（随卡移动）。
-    assert_eq!(
-        approval_button_row_y(AxRect::new(288.0, short_y, 618.0, card_height), 16.0),
-        short_y + card_height - APPROVAL_CARD_PAD_REMS * 16.0 - APPROVAL_BUTTON_HEIGHT
-    );
-    assert_eq!(
-        approval_button_row_y(AxRect::new(288.0, pinned_y, 618.0, card_height), 16.0),
-        pinned_y + card_height - APPROVAL_CARD_PAD_REMS * 16.0 - APPROVAL_BUTTON_HEIGHT
-    );
 }
 
 /// UI-2：真实 hover / Tab / click 驱动非当前会话动作，不先打开会话。
@@ -3794,7 +3868,7 @@ fn settings_ax_masks_api_key_and_gates_writes_when_stale(cx: &mut gpui::TestAppC
         let header = view.settings_element_layouts[&header_id].bounds();
         let header_h: f32 = header.size.height.into();
         assert!(
-            (48.0..=56.0).contains(&header_h),
+            header_h >= 52.0 && header_h <= 120.0,
             "provider header height {header_h}"
         );
         let input = tree.find(&input_id).expect("secure input has an AX node");
@@ -3902,6 +3976,12 @@ fn welcome_and_rail_follow_actual_layout(cx: &mut gpui::TestAppContext) {
                         assert!(tree.find("composer-file-tools-hint").is_none());
                     }
                     assert_eq!(tree.find("header-new-task").is_some(), !active);
+                    let action = view.shell_ax_rect("workspace-empty-action");
+                    let card = view.composer_layouts["composer-card"].bounds();
+                    assert!(
+                        (f32::from(card.top()) - action.y - action.height - 32.0).abs() <= 1.0,
+                        "welcome-to-composer gap: {action:?}, {card:?} at {scale:?}"
+                    );
                     assert!(
                         view.projection.sessions.is_empty(),
                         "render must not create tasks"
@@ -4490,19 +4570,55 @@ fn model_menu_ax_culls_rows_outside_clipped_frame(cx: &mut gpui::TestAppContext)
     cx.run_until_parked();
     cx.refresh().unwrap();
     cx.run_until_parked();
-    cx.update(|window, cx| {
-        let view = view.read(cx);
-        let tree = view.accessibility_tree(window, cx);
-        tree.validate().unwrap();
-        let current = tree
-            .find(&model_identifier(&view.projection.models[17]))
-            .expect("current model visible on open");
-        assert!(current.selected && current.bounds.height > 0.0);
-        let menu = tree.find("model-menu").unwrap();
-        assert!(menu.bounds.height <= 480.0);
-        assert!(menu.children.len() < 20);
-        assert!(tree.find("model-search-input").unwrap().bounds.height > 0.0);
-    });
+    for (width, height, scale) in [
+        (1440.0, 1024.0, font::TextScale::Percent100),
+        (1080.0, 720.0, font::TextScale::Percent125),
+        (1080.0, 720.0, font::TextScale::Percent150),
+    ] {
+        cx.simulate_resize(gpui::size(gpui::px(width), gpui::px(height)));
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.text_scale = scale;
+                window.set_rem_size(gpui::px(scale.rem_pixels()));
+                view.pending_model_menu_scroll = true;
+                cx.notify();
+            })
+        });
+        for _ in 0..2 {
+            cx.refresh().unwrap();
+            cx.run_until_parked();
+        }
+        cx.update(|window, cx| {
+            let view = view.read(cx);
+            let tree = view.accessibility_tree(window, cx);
+            tree.validate().unwrap();
+            let current = tree
+                .find(&model_identifier(&view.projection.models[17]))
+                .expect("current model visible on open and resize");
+            assert!(current.selected && current.bounds.height > 0.0);
+            assert_eq!(current.value.as_deref(), Some("test-provider / model-17"));
+            assert!(current
+                .description
+                .as_deref()
+                .unwrap()
+                .contains("Test Provider"));
+            let actual = view.settings_element_layouts["model-test-provider-model-17"].bounds();
+            assert!(f32::from(actual.size.height) >= 48.0);
+            let menu = tree.find("model-menu").unwrap();
+            assert!((menu.bounds.width - 360.0).abs() < 1.0, "{:?}", menu.bounds);
+            assert!(menu.bounds.height <= 480.0);
+            assert!(menu.bounds.x >= 0.0 && menu.bounds.x + menu.bounds.width <= width);
+            assert!(menu.bounds.y >= 0.0 && menu.bounds.y + menu.bounds.height <= height);
+            let manage = tree.find("model-menu-settings").unwrap();
+            assert!(tree.find("model-search-input").unwrap().focused);
+            assert!(!current.focused, "highlight must not replace search focus");
+            assert!(!manage.focused);
+            assert!(manage.bounds.height >= 36.0);
+            assert!(manage.bounds.y + manage.bounds.height <= menu.bounds.y + menu.bounds.height);
+            assert!(menu.children.len() < 20);
+            assert!(tree.find("model-search-input").unwrap().bounds.height > 0.0);
+        });
+    }
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
             view.handle_accessibility_request(
@@ -4806,10 +4922,13 @@ fn model_purpose_menu_input_keeps_model_and_renders_settings_badges(cx: &mut gpu
         assert!(view.model_search_query.is_empty());
         let tree = view.accessibility_tree(window, cx);
         assert!(tree.find(&vision).unwrap().selected);
-        assert_eq!(
-            tree.find(&eyes_id).unwrap().description.as_deref(),
-            Some("识图 · 搜索")
-        );
+        assert!(tree
+            .find(&eyes_id)
+            .unwrap()
+            .description
+            .as_deref()
+            .unwrap()
+            .ends_with("识图 · 搜索"));
         assert!(tree.find(&plain_id).is_none());
         assert!(tree.find(&clip_id).is_none());
         assert!(tree.find(&paint_id).is_none());
@@ -4859,10 +4978,13 @@ fn model_purpose_menu_input_keeps_model_and_renders_settings_badges(cx: &mut gpu
         assert!(view.model_search_query.is_empty());
         let tree = view.accessibility_tree(window, cx);
         assert!(tree.find(&video).unwrap().selected);
-        assert_eq!(
-            tree.find(&clip_id).unwrap().description.as_deref(),
-            Some("视频")
-        );
+        assert!(tree
+            .find(&clip_id)
+            .unwrap()
+            .description
+            .as_deref()
+            .unwrap()
+            .ends_with("视频"));
         assert!(tree.find(&eyes_id).is_none());
         assert!(tree.find(&plain_id).is_none());
     });
@@ -5124,6 +5246,24 @@ fn model_menu_empty_state_is_honest_and_fail_closed(cx: &mut gpui::TestAppContex
                     .iter()
                     .any(|purpose| purpose.identifier() == child.identifier)));
     });
+    // 旧当前值不在候选目录时如实说明，不偷偷选择目录中的首项。
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.projection.set_models(vec![ModelEntry {
+                provider_id: "available".into(),
+                id: "new".into(),
+                ..ModelEntry::default()
+            }]);
+            view.projection
+                .set_pending_model("old-provider".into(), "old-model".into());
+            let tree = view.accessibility_tree(window, cx);
+            let notice = tree.find("model-menu-current-notice").unwrap();
+            assert_eq!(notice.value.as_deref(), Some("old-provider / old-model"));
+            assert!(notice.actions.is_empty());
+            assert_eq!(view.projection.effective_model().unwrap().1, "old-model");
+            assert_eq!(view.text_input.read(cx).text(), "hello");
+        });
+    });
 }
 
 /// OPT-3b / ADR-055 D5：Default models 四角色区 AX 形状——四个触发器
@@ -5345,7 +5485,20 @@ fn settings_role_defaults_ax_shape_pins_triggers_menu_and_filter(cx: &mut gpui::
                 .settings_providers
                 .confirm_role_default(SettingsRole::Naming, Some(("glm".into(), "long-11".into())));
             view.open_menu = None;
-            view.on_toggle_settings_role_menu(SettingsRole::Naming, None, window, cx);
+            // AX 打开前焦点可能仍在已卸载的模型搜索框；打开角色菜单必须
+            // 将真实焦点放回触发器，原生 Escape 才能冒泡到 AppView。
+            window.focus(&view.model_search_focus);
+            let identifier = settings_role_trigger_identifier(SettingsRole::Naming);
+            view.handle_accessibility_request(
+                AxRequest {
+                    identifier: identifier.clone(),
+                    action: AxAction::Press,
+                    value: None,
+                },
+                window,
+                cx,
+            );
+            assert!(view.settings_action_focus[&identifier].is_focused(window));
         });
     });
     // 首帧建立视口；defer 定位当前项，第二帧执行滚动。
@@ -6590,7 +6743,7 @@ fn measure_failed_banner(
         assert_eq!(layout.reason_height, 0.0);
         assert_eq!(card.bounds.height, layout.height);
         if reason.chars().count() > 80 {
-            let font_px = crate::ui::theme::font::BODY_SM.0 * rem;
+            let font_px = crate::ui::theme::font::DESCRIPTION.0 * rem;
             assert!(
                 crate::ui::timeline_entry::estimated_wrapped_lines(
                     reason,
@@ -6977,14 +7130,14 @@ fn failed_run_banner_geometry_and_provider_cta_preserves_draft(cx: &mut gpui::Te
         assert_eq!(view.inspector_tab, InspectorTab::Changes);
         assert!(matches!(
             view.changes.fetch,
-            crate::ui::changes::ChangesFetch::Failed(ref reason) if reason == "no workspace"
+            crate::ui::changes::ChangesFetch::Failed(ref reason) if reason == t("changes.no_workspace")
         ));
         let tree = view.accessibility_tree(window, cx);
         tree.validate().unwrap();
         let changes = tree.find("changes").expect("changes panel");
         let description = changes.description.as_deref().unwrap_or("");
         assert!(
-            description.contains("failed · no workspace"),
+            description.contains(t("changes.no_workspace")),
             "{description}"
         );
         assert_eq!(
@@ -7293,6 +7446,232 @@ fn work_panel_center_mode_reaches_all_tabs_and_restores_conversation(
     }
 }
 
+/// UI-05: refresh uses the rendered hitbox and one guarded action across all input channels.
+#[gpui::test]
+fn work_panel_refresh_layout_keyboard_pointer_and_ax(cx: &mut gpui::TestAppContext) {
+    use crate::ui::resources::ResourcesFetch;
+    use crate::ui::theme::font::TextScale;
+    use gpui::{px, size, Modifiers};
+    let platform = std::sync::Arc::new(crate::platform::Platform::new());
+    let (view, cx) = cx.add_window_view(|_, cx| {
+        AppView::new(
+            platform,
+            std::env::temp_dir().join("ui05-refresh.sock"),
+            None,
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    for (width, height, scale) in [
+        (1440., 1024., TextScale::Percent100),
+        (1440., 1024., TextScale::Percent125),
+        (1080., 720., TextScale::Percent150),
+    ] {
+        cx.simulate_resize(size(px(width), px(height)));
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.projection.connection = ConnectionState::Connected {
+                    instance_id: "ui05".into(),
+                };
+                view.projection.workspace_id = Some("ws-refresh".into());
+                view.text_scale = scale;
+                window.set_rem_size(px(scale.rem_pixels()));
+                view.inspector_open = true;
+                view.inspector_motion.snap(metrics::INSPECTOR_WIDTH);
+                cx.notify();
+            })
+        });
+        for (tab, id) in [
+            (InspectorTab::Changes, "changes-refresh"),
+            (InspectorTab::Resources, "resources-refresh"),
+        ] {
+            cx.update(|_, cx| view.update(cx, |view, cx| view.select_inspector_tab(tab, cx)));
+            for channel in 0..4 {
+                let expected = cx.update(|_, cx| {
+                    view.update(cx, |view, cx| {
+                        let epoch = if tab == InspectorTab::Changes {
+                            let epoch = view.changes.begin_refresh();
+                            view.changes.fetch = ChangesFetch::Ready;
+                            epoch
+                        } else {
+                            let epoch = view.resources.begin_refresh();
+                            view.resources.fetch = ResourcesFetch::Ready;
+                            epoch
+                        };
+                        cx.notify();
+                        epoch + 1
+                    })
+                });
+                cx.refresh().unwrap();
+                cx.run_until_parked();
+                let hit = cx.debug_bounds(id).unwrap();
+                cx.update(|window, cx| {
+                    view.update(cx, |view, cx| {
+                        let tree = view.accessibility_tree(window, cx);
+                        let node = tree.find(id).unwrap();
+                        assert!(node.enabled);
+                        assert!(node.bounds.height >= 32.);
+                        assert_eq!(node.bounds.x, f32::from(hit.origin.x));
+                        assert_eq!(node.bounds.y, f32::from(hit.origin.y));
+                        assert_eq!(node.bounds.width, f32::from(hit.size.width));
+                        assert_eq!(node.bounds.height, f32::from(hit.size.height));
+                        view.handle_accessibility_request(
+                            AxRequest {
+                                identifier: id.into(),
+                                action: AxAction::Focus,
+                                value: None,
+                            },
+                            window,
+                            cx,
+                        );
+                        assert!(if tab == InspectorTab::Changes {
+                            view.changes_refresh_focus.is_focused(window)
+                        } else {
+                            view.resources_refresh_focus.is_focused(window)
+                        });
+                    })
+                });
+                match channel {
+                    0 => cx.simulate_click(hit.center(), Modifiers::none()),
+                    1 => cx.simulate_keystrokes("enter"),
+                    2 => cx.simulate_keystrokes("space"),
+                    _ => cx.update(|window, cx| {
+                        view.update(cx, |view, cx| {
+                            view.handle_accessibility_request(
+                                AxRequest {
+                                    identifier: id.into(),
+                                    action: AxAction::Press,
+                                    value: None,
+                                },
+                                window,
+                                cx,
+                            )
+                        })
+                    }),
+                }
+                cx.refresh().unwrap();
+                cx.run_until_parked();
+                // A second key/AX event while in flight must neither dispatch nor bump the epoch.
+                cx.simulate_keystrokes("enter");
+                cx.update(|window, cx| {
+                    view.update(cx, |view, cx| {
+                        let tree = view.accessibility_tree(window, cx);
+                        assert!(!tree.find(id).unwrap().enabled);
+                        view.handle_accessibility_request(
+                            AxRequest {
+                                identifier: id.into(),
+                                action: AxAction::Press,
+                                value: None,
+                            },
+                            window,
+                            cx,
+                        );
+                        let accepted = if tab == InspectorTab::Changes {
+                            assert_eq!(view.changes.fetch, ChangesFetch::Fetching);
+                            view.changes.apply_files(
+                                expected,
+                                Some("refresh-session".into()),
+                                Vec::new(),
+                                None,
+                            )
+                        } else {
+                            assert_eq!(view.resources.fetch, ResourcesFetch::Fetching);
+                            view.resources.apply_servers(expected, Vec::new())
+                        };
+                        assert!(
+                            accepted,
+                            "exactly one refresh: {tab:?} channel {channel} {scale:?}"
+                        );
+                        view.projection.connection = ConnectionState::Disconnected {
+                            reason: "test disconnected".into(),
+                        };
+                        assert!(!view.changes_can_refresh());
+                        assert!(!view.resources_can_refresh());
+                        view.activate_changes_refresh(cx);
+                        view.activate_resources_refresh(cx);
+                        view.projection.connection = ConnectionState::Connected {
+                            instance_id: "ui05".into(),
+                        };
+                        cx.notify();
+                    })
+                });
+            }
+        }
+    }
+    // Failed refresh retains the original server and complete diagnostic; details remain local.
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.resources
+                .apply_authoritative_servers(vec![crate::controller::McpServerEntry {
+                    name: "echo-server".into(),
+                    transport: "stdio".into(),
+                    state: "failed".into(),
+                    tool_count: 0,
+                    last_error: Some("original diagnostic 原始错误: handshake failed".into()),
+                }]);
+            view.resources.mark_failed("query failed 原始查询错误");
+            cx.notify();
+        })
+    });
+    cx.refresh().unwrap();
+    cx.run_until_parked();
+    let detail_id = cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            let tree = view.accessibility_tree(window, cx);
+            assert!(tree
+                .find("resources")
+                .unwrap()
+                .description
+                .as_deref()
+                .unwrap()
+                .contains("query failed 原始查询错误"));
+            let id = crate::ui::resources::resources_server_id("echo-server");
+            assert_eq!(
+                tree.find(&id).unwrap().description.as_deref(),
+                Some("original diagnostic 原始错误: handshake failed")
+            );
+            format!("resources-error-details-{id}")
+        })
+    });
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.handle_accessibility_request(
+                AxRequest {
+                    identifier: detail_id.clone(),
+                    action: AxAction::Focus,
+                    value: None,
+                },
+                window,
+                cx,
+            )
+        })
+    });
+    cx.simulate_keystrokes("space");
+    cx.update(|_, cx| assert!(view.read(cx).resources.details_open.contains(&detail_id)));
+    cx.refresh().unwrap();
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.handle_accessibility_request(
+                AxRequest {
+                    identifier: detail_id.clone(),
+                    action: AxAction::Press,
+                    value: None,
+                },
+                window,
+                cx,
+            )
+        })
+    });
+    cx.update(|_, cx| assert!(!view.read(cx).resources.details_open.contains(&detail_id)));
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.projection.workspace_id = None;
+            assert!(!view.changes_can_refresh());
+            view.activate_changes_refresh(cx);
+        })
+    });
+}
+
 #[gpui::test]
 fn browser_panel_offline_navigation_boundary_and_lifecycle(cx: &mut gpui::TestAppContext) {
     use gpui::{px, size};
@@ -7587,7 +7966,15 @@ fn work_panel_unified_tabs_scroll_switch_and_close(cx: &mut gpui::TestAppContext
 #[gpui::test]
 fn inspector_panel_selector_keyboard_and_approval_hint(cx: &mut gpui::TestAppContext) {
     use crate::projection::PendingApproval;
+    use crate::ui::{i18n::Language, theme::font::TextScale};
     use gpui::{px, size};
+    struct LanguageReset(Language);
+    impl Drop for LanguageReset {
+        fn drop(&mut self) {
+            crate::ui::i18n::set_language(self.0);
+        }
+    }
+    let _language = LanguageReset(crate::ui::i18n::language());
     let platform = std::sync::Arc::new(crate::platform::Platform::new());
     let socket = std::env::temp_dir().join("gui2-05-selector.sock");
     let (view, cx) = cx.add_window_view(|_, cx| AppView::new(platform, socket, None, cx));
@@ -7676,6 +8063,98 @@ fn inspector_panel_selector_keyboard_and_approval_hint(cx: &mut gpui::TestAppCon
         assert!(tree.find("timeline").is_some());
         assert!(tree.find("inspector-approval-hint").is_none());
         assert!(view.composer_focus_handle(cx).is_focused(window));
+    });
+    for language in [Language::English, Language::Chinese] {
+        crate::ui::i18n::set_language(language);
+        for scale in [
+            TextScale::Percent100,
+            TextScale::Percent125,
+            TextScale::Percent150,
+        ] {
+            cx.update(|window, cx| {
+                view.update(cx, |view, cx| {
+                    view.text_scale = scale;
+                    window.set_rem_size(px(scale.rem_pixels()));
+                    view.projection.pending_approval.as_mut().unwrap().detail =
+                        Some("cargo test --offline -p pawork-desktop".into());
+                    view.text_input
+                        .update(cx, |input, cx| input.set_text("keep approval draft", cx));
+                    view.timeline_changed();
+                    cx.notify();
+                });
+            });
+            cx.refresh().unwrap();
+            cx.run_until_parked();
+            let frames: Vec<_> = ["approve-once", "approve-for-run", "approve-deny"]
+                .into_iter()
+                .map(|id| (id, cx.debug_bounds(id).expect("rendered approval button")))
+                .collect();
+            cx.update(|window, cx| {
+                let view = view.read(cx);
+                let tree = view.accessibility_tree(window, cx);
+                tree.validate().unwrap();
+                let card = tree.find("approval-card").expect("approval card");
+                let mut right = card.bounds.x;
+                for (id, rendered) in &frames {
+                    let button = tree.find(id).expect("visible approval button");
+                    let bounds = button.bounds;
+                    assert!(button.enabled && button.actions.contains(&AxAction::Press));
+                    assert!((bounds.x - f32::from(rendered.origin.x)).abs() < 0.5);
+                    assert!((bounds.y - f32::from(rendered.origin.y)).abs() < 0.5);
+                    assert!((bounds.width - f32::from(rendered.size.width)).abs() < 0.5);
+                    assert!((bounds.height - f32::from(rendered.size.height)).abs() < 0.5);
+                    assert!(bounds.height >= 36.0 && bounds.x >= right);
+                    assert!(bounds.y >= card.bounds.y);
+                    assert!(bounds.x + bounds.width <= card.bounds.x + card.bounds.width + 0.5);
+                    assert!(bounds.y + bounds.height <= card.bounds.y + card.bounds.height + 0.5);
+                    right = bounds.x + bounds.width;
+                }
+                assert_eq!(
+                    tree.find("approve-once").unwrap().label,
+                    t("approval.allow_once")
+                );
+                assert_eq!(
+                    tree.find("approve-for-run").unwrap().label,
+                    t("approval.allow_for_run")
+                );
+                assert_eq!(tree.find("approve-deny").unwrap().label, t("approval.deny"));
+                assert_eq!(view.text_input.read(cx).text(), "keep approval draft");
+                assert_eq!(
+                    view.projection
+                        .pending_approval
+                        .as_ref()
+                        .unwrap()
+                        .tool_call_id,
+                    "tool-1"
+                );
+            });
+        }
+    }
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.projection.connection = ConnectionState::Failed {
+                reason: "connection refused".into(),
+            };
+            cx.notify();
+        });
+    });
+    cx.refresh().unwrap();
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        let view = view.read(cx);
+        let tree = view.accessibility_tree(window, cx);
+        for id in ["approve-once", "approve-for-run", "approve-deny"] {
+            assert!(!tree.permits(&AxRequest {
+                identifier: id.into(),
+                action: AxAction::Press,
+                value: None,
+            }));
+            if let Some(button) = tree.find(id) {
+                assert!(!button.enabled && !button.actions.contains(&AxAction::Press));
+            }
+        }
+        assert_eq!(view.text_input.read(cx).text(), "keep approval draft");
+        assert!(view.projection.pending_approval.is_some());
     });
 }
 

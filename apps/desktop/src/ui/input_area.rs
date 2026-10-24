@@ -104,13 +104,17 @@ impl ComposerAction {
     fn icon(self) -> Icon {
         match self {
             Self::Files | Self::Folder => Icon::File,
-            Self::Image | Self::Video | Self::Drawing => Icon::Link,
-            Self::ProjectFiles | Self::Plan | Self::Goal | Self::RecordSkill | Self::Plugins => {
-                Icon::File
-            }
+            Self::Image => Icon::Link,
+            Self::Video => Icon::Video,
+            Self::Drawing => Icon::Drawing,
+            Self::Plan => Icon::Plan,
+            Self::Goal => Icon::Goal,
+            Self::RecordSkill => Icon::Recording,
+            Self::ProjectFiles | Self::Plugins => Icon::File,
             Self::Search => Icon::Search,
             Self::Project => Icon::Project,
-            Self::Browser | Self::Chrome | Self::Edge => Icon::Network,
+            Self::Browser => Icon::Browser,
+            Self::Chrome | Self::Edge => Icon::Network,
             Self::Resources => Icon::Resources,
         }
     }
@@ -451,6 +455,8 @@ impl AppView {
                 .w_full()
                 .px_2()
                 .py_2()
+                .text_size(font::BASE)
+                .line_height(font::CONTROL_LINE_HEIGHT)
                 .rounded(px(metrics::CONTROL_RADIUS))
                 .bg(if enabled && ix == highlight {
                     dark().surface.raised
@@ -460,7 +466,7 @@ impl AppView {
                 .text_color(if enabled {
                     dark().text.primary
                 } else {
-                    dark().text.ghost
+                    dark().text.disabled
                 })
                 .child(
                     div()
@@ -473,7 +479,8 @@ impl AppView {
                 .when(!hint.is_empty(), |row| {
                     row.child(
                         div()
-                            .text_size(font::XS)
+                            .text_size(font::DESCRIPTION)
+                            .line_height(font::DESCRIPTION_LINE_HEIGHT)
                             .text_color(dark().text.secondary)
                             .whitespace_normal()
                             .child(hint),
@@ -646,7 +653,7 @@ impl AppView {
             point(px(metrics::ZERO), px(-ANCHOR_GAP_Y)),
         );
         if model_menu_open {
-            model_picker = model_picker.panel(self.model_menu_element(cx));
+            model_picker = model_picker.panel(self.model_menu_element(window, cx));
         }
 
         // ADR-063（API 1.21）：推理强度 chip——展示本轮生效强度（自动 =
@@ -784,7 +791,7 @@ impl AppView {
         // 附件读取失败也占一行（RV-03）：无附件时错误行同样需要渲染。
         // 发送失败与附件共用上方 96px 可滚动区，避免在动作行再挤一条不可读单行。
         let has_options = self.composer_options_visible();
-        let attachments = self.composer_attachments_element(cx);
+        let attachments = self.composer_attachments_element(window, cx);
         let card = div()
             .id("composer-card")
             .track_scroll(&self.composer_layouts["composer-card"])
@@ -859,7 +866,8 @@ impl AppView {
             .px(px(metrics::SPACE_2))
             .rounded(px(metrics::CONTROL_RADIUS))
             .bg(dark().bg.panel)
-            .text_size(font::XS)
+            .text_size(font::BASE)
+            .line_height(font::CONTROL_LINE_HEIGHT)
             .text_color(dark().text.secondary)
             .child(workspace_label);
         let mut project = div()
@@ -876,7 +884,7 @@ impl AppView {
                 .padding(ButtonPadding::None)
                 .height(px(meta_height))
                 .vcenter()
-                .text_size(font::XS)
+                .text_size(font::BASE)
                 .label(self.composer_project_task_label())
                 .disabled(!can_create);
             if !can_create {
@@ -927,6 +935,7 @@ impl AppView {
                     .id("composer-context")
                     .track_scroll(&self.composer_layouts["composer-context"])
                     .text_size(font::XS)
+                    .line_height(font::META_LINE_HEIGHT)
                     .text_color(dark().text.tertiary)
                     .child(self.projection.context_meter_label()),
             );
@@ -1191,6 +1200,28 @@ impl AppView {
         format!("{} · {source}", provider.auth_label())
     }
 
+    pub(super) fn composer_model_row_source(&self, model: &ModelEntry) -> String {
+        format!(
+            "{} · {}",
+            self.provider_display_name(&model.provider_id),
+            self.model_provider_status(&model.provider_id)
+        )
+    }
+
+    pub(super) fn model_menu_current_notice(&self) -> Option<String> {
+        let (provider, id) = self.projection.effective_model()?;
+        let available = grouped_model_menu_entries(
+            &self.projection.models,
+            &self.projection.settings_providers.providers,
+            "",
+            ModelPurposeFilter::Conversation,
+        );
+        (!available
+            .iter()
+            .any(|m| m.provider_id == *provider && m.id == *id))
+        .then(|| t("composer.model_outside_catalog").to_string())
+    }
+
     pub(super) fn focus_model_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.model_search_query.clear();
         self.model_search_input
@@ -1244,7 +1275,7 @@ impl AppView {
         let clear = Button::new("model-search-clear")
             .track_focus(&clear_focus)
             .variant(ButtonVariant::Ghost)
-            .text_size(font::SM)
+            .text_size(font::BASE)
             .label(t("model_search.clear"))
             .disabled(self.model_search_query.is_empty())
             .on_click(cx.listener(|view, _, window, cx| view.clear_model_search(window, cx)))
@@ -1254,6 +1285,7 @@ impl AppView {
             }));
         let input = self.model_search_input.clone();
         div()
+            .flex_none()
             .flex()
             .items_center()
             .gap_1()
@@ -1274,7 +1306,13 @@ impl AppView {
     /// 用途筛选 chips（ADR-064）：单选，默认「对话」；选中态 Raised、
     /// 其余 Ghost，鼠标 / 键盘（focus + activate）与 AX 同源。
     pub(super) fn model_purpose_chips_element(&mut self, cx: &mut Context<Self>) -> gpui::Div {
-        let mut row = div().flex().items_center().gap_1().pb_2().flex_wrap();
+        let mut row = div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap_1()
+            .pb_2()
+            .flex_wrap();
         for purpose in ModelPurposeFilter::ALL {
             let selected = self.model_purpose_filter == purpose;
             let id = purpose.identifier();
@@ -1290,7 +1328,10 @@ impl AppView {
                 } else {
                     ButtonVariant::Ghost
                 })
-                .text_size(font::XS)
+                .text_size(font::BASE)
+                .when(selected, |chip| {
+                    chip.child(icon_sized(Icon::Check, px(metrics::ICON_SM)))
+                })
                 .label(t(purpose.label_key()))
                 .on_click(cx.listener(move |view, _, window, cx| {
                     view.set_model_purpose_filter(purpose, window, cx);
@@ -1321,6 +1362,7 @@ impl AppView {
                 cx.stop_propagation();
             }));
         self.settings_element("model-menu-settings")
+            .flex_none()
             .mt_2()
             .border_t_1()
             .border_color(dark().border.subtle)
@@ -1337,36 +1379,60 @@ impl AppView {
     }
 
     /// 伪二级：组头与模型同一列表展开；未连接或 0 启用整组不出现。
-    fn model_menu_element(&mut self, cx: &mut Context<Self>) -> MenuPanel {
+    fn model_menu_element(&mut self, window: &Window, cx: &mut Context<Self>) -> MenuPanel {
         let highlight = self.menu_highlight_effective(self.menu_selected_index());
         let menu_scroll = self
             .settings_element_layouts
             .entry("model-menu".into())
             .or_default()
             .clone();
+        let menu_height = 480.0_f32.min(f32::from(window.viewport_size().height) - 32.0);
+        let chrome = metrics::MENU_PADDING * 2.0 + 2.0;
+        let content_width =
+            metrics::MENU_MAX_WIDTH.min(f32::from(window.viewport_size().width) - 32.0) - chrome;
         let mut panel = MenuPanel::new("model-menu")
             .track_scroll(&menu_scroll)
-            .max_height(480.0)
+            .max_height(menu_height)
             .dismiss_on_outside(cx.listener(|view, event: &gpui::MouseDownEvent, _, cx| {
                 view.dismiss_menu_on_outside(MenuKind::Model, event.position, cx);
             }));
-        let content = div()
-            .w(px(340.0))
+        let current_notice = self.model_menu_current_notice();
+        let mut content = div()
+            .w(px(content_width))
+            .max_h(px(menu_height - chrome))
             .flex()
             .flex_col()
             .child(self.model_search_element(cx))
             .child(self.model_purpose_chips_element(cx))
-            .when(self.model_menu_row_count() > 0, |content| {
-                content.child(
-                    self.settings_element("model-capability-help")
-                        .px_2()
-                        .py_1()
-                        .text_size(font::XS)
-                        .text_color(dark().text.secondary)
-                        .whitespace_normal()
-                        .child(t("model_capability.help")),
-                )
-            });
+            .when(
+                self.model_menu_row_count() > 0 && current_notice.is_none(),
+                |content| {
+                    content.child(
+                        self.settings_element("model-capability-help")
+                            .flex_none()
+                            .px_2()
+                            .py_1()
+                            .text_size(font::XS)
+                            .line_height(font::META_LINE_HEIGHT)
+                            .text_color(dark().text.secondary)
+                            .whitespace_normal()
+                            .child(t("model_capability.help")),
+                    )
+                },
+            );
+        if let Some(notice) = current_notice {
+            content = content.child(
+                self.settings_element("model-menu-current-notice")
+                    .flex_none()
+                    .px_2()
+                    .py_1()
+                    .text_size(font::DESCRIPTION)
+                    .line_height(font::DESCRIPTION_LINE_HEIGHT)
+                    .text_color(dark().text.secondary)
+                    .whitespace_normal()
+                    .child(notice),
+            );
+        }
         if self.model_menu_row_count() == 0 {
             let (title, hint) = self.model_menu_empty_text();
             return panel.child(
@@ -1374,7 +1440,8 @@ impl AppView {
                     .child(
                         self.settings_element("model-menu-empty")
                             .py_2()
-                            .text_size(font::SM)
+                            .text_size(font::DESCRIPTION)
+                            .line_height(font::DESCRIPTION_LINE_HEIGHT)
                             .whitespace_normal()
                             .text_color(dark().text.secondary)
                             .child(format!("{title}\n{hint}")),
@@ -1384,6 +1451,7 @@ impl AppView {
         }
         let mut list = div()
             .id("model-menu-list")
+            .min_h_0()
             .max_h(px(280.0))
             .overflow_y_scroll()
             .track_scroll(&self.model_menu_scroll);
@@ -1410,6 +1478,7 @@ impl AppView {
             .min_w_0()
             .truncate()
             .text_size(font::SM)
+            .line_height(font::META_LINE_HEIGHT)
             .text_color(dark().text.secondary)
             .child(title)
     }
@@ -1428,8 +1497,14 @@ impl AppView {
         let row_id = format!("model-{}-{}", model.provider_id, model.id);
         let title = model_menu_row_title(&model.display_name, &model.id);
         let capabilities = model_capability_label(&model);
+        let source = self.composer_model_row_source(&model);
+        let full_value = SharedString::from(format!(
+            "{title}\n{} / {}\n{source}\n{capabilities}",
+            model.provider_id, model.id
+        ));
         self.settings_element(row_id)
             .w_full()
+            .min_h(px(48.0))
             .py_2()
             .px_2()
             .rounded(px(metrics::CONTROL_RADIUS))
@@ -1441,6 +1516,7 @@ impl AppView {
             .hover(|style| style.bg(dark().surface.hover))
             .active(|style| style.bg(dark().surface.pressed))
             .cursor_pointer()
+            .tooltip(move |_, cx| super::tooltip_text(full_value.clone(), cx))
             .on_hover(cx.listener(move |view, hovered: &bool, _, cx| {
                 if *hovered && view.menu_highlight != Some(ix) {
                     view.menu_highlight = Some(ix);
@@ -1450,37 +1526,54 @@ impl AppView {
             .child(
                 div()
                     .flex()
-                    .items_center()
+                    .items_start()
                     .gap_2()
-                    .child(
-                        div()
-                            .w(px(metrics::SPACE_4))
-                            .flex_none()
-                            .when(selected, |slot| {
-                                slot.child(
-                                    icon_sized(Icon::Check, px(metrics::ICON_SM))
-                                        .text_color(dark().accent.primary),
-                                )
-                            }),
-                    )
+                    .child(div().w(px(metrics::SPACE_4)).pt(px(2.0)).flex_none().when(
+                        selected,
+                        |slot| {
+                            slot.child(
+                                icon_sized(Icon::Check, px(metrics::ICON_SM))
+                                    .text_color(dark().text.primary),
+                            )
+                        },
+                    ))
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
-                            .text_size(font::SM)
-                            .text_color(dark().text.primary)
-                            .whitespace_normal()
-                            .child(title.to_string()),
-                    )
-                    .when(!capabilities.is_empty(), |row| {
-                        row.child(
-                            div()
-                                .flex_none()
-                                .text_size(font::XS)
-                                .text_color(dark().text.secondary)
-                                .child(capabilities),
-                        )
-                    }),
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .child(
+                                div()
+                                    .text_size(font::BASE)
+                                    .line_height(font::CONTROL_LINE_HEIGHT)
+                                    .when(selected, |title| {
+                                        title.font_weight(gpui::FontWeight::MEDIUM)
+                                    })
+                                    .text_color(dark().text.primary)
+                                    .whitespace_normal()
+                                    .child(title.to_string()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(font::META)
+                                    .line_height(font::META_LINE_HEIGHT)
+                                    .text_color(dark().text.secondary)
+                                    .whitespace_normal()
+                                    .child(source),
+                            )
+                            .when(!capabilities.is_empty(), |column| {
+                                column.child(
+                                    div()
+                                        .text_size(font::META)
+                                        .line_height(font::META_LINE_HEIGHT)
+                                        .text_color(dark().text.secondary)
+                                        .whitespace_normal()
+                                        .child(capabilities),
+                                )
+                            }),
+                    ),
             )
             .on_click(cx.listener(move |view, _, window, cx| {
                 view.on_select_model(model.clone(), cx);
@@ -1608,7 +1701,8 @@ impl AppView {
                                 div()
                                     .flex_1()
                                     .min_w_0()
-                                    .text_size(font::SM)
+                                    .text_size(font::BASE)
+                                    .line_height(font::CONTROL_LINE_HEIGHT)
                                     .text_color(dark().text.primary)
                                     .child(label),
                             ),

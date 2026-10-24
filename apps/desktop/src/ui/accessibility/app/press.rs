@@ -356,10 +356,15 @@ impl AppView {
             }
             "changes-tab-files" => self.on_select_changes_tab(ChangesTab::Files, cx),
             "changes-tab-summary" => self.on_select_changes_tab(ChangesTab::Summary, cx),
-            "changes-refresh" => self.refresh_changes(cx),
+            "changes-refresh" => self.activate_changes_refresh(cx),
             "changes-diff-scroll-left" => self.scroll_diff_horizontal(-1.0, cx),
             "changes-diff-scroll-right" => self.scroll_diff_horizontal(1.0, cx),
-            "resources-refresh" => self.refresh_resources(cx),
+            "resources-refresh" => self.activate_resources_refresh(cx),
+            id if id.starts_with("resources-error-details-")
+                || id == "resources-query-error-details" =>
+            {
+                self.toggle_resources_details(id, cx)
+            }
             "computer-refresh" => self.refresh_computer_targets(cx),
             // CU-18：目标授权 / 撤销按钮（identifier = 前缀 + 目标 key，
             // 与 render 同源；反查与 gate 在 computer_action_by_id）。
@@ -653,7 +658,7 @@ impl AppView {
                         .find(|copy| copy.identifier == identifier)
                         .map(|copy| copy.content)
                 }) {
-                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(content));
+                    self.copy_timeline_text(content, cx);
                     return true;
                 }
                 if let Some(entry) = self

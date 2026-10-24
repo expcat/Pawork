@@ -67,7 +67,7 @@ impl AppView {
             .approval_mode
             .map(approval_mode_label)
             .unwrap_or(t("settings.permissions.unknown_mode"));
-        let mut modes = div().flex().flex_col().gap_2();
+        let mut modes = div().flex().flex_col().max_w(px(840.0)).gap_2();
         for mode in APPROVAL_MODE_ALL {
             let row = self.settings_approval_mode_row(mode, &state, writes, cx);
             modes = modes.child(
@@ -81,6 +81,7 @@ impl AppView {
                     self.settings_element("settings-approval-mode-header")
                         .flex()
                         .items_center()
+                        .flex_wrap()
                         .gap_4()
                         .child(settings_label(t("settings.permissions.mode_title")))
                         .child(settings_copy(
@@ -137,11 +138,14 @@ impl AppView {
                 div()
                     .flex()
                     .items_center()
-                    .gap_6()
+                    .flex_wrap()
+                    .max_w(px(840.0))
+                    .gap_4()
                     .child(
                         self.settings_element("settings-workspace-trust-status")
                             .flex_1()
-                            .min_w_0()
+                            .min_w(px(280.0))
+                            .max_w(px(480.0))
                             .flex()
                             .flex_col()
                             .gap_2()
@@ -201,9 +205,29 @@ impl AppView {
         } else {
             dark().text.tertiary
         };
-        let mut row = ListRow::task(id.clone(), current)
-            .height(SETTINGS_APPROVAL_ROW_REMS * self.text_scale.rem_pixels())
+        let mut row = div()
+            .id(gpui::SharedString::from(id.clone()))
             .track_focus(&focus)
+            .tab_stop(true)
+            .flex()
+            .items_center()
+            .w_full()
+            .min_h(gpui::rems(SETTINGS_APPROVAL_ROW_REMS))
+            .py_3()
+            .px_2()
+            .rounded(px(6.0))
+            .border_2()
+            .border_color(gpui::rgba(0x00000000))
+            .focus(|style| style.border_color(dark().accent.primary))
+            .bg(if current {
+                dark().surface.raised
+            } else {
+                dark().bg.panel
+            })
+            .when(enabled, |row| {
+                row.cursor_pointer()
+                    .hover(|style| style.bg(dark().surface.hover))
+            })
             .child(
                 div()
                     .w(px(32.0))
@@ -227,7 +251,7 @@ impl AppView {
                                         .w(px(metrics::SETTINGS_RADIO_INNER))
                                         .h(px(metrics::SETTINGS_RADIO_INNER))
                                         .rounded_full()
-                                        .bg(dark().accent.primary),
+                                        .bg(dark().text.primary),
                                 )
                             }),
                     ),
@@ -239,14 +263,25 @@ impl AppView {
                     .flex()
                     .flex_col()
                     .child(
-                        Label::new(approval_mode_label(mode))
-                            .size(font::BODY)
-                            .color(text_color),
+                        div()
+                            .text_size(font::BASE)
+                            .line_height(font::CONTROL_LINE_HEIGHT)
+                            .font_weight(if current {
+                                FontWeight::MEDIUM
+                            } else {
+                                FontWeight::NORMAL
+                            })
+                            .text_color(text_color)
+                            .child(approval_mode_label(mode)),
                     )
                     .child(
-                        Label::new(approval_mode_description(mode))
-                            .size(font::BASE)
-                            .color(dark().text.secondary),
+                        div()
+                            .max_w(px(480.0))
+                            .whitespace_normal()
+                            .text_size(font::DESCRIPTION)
+                            .line_height(font::DESCRIPTION_LINE_HEIGHT)
+                            .text_color(dark().text.secondary)
+                            .child(approval_mode_description(mode)),
                     ),
             );
         if current {
@@ -254,7 +289,7 @@ impl AppView {
                 div().flex_none().child(
                     Label::new(t("settings.permissions.state_current"))
                         .size(font::XS)
-                        .color(dark().accent.primary),
+                        .color(dark().text.primary),
                 ),
             );
         } else if enabled {
@@ -267,11 +302,17 @@ impl AppView {
                     }
                     view.on_settings_approval_mode(mode, cx);
                 }))
-                .on_activate(cx.listener(move |view, _event, _window, cx| {
-                    view.note_button_key_activate(&activate_id);
-                    view.on_settings_approval_mode(mode, cx);
-                    cx.stop_propagation();
-                }));
+                .on_key_down(
+                    cx.listener(move |view, event: &gpui::KeyDownEvent, _window, cx| {
+                        if !event.keystroke.modifiers.modified()
+                            && matches!(event.keystroke.key.as_str(), "enter" | "space")
+                        {
+                            view.note_button_key_activate(&activate_id);
+                            view.on_settings_approval_mode(mode, cx);
+                            cx.stop_propagation();
+                        }
+                    }),
+                );
         }
         row.into_any_element()
     }

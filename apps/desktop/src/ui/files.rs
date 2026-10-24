@@ -10,6 +10,7 @@ use serde_json::Value;
 use super::{
     accessibility::{AxAction, AxNode, AxRect, AxRole},
     components::button::{Button, ButtonPadding, ButtonVariant},
+    components::empty_state::EmptyState,
     i18n::t,
     icon, icon_sized,
     inspector::{FileTab, PanelTab},
@@ -890,8 +891,14 @@ impl AppView {
                 ButtonVariant::Ghost
             })
             .padding(ButtonPadding::Horizontal(8.0))
-            .height(px(30.))
-            .text_size(font::SM)
+            .height(px(
+                if matches!(id.as_str(), "files-refresh" | "files-sidebar") {
+                    32.
+                } else {
+                    36.
+                },
+            ))
+            .text_size(font::BASE)
             .track_focus(&focus)
             .disabled(!enabled)
             .tooltip(label.clone());
@@ -993,8 +1000,14 @@ impl AppView {
                 ButtonVariant::Ghost
             })
             .padding(ButtonPadding::Horizontal(4.0))
-            .height(px(30.))
-            .text_size(font::SM)
+            .height(px(
+                if matches!(id.as_str(), "files-refresh" | "files-sidebar") {
+                    32.
+                } else {
+                    36.
+                },
+            ))
+            .text_size(font::BASE)
             .track_focus(&focus)
             .disabled(!enabled)
             .tooltip(path.to_string())
@@ -1031,9 +1044,18 @@ impl AppView {
             .min_h_0()
             .w_full()
             .overflow_hidden()
-            .text_size(font::SM);
+            .text_size(font::BASE)
+            .line_height(font::CONTROL_LINE_HEIGHT);
         let Some(id) = self.inspector_workspace_id() else {
-            return panel.child(div().p_4().child(t("files.no_project")));
+            return panel.child(
+                EmptyState::labeled(
+                    Icon::File,
+                    t("changes.no_workspace"),
+                    t("files.no_project"),
+                    dark().text.primary,
+                )
+                .top_aligned(),
+            );
         };
         let connected = self.files_connected();
         let ws = self.files.workspaces.entry(id).or_default();
@@ -1123,6 +1145,7 @@ impl AppView {
             let mut actions = div()
                 .flex()
                 .items_center()
+                .flex_wrap()
                 .gap_1()
                 .px_2()
                 .pb_1()
@@ -1207,6 +1230,8 @@ impl AppView {
                 content = content.child(
                     div()
                         .id("files-editor-layout")
+                        .font_family(font::MONO)
+                        .line_height(font::DESCRIPTION_LINE_HEIGHT)
                         .flex_1()
                         .min_h_0()
                         .w_full()
@@ -1217,6 +1242,7 @@ impl AppView {
             content = content.child(
                 div()
                     .id("files-status")
+                    .line_height(font::DESCRIPTION_LINE_HEIGHT)
                     .px_3()
                     .py_1()
                     .flex_none()

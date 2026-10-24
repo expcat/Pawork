@@ -203,7 +203,7 @@ impl AppView {
             .height(px(metrics::RAIL_TOP_ROW_HEIGHT))
             .vcenter()
             .radius(metrics::CONTROL_RADIUS)
-            .text_size(font::BODY_SM)
+            .text_size(font::BASE)
             .text_color(dark().text.secondary)
             .width(
                 rail_width
@@ -399,7 +399,7 @@ impl AppView {
                         .padding(ButtonPadding::None)
                         .height(px(metrics::RAIL_TOP_ROW_HEIGHT))
                         .vcenter()
-                        .text_size(font::BODY_SM)
+                        .text_size(font::BASE)
                         .text_color(dark().text.emphasis)
                         .label(t("rail.reconnect"))
                         .tooltip(t("recovery.retry"))

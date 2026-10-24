@@ -1,5 +1,5 @@
 //! Plan 的版本化编辑与明确批准，不使用聊天草稿代替计划。
-use super::accessibility::{AxRequest, AxRole};
+use super::accessibility::{AxAction, AxRequest, AxRole};
 use super::product_access::{
     edit_input, product_action, product_actions, product_error, product_field, product_heading,
     product_note, product_panel, PanelAccess,
@@ -218,6 +218,20 @@ impl Render for PlanView {
         #[cfg(target_os = "macos")]
         install_appkit_tab_monitor(window, cx);
         self.access.begin();
+        let dirty = self.title.read(cx).text() != self.saved_title
+            || self.steps.read(cx).text() != self.saved_steps;
+        let primary = if dirty || self.version.is_none() {
+            1
+        } else if self.status == "in_review" {
+            3
+        } else if matches!(
+            self.status.as_str(),
+            "draft" | "changes_requested" | "rejected"
+        ) {
+            2
+        } else {
+            1
+        };
         let mut actions = product_actions();
         for (index, label) in [
             "plan.refresh",
@@ -234,7 +248,7 @@ impl Render for PlanView {
             let focus = self.focus[index].clone().tab_stop(enabled);
             let button = product_action(Button::new(format!("plan-action-{index}")))
                 .label(i18n::t(label))
-                .variant(if index == 1 {
+                .variant(if index == primary && enabled {
                     ButtonVariant::Primary
                 } else {
                     ButtonVariant::Raised
@@ -316,16 +330,31 @@ impl Render for PlanView {
             false,
             status_body,
         );
-        self.access.sync(window, cx, Self::ax_action);
-        product_panel("plan-panel")
-            .child(product_heading(i18n::t("plan.open"), i18n::t("plan.hint")))
+        self.access
+            .sync(window, cx, |view| &mut view.access, Self::ax_action);
+        product_panel("plan-panel", &self.access)
+            .child(product_heading(
+                &mut self.access,
+                Icon::Plan,
+                i18n::t("plan.open"),
+                i18n::t("plan.hint"),
+            ))
             .child(status)
             .when(!self.busy, |view| {
                 view.child(product_field(i18n::t("plan.title"), title))
                     .child(product_field(i18n::t("plan.steps"), steps))
-                    .child(product_field(i18n::t("plan.reason"), reason))
             })
-            .child(actions)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_none()
+                    .gap(px(8.0))
+                    .when(!self.busy, |section| {
+                        section.child(product_field(i18n::t("plan.reason"), reason))
+                    })
+                    .child(actions),
+            )
             .when(self.busy, |view| {
                 view.child(product_note(i18n::t("plan.loading")))
             })
@@ -386,7 +415,14 @@ impl PlanView {
             .strip_prefix("plan-action-")
             .and_then(|s| s.parse().ok())
         {
-            self.action(index, cx);
+            if request.action == AxAction::Focus {
+                if let Some(focus) = self.focus.get(index) {
+                    window.focus(focus);
+                    cx.notify();
+                }
+            } else if request.action == AxAction::Press {
+                self.action(index, cx);
+            }
         }
     }
 }
@@ -443,6 +479,22 @@ mod tests {
             }
             window.focus_prev();
             assert!(view.reason.focus_handle(cx).is_focused(window));
+        });
+        panel.update(|window, cx| {
+            plan.update(cx, |view, cx| {
+                view.ax_action(
+                    AxRequest {
+                        identifier: "plan-action-1".into(),
+                        action: AxAction::Focus,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+                assert!(view.focus[1].is_focused(window));
+                assert!(!view.busy, "AX Focus must not save a revision");
+                assert!(view.version.is_none());
+            });
         });
     }
 

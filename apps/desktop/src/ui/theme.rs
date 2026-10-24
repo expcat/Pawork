@@ -272,6 +272,21 @@ pub mod font {
     pub const SM: Rems = from_pixels(12.0);
     /// 14px：控件、列表与输入框正文。
     pub const BASE: Rems = from_pixels(14.0);
+    /// 控件与列表文字 14/20；既有 BASE 继续作为控件字号。
+    pub const CONTROL_LINE_HEIGHT: Rems = from_pixels(20.0);
+    /// 说明、空态与可操作状态原因 14/22，不使用 12px 辅助字号。
+    pub const DESCRIPTION: Rems = from_pixels(14.0);
+    pub const DESCRIPTION_LINE_HEIGHT: Rems = from_pixels(22.0);
+    /// 时间、计数、来源等辅助信息 12/18。
+    pub const META: Rems = from_pixels(12.0);
+    pub const META_LINE_HEIGHT: Rems = from_pixels(18.0);
+    /// 分区与空态标题 16/24（字号沿用 BODY）。
+    pub const SECTION_LINE_HEIGHT: Rems = from_pixels(24.0);
+
+    /// 单行控件 / Label 保留 6px leading；14/20、12/18 同源缩放。
+    pub fn control_line_height(size: Rems) -> Rems {
+        Rems(size.0 + META_LINE_HEIGHT.0 - META.0)
+    }
     /// 等宽字体族（R8 波 D DiffView 代码区；本仓当前仅 macOS 构建）。
     pub const MONO: &str = "Menlo";
 }
@@ -299,6 +314,10 @@ pub mod metrics {
     pub const SKELETON_BAR_HEIGHT: f32 = 8.0;
     /// 键盘焦点环宽度；组件 focus state 只改视觉，不缩放控件。
     pub const FOCUS_RING_WIDTH: f32 = 2.0;
+    /// 未指定尺寸的文字按钮最小高度；大字号由内容撑高。
+    pub const BUTTON_MIN_HEIGHT: f32 = 36.0;
+    /// 普通图标动作最小命中区；页头 / Composer 保留显式 36px。
+    pub const ICON_BUTTON_MIN_SIZE: f32 = 32.0;
     /// GUI2-06：供应商卡头单行高度（48–56px 合同取中档）。
     pub const SETTINGS_PROVIDER_HEADER_HEIGHT: f32 = 52.0;
     /// GUI2-06：Settings 导航分组标题行高（11–12px 字 + 留白）。
@@ -406,8 +425,8 @@ pub mod metrics {
     }
     /// UI-1：30px，共享几何。
     pub const STATUS_BAR_HEIGHT: f32 = 30.0;
-    /// GUI4：居中用量槽左右留白，避免与左右栏重叠。
-    pub const STATUS_BAR_CENTER_INSET: f32 = 120.0;
+    /// 居中用量槽与两侧可收缩栏之间的留白。
+    pub const STATUS_BAR_CENTER_INSET: f32 = 8.0;
     // ── Workspace Header / Timeline 几何（R4 Wave A，state-a §2.2/§2.3 与
     // state-b §2 量图取档；render 与 AX 树共用单一来源）──
     /// GUI2-01：Header 上下各 12px 内边距。
@@ -423,10 +442,9 @@ pub mod metrics {
     pub const HEADER_TITLE_META_GAP: f32 = 12.0;
     /// UI-1：6px，共享几何。
     pub const HEADER_STATUS_DOT_SIZE: f32 = 6.0;
-    /// 40：Header 右侧动作按钮宽（量图 40×37）。
-    pub const HEADER_ACTION_WIDTH: f32 = 40.0;
-    /// 37：Header 右侧动作按钮高（量图 40×37）。
-    pub const HEADER_ACTION_HEIGHT: f32 = 37.0;
+    /// UI-02：与查找 / 回合入口共用 36px 命中区。
+    pub const HEADER_ACTION_WIDTH: f32 = ICON_BUTTON_SIZE;
+    pub const HEADER_ACTION_HEIGHT: f32 = ICON_BUTTON_SIZE;
     /// UI-1：6px，共享几何。
     pub const HEADER_ACTION_RADIUS: f32 = 6.0;
     /// 4：Header 右侧相邻动作槽（Activity 与 inspector-expand）的间距
@@ -451,14 +469,14 @@ pub mod metrics {
     pub const MSG_USER_INSET_Y: f32 = 12.0;
     /// UI-3：正文段落间隙 12px。
     pub const MSG_PARAGRAPH_GAP: f32 = 12.0;
-    /// 16：回合间距（助手空闲不再占作者行后，24 仍偏疏）。
-    pub const MSG_ENTRY_GAP: f32 = 16.0;
+    /// UI-03：消息间距 32px，与 12px 段距区分。
+    pub const MSG_ENTRY_GAP: f32 = 32.0;
     /// 8：Tool activity / Run summary 与 Composer 使用同一主要 surface 圆角。
     pub const TOOL_GROUP_RADIUS: f32 = 8.0;
     /// UI-3：轻量工具摘要命中行。
     pub const TOOL_GROUP_HEADER_HEIGHT: f32 = 36.0;
-    /// 思考折叠头：单行 chevron + 文案，不走工具组 36px 宽条。
-    pub const THINKING_HEADER_HEIGHT: f32 = 24.0;
+    /// 思考 / 附件折叠头：32px 容纳 150% 的 14/20 文本。
+    pub const THINKING_HEADER_HEIGHT: f32 = 32.0;
     /// 52：Tool 行高（量图行距 ≈54 − 分隔线 2）。
     pub const TOOL_ROW_HEIGHT: f32 = 52.0;
     /// UI-3：工具行分隔线 1px。

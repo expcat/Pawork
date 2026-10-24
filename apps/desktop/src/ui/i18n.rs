@@ -309,6 +309,11 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "敏捷的棕色狐狸跳过了懒狗。",
         ),
         "settings.appearance.sample_heading" => ("Page title", "页面标题"),
+        "settings.appearance.sample_meta" => ("Source · System interface", "来源 · 系统界面"),
+        "settings.tools.failure_summary" => (
+            "The server connection failed. Check the details and configuration, then test again.",
+            "服务器连接失败。请核对下方详情与配置后再测试。",
+        ),
         "settings.appearance.sample_sub" => (
             "Code, tools, and review stay readable at this size.",
             "代码、工具与审阅在此字号下保持清晰可读。",
@@ -922,6 +927,9 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "record.plugins_empty" => ("No plugins installed", "尚未安装插件"),
         "record.recent" => ("Showing recent operations. Select steps, generate and edit the preview.", "仅显示近期操作。选择步骤后生成并编辑预览。"),
         "record.empty" => ("No completed tool operations in this task yet.", "当前任务尚无已完成的工具操作。"),
+        "record.operations" => ("1. Recorded operations", "1. 已记录操作"),
+        "record.review" => ("2. Review and edit · SKILL.md", "2. 预览与编辑 · SKILL.md"),
+        "record.permission_hint" => ("Preview uses recorded task operations. Saving writes project skills and follows project permissions; it does not run the skill.", "预览取自任务已记录的操作。保存会写入项目技能并遵循项目权限，不会执行该技能。"),
         "record.hint" => ("Select operations, then edit the preview before saving.", "选择操作后生成预览，编辑确认后保存。"),
         "record.session_required" => ("Select a project task to record a skill.", "请选择项目中的任务以录制技能。"),
         "record.mcp" => ("MCP resources", "MCP 资源"),
@@ -1145,6 +1153,9 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "请先在侧栏选择项目，再启动终端。",
         ),
         "recovery.terminal_starting" => ("Starting terminal…", "正在启动终端…"),
+        "recovery.terminal_exited" => ("Terminal exited.", "终端已退出。"),
+        "recovery.terminal_stopped" => ("Terminal stopped.", "终端已停止。"),
+        "recovery.terminal_exit_failed" => ("Terminal exited with an error.", "终端异常退出。"),
         "recovery.model_offline" => ("Model · not connected", "模型 · 未连接"),
         "recovery.model_failed" => ("Model · connection failed", "模型 · 连接失败"),
         "connection.connecting" => ("Connecting…", "连接中…"),
@@ -1221,6 +1232,10 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "Enable a model in Settings → Models & providers.",
             "请在 Settings → Models & providers 启用模型。",
         ),
+        "composer.model_outside_catalog" => (
+            "Current model is outside the connected, enabled catalog. Check it in Manage; the current value is kept.",
+            "当前模型未列入已连接且已启用的候选目录。请在管理入口检查，当前值保持不变。",
+        ),
         "composer.send_disabled_no_models" => (
             "Sending needs an enabled model. Enable a model in Settings → Models & providers.",
             "发送需要已启用模型。请在 Settings → Models & providers 启用模型。",
@@ -1276,6 +1291,7 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         "timeline.open_link" => ("Open link", "打开链接"),
         "timeline.copy_link" => ("Copy link", "复制链接"),
         "timeline.copy_message" => ("Copy message", "复制正文"),
+        "timeline.copied" => ("Copied", "已复制"),
         "timeline.fork_turn" => ("Fork after this turn", "从本回合结束处分叉"),
         "timeline.fork_offline" => ("Reconnect to fork this turn.", "重新连接后可分叉此回合。"),
         "timeline.fork_boundary" => (
@@ -1367,6 +1383,9 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             ("Approval needs a live connection.", "审批需要有效连接。")
         }
         // ── Workspace chrome · Changes / Activity / Resources / Inspector ──
+        "changes.no_workspace" => ("Select a project", "选择一个项目"),
+        "changes.no_workspace_desc" => ("Bind a project to this task to inspect its changes.", "为当前任务绑定项目后即可查看变更。"),
+        "changes.session_mismatch" => ("Showing latest-session changes for {}. They do not belong to the active task.", "当前显示最近会话 {} 的变更，不属于正在查看的任务。"),
         "changes.tooltip_refresh" => ("Refresh changes", "刷新变更"),
         "changes.unavailable" => ("Changes unavailable.", "变更不可用。"),
         "changes.unavailable_desc" => (
@@ -1437,6 +1456,11 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
             "No server is available from the current Host.",
             "当前 Pawork 服务没有可用的服务器。",
         ),
+        "resources.query_error" => ("Resources could not be refreshed. Check the connection and retry.", "资源刷新失败，请检查连接后重试。"),
+        "resources.server_error" => ("This MCP server reported an error. Inspect the details to diagnose it.", "此 MCP 服务器报告了错误，可展开详情查看原因。"),
+        "resources.retained" => ("Showing the last loaded servers; the list may be out of date.", "保留上次加载的服务器，清单可能已过期。"),
+        "resources.details" => ("Show technical details", "展开技术详情"),
+        "resources.hide_details" => ("Hide technical details", "收起技术详情"),
         "resources.error_title" => ("Couldn’t load resources", "无法加载资源"),
         // CU-18：Inspector「后台操作」页（computer-use 目标与授权）。
         "computer.title" => ("Computer use", "后台操作"),

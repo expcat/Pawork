@@ -1,5 +1,5 @@
 //! Explicit goal controls; closing the panel does not stop the Host's goal.
-use super::accessibility::{AxRequest, AxRole};
+use super::accessibility::{AxAction, AxRequest, AxRole};
 use super::product_access::{
     edit_input, product_action, product_actions, product_error, product_field, product_heading,
     product_note, product_panel, PanelAccess,
@@ -293,7 +293,14 @@ impl GoalView {
             .strip_prefix("goal-action-")
             .and_then(|s| s.parse().ok())
         {
-            self.action(index, cx);
+            if request.action == AxAction::Focus {
+                if let Some(focus) = self.focus.get(index) {
+                    window.focus(focus);
+                    cx.notify();
+                }
+            } else if request.action == AxAction::Press {
+                self.action(index, cx);
+            }
         }
     }
 }
@@ -337,9 +344,16 @@ impl Render for GoalView {
             false,
             status_body,
         );
-        let mut body = product_panel("goal-panel")
-            .child(product_heading(i18n::t("goal.title"), i18n::t("goal.hint")))
+        let mut body = product_panel("goal-panel", &self.access)
+            .child(product_heading(
+                &mut self.access,
+                Icon::Goal,
+                i18n::t("goal.title"),
+                i18n::t("goal.hint"),
+            ))
             .child(status);
+        let mut budget = div().flex().flex_wrap().flex_none().gap(px(16.0));
+        let mut direction = None;
         for (i, label) in [
             "goal.objective",
             "goal.criteria",
@@ -359,9 +373,24 @@ impl Render for GoalView {
                 self.fields[i].focus_handle(cx).is_focused(window),
                 self.fields[i].clone(),
             );
-            body = body.child(product_field(i18n::t(label), field));
+            let field = product_field(i18n::t(label), field);
+            if i < 2 {
+                body = body.child(field);
+            } else if i < 4 {
+                budget = budget.child(
+                    div()
+                        .flex_1()
+                        .min_w(font::from_pixels(240.0))
+                        .max_w_full()
+                        .child(field),
+                );
+            } else {
+                direction = Some(field);
+            }
         }
+        body = body.child(budget);
         let mut actions = product_actions();
+        let mut steer = None;
         for (i, label) in [
             "plan.refresh",
             "goal.start",
@@ -378,7 +407,7 @@ impl Render for GoalView {
             let focus = self.focus[i].clone().tab_stop(enabled);
             let button = product_action(Button::new(format!("goal-action-{i}")))
                 .label(i18n::t(label))
-                .variant(if matches!(i, 1 | 3) {
+                .variant(if matches!(i, 1 | 3) && enabled {
                     ButtonVariant::Primary
                 } else {
                     ButtonVariant::Raised
@@ -391,7 +420,7 @@ impl Render for GoalView {
                     }
                 }))
                 .on_activate(cx.listener(move |view, _, _, cx| view.action(i, cx)));
-            actions = actions.child(self.access.wrap(
+            let button = self.access.wrap(
                 &format!("goal-action-{i}"),
                 i18n::t(label),
                 AxRole::Button,
@@ -399,9 +428,26 @@ impl Render for GoalView {
                 enabled,
                 self.focus[i].is_focused(window),
                 button,
-            ));
+            );
+            if i == 4 {
+                steer = Some(button);
+            } else {
+                actions = actions.child(button);
+            }
         }
-        self.access.sync(window, cx, Self::ax_action);
-        body.child(actions)
+        self.access
+            .sync(window, cx, |view| &mut view.access, Self::ax_action);
+        body.child(actions).child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_none()
+                .gap(px(16.0))
+                .pt(px(16.0))
+                .border_t_1()
+                .border_color(dark().border.subtle)
+                .children(direction)
+                .child(product_actions().children(steer)),
+        )
     }
 }

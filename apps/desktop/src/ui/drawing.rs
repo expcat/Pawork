@@ -6,7 +6,7 @@ use gpui::{
     WindowOptions,
 };
 
-use super::accessibility::{AxRequest, AxRole};
+use super::accessibility::{AxAction, AxRequest, AxRole};
 use super::product_access::{
     product_action, product_actions, product_error, product_heading, product_panel, PanelAccess,
 };
@@ -137,7 +137,7 @@ impl Render for Drawing {
             let enabled = index == 3 || !self.strokes.is_empty();
             let focus = self.focus[index].clone().tab_stop(enabled);
             let button = product_action(Button::new(*id))
-                .variant(if index == 2 {
+                .variant(if index == 2 && enabled {
                     ButtonVariant::Primary
                 } else {
                     ButtonVariant::Raised
@@ -145,14 +145,9 @@ impl Render for Drawing {
                 .label(i18n::t(label))
                 .track_focus(&focus)
                 .disabled(!enabled)
-                .on_click(cx.listener(move |view, event, window, cx| {
-                    if AppView::click_down_position(event).is_some() {
-                        view.action(index, window, cx);
-                    }
-                }))
-                .on_activate(
-                    cx.listener(move |view, _, window, cx| view.action(index, window, cx)),
-                );
+                // Keyboard clicks arrive on keyup, before closing can return
+                // focus to a control in the parent window.
+                .on_click(cx.listener(move |view, _, window, cx| view.action(index, window, cx)));
             actions = actions.child(self.access.wrap(
                 id,
                 i18n::t(label),
@@ -181,14 +176,17 @@ impl Render for Drawing {
             false,
             hint_body,
         );
-        self.access.sync(window, cx, Self::ax_action);
+        self.access
+            .sync(window, cx, |view| &mut view.access, Self::ax_action);
         let strokes = self.strokes.clone();
-        product_panel("drawing-panel")
+        product_panel("drawing-panel", &self.access)
             .child(product_heading(
+                &mut self.access,
+                Icon::Drawing,
                 i18n::t("drawing.title"),
                 i18n::t("drawing.hint"),
             ))
-            .child(hint)
+            .when(self.error.is_some(), |body| body.child(hint))
             .child(
                 div()
                     .id("drawing-canvas")
@@ -360,7 +358,12 @@ impl Drawing {
         .iter()
         .position(|id| *id == request.identifier)
         {
-            self.action(index, window, cx);
+            if request.action == AxAction::Focus {
+                window.focus(&self.focus[index]);
+                cx.notify();
+            } else if request.action == AxAction::Press {
+                self.action(index, window, cx);
+            }
         }
     }
 }

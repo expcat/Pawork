@@ -13,9 +13,11 @@ impl AppView {
             content = content.child(
                 self.settings_element(id)
                     .w_full()
+                    .max_w(px(840.0))
                     .flex()
+                    .flex_wrap()
                     .items_start()
-                    .gap_6()
+                    .gap_4()
                     .pb_4()
                     .border_b_1()
                     .border_color(dark().border.subtle)
@@ -23,9 +25,12 @@ impl AppView {
                     .child(
                         div()
                             .flex_1()
-                            .min_w_0()
+                            .min_w(px(240.0))
+                            .max_w_full()
                             .whitespace_normal()
+                            .font_family(font::MONO)
                             .text_size(font::BASE)
+                            .line_height(font::DESCRIPTION_LINE_HEIGHT)
                             .text_color(dark().text.primary)
                             .child(value),
                     ),

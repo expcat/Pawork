@@ -207,7 +207,7 @@ impl AppView {
             .vcenter()
             .radius(6.0)
             .bordered()
-            .text_size(font::BODY_SM)
+            .text_size(font::BASE)
             .label(self.settings_account_action_label(&id, remove))
             .disabled(!enabled)
             .tooltip(
@@ -256,7 +256,7 @@ impl AppView {
             .vcenter()
             .radius(6.0)
             .bordered()
-            .text_size(font::BODY_SM)
+            .text_size(font::BASE)
             .label(t("settings.providers.account_rename"))
             .disabled(!enabled)
             .on_click(cx.listener(move |view, event, window, cx| {
@@ -490,7 +490,7 @@ impl AppView {
             .flex_col()
             .px_4()
             .py_4()
-            .gap_3()
+            .gap_4()
             .border_b_1()
             .border_color(dark().border.subtle)
             .child(
@@ -520,19 +520,22 @@ impl AppView {
                 rename.provider_id == provider_id
                     && rename.credential_id == credential.credential_id
             });
-            let mut header = div().flex().flex_row().items_center().gap_2().child(
+            let mut header =
                 div()
-                    .flex_none()
-                    .size(px(8.0))
-                    .rounded_full()
-                    .bg(if credential.expired {
-                        dark().semantic.danger_text
-                    } else if credential.selected {
-                        dark().semantic.success_fg
-                    } else {
-                        dark().text.tertiary
-                    }),
-            );
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .child(div().flex_none().size(px(8.0)).rounded_full().bg(
+                        if credential.expired {
+                            dark().semantic.danger_text
+                        } else if credential.selected {
+                            dark().semantic.success_fg
+                        } else {
+                            dark().text.tertiary
+                        },
+                    ));
             if renaming {
                 if let Some(input) = self
                     .settings_account_rename
@@ -553,13 +556,20 @@ impl AppView {
                 }
             } else {
                 header = header.child(
-                    div().flex().flex_row().flex_1().min_w_0().child(
-                        div()
-                            .truncate()
-                            .text_size(font::BODY)
-                            .text_color(dark().text.primary)
-                            .child(name),
-                    ),
+                    div()
+                        .flex()
+                        .flex_row()
+                        .flex_1()
+                        .min_w(px(240.0))
+                        .max_w_full()
+                        .child(
+                            div()
+                                .whitespace_normal()
+                                .text_size(font::BASE)
+                                .line_height(font::CONTROL_LINE_HEIGHT)
+                                .text_color(dark().text.primary)
+                                .child(name),
+                        ),
                 );
             }
             header = header
@@ -613,7 +623,8 @@ impl AppView {
                         div().flex_1().min_w_0().child(
                             div()
                                 .truncate()
-                                .text_size(font::BODY_SM)
+                                .text_size(font::META)
+                                .line_height(font::META_LINE_HEIGHT)
                                 .text_color(if credential.expired {
                                     dark().semantic.danger_text
                                 } else {
@@ -655,7 +666,7 @@ impl AppView {
                                 .height(px(SETTINGS_CONTROL_HEIGHT))
                                 .radius(6.0)
                                 .bordered()
-                                .text_size(font::BODY_SM)
+                                .text_size(font::BASE)
                                 .on_click(cx.listener(move |view, event, window, cx| {
                                     if !view.consume_button_key_click(&click_id, event) {
                                         view.on_settings_account_action(&click_id, window, cx);
@@ -766,9 +777,11 @@ impl AppView {
                     writes,
                     cx,
                 );
-                let mut editor = div().flex().flex_col().gap_3();
+                let mut editor = div().flex().flex_col().gap_4();
                 editor = editor.child(
                     self.settings_element(settings_api_key_input_identifier(&provider_id))
+                        .w(px(320.0))
+                        .max_w_full()
                         .child(input),
                 );
                 let mut editor_actions = div().flex().flex_wrap().gap_2();
@@ -921,7 +934,7 @@ impl AppView {
             .vcenter()
             .radius(6.0)
             .bordered()
-            .text_size(font::BODY_SM)
+            .text_size(font::BASE)
             .label(
                 if self
                     .settings_copied_auth

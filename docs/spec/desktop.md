@@ -1,6 +1,6 @@
 # Desktop 产品与交互规格
 
-> 更新：2026-10-05。现行视觉与交互合同见 [GUI 设计](../gui-design.md)，未闭合验收见 [ROADMAP](../ROADMAP.md)，工程约定见 [AGENTS.md](../../AGENTS.md)。
+> 更新：2026-10-22。现行视觉与交互合同见 [GUI 设计](../gui-design.md)，未闭合验收见 [ROADMAP](../ROADMAP.md)，工程约定见 [AGENTS.md](../../AGENTS.md)。
 
 ## ADR-057：UI-3 思考投影与会话身份（2026-09-08）
 
@@ -54,7 +54,7 @@ flowchart LR
 | Inspector / Terminal | 紧凑标签栏与直接输入的终端窗口；自动启动、自动适配视口、行内光标、粘贴及控制键；流式输出与 live/snapshot 终态 | 无独立输入栏、发送或手动尺寸控件；创建仍需 Policy；支持 shell 行编辑，尚不是完整 VT emulator。关闭标签走真实 `terminal_close`。 |
 | Inspector / Resources | MCP server/tool 状态、刷新 | 只读；没有已加载 AGENTS.md/Skills 分区。 |
 | Inspector / Computer use | computer-use 目标状态卡（授权 / 绑定 / 占用 / 暂停 / 能力矩阵）与授权管理：允许一次、本 run 允许、撤销 | 数据只来自 Host 登记事实（grants ∪ 绑定窗口）；授权仅当前 run、不持久化；按钮 gate 与 AX 同源，旧 Host（GUI API <1.27）显示版本要求占位。 |
-| Settings | English / 中文 Settings Rail + 全宽可滚动内容列（两侧 32px padding，OPT-4c 取消 820px 上限）；Models & providers、Network、Approvals、Tools & MCP、Terminal、Appearance、Advanced、About | P2 已产品化现有能力，OPT-3 起 Models 页为首「Default models」四角色区、Manage models 弹层与代理 Switch；provider 64px 概览与独立认证操作行、Network 写入 workspace 外的用户 `config.toml`、Approvals 整行 radio、Appearance 即时字号样例、Advanced/About definition list。Host-backed 页按权威能力显示并在 stale 时禁写，本地 Appearance/Advanced 离线常在；普通 UI / AX summary 不显示 credential 片段。本机视觉/键盘走查已完成；四家真实认证/目录矩阵与 E4 用户签字仍单独登记。 |
+| Settings | English / 中文 Settings Rail + 全宽可滚动内容列（两侧 32px）；Models & providers、Subagents、Network、Approvals、Tools & MCP、Terminal、Appearance、Advanced、About | 九页保持现有能力与 gate；Provider 自然高度概览、账号 / 模型 / quota 展开区与列表后的四默认角色。UI-06 统一标题 24/32、说明 14/22、名称 / 动作 14px、来源 12px，网络 / shell 输入限 320px，长表单与动作换行；审批行随内容撑高，外观 / 子代理 / 强度用中性选中与勾选，诊断值用等宽文本。角色菜单 AX 打开后真实聚焦触发器，Esc 归焦；MCP 错误分摘要与完整原文。Host 回执、stale 禁写、Secret 缓冲及本地 Appearance / Advanced 离线语义沿用；真实认证 / quota 全状态矩阵与用户签字仍单独登记。 |
 
 ## 3. 连接与状态模型
 
@@ -92,7 +92,7 @@ flowchart LR
 | DESK-05 | Fork 只在 reducer 标记的闭合 Run 边界开放，动作入口再次校验。 | 已实现。 |
 | DESK-06 | 同时只打开一个菜单；Escape/外点关闭；浮层 occlude 防滚轮穿透。 | 已实现；本机 scope / model / Activity 及键盘关闭回焦已复验。 |
 | DESK-07 | Composer 支持中文 IME、多行粘贴、Shift+Enter 与明确发送。 | 已实现；paste / Shift+Enter 有定向回归；系统 IME 按真实平台验收。 |
-| DESK-08 | Inspector 三页签独立滚动，切入/展开/会话切换/Run 终态/刷新时拉取正确数据。 | 主路径已实现；Resources 和跨会话矩阵按环境验收。 |
+| DESK-08 | Inspector 七种工具与文件 / PTY 共用滚动标签，Side / Center 切换保留任务；进入 / 展开 / 会话切换 / Run 终态 / 刷新时拉取正确数据。 | 主路径已实现；Changes / Resources 四通道刷新与实测 AX 见 UI-05；真实运行状态矩阵按环境验收。 |
 | DESK-09 | 断线态可 Reconnect，Run/会话不因 UI 断线丢失。 | 重连路径已实现；项目与 Session 归属跨重启已复验。 |
 | DESK-10 | 1080×720 下 Composer、状态栏和 Header Activity 触发器仍可用。 | 已实现；宽窄窗与三档字号按当前窗口验收。 |
 | DESK-11 | 可见结构和控件具备稳定 AX identifier、正确 role/name/value/state/action；AX 操作复用鼠标/键盘的业务 gate。 | ADR-042 macOS bridge 已实现；主路径可经 AX 驱动，Windows/Linux 平台仍未验收（VoiceOver 验收已于 2026-09-04 按用户要求移出范围）。 |
@@ -105,9 +105,17 @@ flowchart LR
 - UI-4 Composer 的 input / 模型 / Send/Cancel 共属居中卡片（至少 110px、最高 220px），项目与上下文移到卡片下方；缺值仍如实显示 unavailable。留白、字号与交互见 [GUI 设计](../gui-design.md#ui-4-输入栏更新2026-09-08)。
 - Changes 文件行使用稳定前后槽；DiffView 的只读路径 header 位于横滚外，24px 语义 gutter 与中性正文分离；ActivityPopover 内容宽 320px，内容高随 100%/125%/150% 为 144/180/216px，外框包含 8px padding 与 1px border，摘要可见且保持 capability honesty。
 
+UI-05 工作面板：标题 16/24、控件与主项 14/20、说明 / 错误 14/22、辅助 12/18，面板空态顶部留 24px。Changes / Resources 鼠标、Enter、Space 与 AX 共用刷新 gate；Resources 先显示本地化摘要，技术详情保留完整原文，查询失败保留并标注旧列表。两页 AX 使用真实布局与焦点，离屏动作不发布；Changes Summary 标签列随字号缩放，Browser 长标签截断且关闭 / 新建入口可达，无 tab 仍可通过既有「+」创建；Terminal 以 Host runtime state 显示退出 / 停止 / 异常退出提示，断线仍优先显示离线。各工具的专用布局与真实状态验证边界见 [GUI 设计 §8](../gui-design.md#8-工作面板) 和 [方案交付记录](../plan/ui-2026-10-22.md#9-进度记录)。
+
 UI-5 设置壳与七个非供应商页沿用 UI-1 token，改为 40px 导航、36px 动作与全宽分区布局；页内命中框按 GPUI 实际布局和滚动视口同步，离屏项不暴露动作。原有设置持久化、可用性与断线 gate 不变，供应商页产品改动属于 UI-6。规格见 [GUI 设计 UI-5](../gui-design.md#ui-5-设置更新2026-09-08)。
 
-长模型名与搜索结果保留完整 tooltip / AX；发送错误归发起草稿，重试 / 成功清除。MCP 状态、Changes 横向浏览、子代理回执和辅助窗口的显示合同见 [GUI 设计](../gui-design.md)，行为回归见 [desktop crate](crates/desktop.md#7-测试与验证资产)。
+UI-06（2026-10-22）完成设置九页的字号与自然换行迁移；外观样例新增 12/18 来源，AX 顺序与像素一致。31 项去重既有定向回归与正式 build 通过，原生窗口覆盖和待验状态见 [优化方案 §9](../plan/ui-2026-10-22.md#9-进度记录)。自动检查与原生抽查不等于用户人工验收，未归档。
+
+UI-07（2026-10-22～23）统一 Plan / Goal / Recording / Video / Drawing / Usage 的 20/28 图标标题、14/22 说明、24px 内边距及滚动表单；动作可换行，键盘焦点滚入视口，AX Focus 只移焦、Press 激活并使用实测可见框。Plan 按版本 / dirty / review 状态突出当前动作；Goal 预算 / 轮次可堆叠、转向另组；Recording 分操作、预览与项目技能保存阶段，回执紧邻保存；Video 保留空值清除和保存校验；Drawing 保留白画布与原无笔画 gate；Usage 中性勾选筛选、14px 对齐汇总，unknown / 0 / 币种 / 分页沿用。4 项既有定向回归与正式 build 通过，最终产物完成中英文 24 组排版及键盘 / 校验状态抽查；真实局部状态与用户人工待验，未归档。默认尺寸、三字号真窗覆盖和剩余状态分别见 [GUI 设计](../gui-design.md#辅助窗口显示) 与 [方案交付记录](../plan/ui-2026-10-22.md#9-进度记录)。
+
+长模型名与搜索结果保留完整 tooltip / AX；模型候选行分开显示名称、Provider / 目录来源与能力。当前模型未列入已连接且已启用的对话候选目录时保留当前值并说明管理入口，不自动切换，也不新增发送 gate。附件预览、移除与关闭具有独立命中区及真实键盘 / AX 焦点。发送错误归发起草稿，重试 / 成功清除。MCP 状态、Changes 横向浏览、子代理回执和辅助窗口的显示合同见 [GUI 设计](../gui-design.md)，行为回归见 [desktop crate](crates/desktop.md#7-测试与验证资产)。
+
+UI-08（2026-10-23）完成本轮统一复验与覆盖账，修正模型菜单 AX 高亮冒充焦点、长分支覆盖状态栏用量、附件预览 AX 零高度及关闭命中区过窄，阅读列比较后保留 880px 上限。5 项既有定向回归与正式 build 通过；主路径草稿 / 查找回焦 / 精确复制 / 面板阅读锚点及一次真实 GLM 5.3 只读 Run 已核。真实复杂状态、完整键盘 / VoiceOver、系统 IME 与用户人工验收分别保留待验，未归档；精确产物、覆盖配置及限制见 [方案 §9](../plan/ui-2026-10-22.md#9-进度记录)。
 
 ## 5. 键盘、IME 与可访问性
 
@@ -135,7 +143,7 @@ UI-5 设置壳与七个非供应商页沿用 UI-1 token，改为 40px 导航、3
 
 ## 7. 当前验收合同
 
-当前执行入口只有 [AGENTS.md](../../AGENTS.md)。Settings 的专项行为与证据见 [settings.md](settings.md)。真实 Desktop 主路径至少覆盖：正式启动、添加真实项目、新建 Task、发送消息、文件写入与审批、Git Changes、Terminal 输入输出；不使用 fixture、seed、probe 或测试 profile 冒充通过。需要真实模型的功能验证固定使用 `opencode-go / glm-5.3-flash`（当次 Host `--provider` / `--model`，不改持久默认）；口径见 [verification.md](verification.md) §2.1。
+当前执行入口只有 [AGENTS.md](../../AGENTS.md)。Settings 的专项行为与证据见 [settings.md](settings.md)。真实 Desktop 主路径至少覆盖：正式启动、添加真实项目、新建 Task、发送消息、文件写入与审批、Git Changes、Terminal 输入输出；不使用 fixture、seed、probe 或测试 profile 冒充通过。需要真实模型的功能验证使用 `glm-coding / glm-5.3` 或 `xai / grok-4.7`（当次 Host `--provider` / `--model`，先核目录、启用态与实际路由，不改持久默认）；口径见 [verification.md](verification.md) §2.1。
 
 边界口径：
 

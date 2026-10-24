@@ -9,10 +9,7 @@ use crate::projection::{
 };
 
 use super::{AxAction, AxBridge, AxNode, AxRect, AxRequest, AxRole, AxTree};
-use crate::ui::approval_card::{
-    approval_card_height, APPROVAL_BUTTON_HEIGHT, APPROVAL_BUTTON_ROW_GAP_REMS,
-    APPROVAL_BUTTON_SLOT_WIDTHS, APPROVAL_CARD_PAD_REMS,
-};
+use crate::ui::approval_card::approval_card_height;
 use crate::ui::changes::{ChangesFetch, ChangesTab};
 use crate::ui::components::dropdown::ANCHOR_GAP_Y;
 #[cfg(test)]
@@ -30,10 +27,11 @@ use crate::ui::settings::{
 };
 use crate::ui::shell_layout::{self, InspectorPlacement};
 use crate::ui::theme::{font, metrics};
+#[cfg(test)]
+use crate::ui::timeline_entry::SUMMARY_NEXT_STEP_BUTTON_HEIGHT;
 use crate::ui::timeline_entry::{
     assistant_is_streaming, display_time, failure_next_step, run_open_providers_identifier,
     tool_group_summary, tool_result_expand_key, FailureNextStep, ToolRowView,
-    SUMMARY_NEXT_STEP_BUTTON_HEIGHT,
 };
 use crate::ui::{
     activity_header_visibility, rail_project_occurrence_key, rail_session_archive_focus_key,
@@ -42,7 +40,6 @@ use crate::ui::{
 };
 
 pub(crate) const PAD: f32 = 8.0;
-pub(crate) const CONTROL_HEIGHT: f32 = 28.0;
 pub(crate) const ROW_HEIGHT: f32 = 32.0;
 
 mod composer;
@@ -50,11 +47,6 @@ mod inspector;
 mod press;
 mod rail;
 mod timeline_ax;
-
-/// 按钮行 y 自卡底内缩（p_2 + 32px 按钮槽），随卡位置整体移动。
-fn approval_button_row_y(card: AxRect, rem_px: f32) -> f32 {
-    card.y + card.height - APPROVAL_CARD_PAD_REMS * rem_px - APPROVAL_BUTTON_HEIGHT
-}
 
 impl AppView {
     pub(crate) fn install_accessibility(
@@ -184,6 +176,22 @@ impl AppView {
         match request.action {
             AxAction::Focus => match request.identifier.as_str() {
                 "model-search-input" => window.focus(&self.model_search_focus),
+                "changes-refresh" => window.focus(&self.changes_refresh_focus),
+                "resources-refresh" => window.focus(&self.resources_refresh_focus),
+                id if id.starts_with("resources-error-details-")
+                    || id == "resources-query-error-details" =>
+                {
+                    if let Some(focus) = self.resources.details_focus.get(id) {
+                        window.focus(focus);
+                    }
+                }
+                _ if request.identifier.starts_with("composer-preview-")
+                    || request.identifier.starts_with("composer-remove-") =>
+                {
+                    if let Some(focus) = self.settings_action_focus.get(&request.identifier) {
+                        window.focus(focus);
+                    }
+                }
                 _ if ModelPurposeFilter::ALL
                     .iter()
                     .any(|purpose| purpose.identifier() == request.identifier) =>

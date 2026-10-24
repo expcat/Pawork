@@ -32,7 +32,7 @@ pub(super) fn display_time(timestamp: &str, now_ms: u64) -> String {
 pub(super) const HEADLINE_TARGET_MAX_CHARS: usize = 80;
 /// 展开态结果预览行数（8–12 合同取中值）；全文走 `event_id:result` 展开键。
 pub(super) const RESULT_PREVIEW_LINES: usize = 10;
-pub(super) const RESULT_EXPAND_HEIGHT: f32 = 24.0;
+pub(super) const RESULT_EXPAND_HEIGHT: f32 = metrics::BUTTON_MIN_HEIGHT;
 /// 页脚 / 底栏用量图标边长，压进 BODY_SM 行高。
 const RUN_METRIC_ICON: f32 = 12.0;
 
@@ -391,8 +391,8 @@ pub(super) const SUMMARY_BANNER_PAD_X: f32 = 12.0;
 pub(super) const SUMMARY_BANNER_PAD_Y_REMS: f32 = 0.75;
 /// gap_2 = 0.5 rem（标题 / 原因 / CTA 竖向；圆与标题横向）。
 pub(super) const SUMMARY_BANNER_GAP_REMS: f32 = 0.5;
-/// 认证失败 Raised CTA 行高（紧凑 pill 配套收为 24）。
-pub(super) const SUMMARY_NEXT_STEP_BUTTON_HEIGHT: f32 = 24.0;
+/// 认证失败的显式下一步使用 36px 文字按钮。
+pub(super) const SUMMARY_NEXT_STEP_BUTTON_HEIGHT: f32 = metrics::BUTTON_MIN_HEIGHT;
 /// 失败 pill 的警示图标边长（行内 16px，与文字基线同槽）。
 pub(super) const SUMMARY_FAIL_ICON: f32 = 16.0;
 /// 失败 pill 圆角（Codex 式横条视觉，12px）。
@@ -461,6 +461,7 @@ use super::markdown::message_body_element;
 /// 作者和时间都是 12px 元信息，正文独占主层级。
 fn message_label_element(role: &str, time: &str, role_color: Rgba, generating: bool) -> gpui::Div {
     div()
+        .line_height(font::META_LINE_HEIGHT)
         .flex()
         .flex_row()
         .items_baseline()
@@ -656,6 +657,7 @@ fn entry_shell_element(
         header = header.justify_end().child(
             div()
                 .text_size(font::BODY_SM)
+                .line_height(font::META_LINE_HEIGHT)
                 .text_color(dark().text.tertiary)
                 .child(display_time(&entry.timestamp, now_unix_ms())),
         );
@@ -674,7 +676,7 @@ fn entry_shell_element(
 
 /// Tool 行状态槽：succeeded = ✓（Ø14，success_fg）+ 状态词；
 /// running / pending = accent 点静态表示（本波不做动画）；failed /
-/// cancelled = danger_text 状态词；未知状态原样 tertiary。不画耗时列
+/// cancelled / stopped = 语义图标 + 状态词；未知状态原样 tertiary。不画耗时列
 /// （wire 无 tool duration 字段）。
 fn tool_status_element(row: &ToolRowView) -> gpui::Div {
     let word_color = match row.status {
@@ -685,6 +687,7 @@ fn tool_status_element(row: &ToolRowView) -> gpui::Div {
     };
     let word = div()
         .text_size(font::BODY_SM)
+        .line_height(font::META_LINE_HEIGHT)
         .text_color(word_color)
         .child(row.status_label.clone());
     match row.status {
@@ -712,10 +715,24 @@ fn tool_status_element(row: &ToolRowView) -> gpui::Div {
                     .bg(dark().accent.primary),
             )
             .child(word),
-        ToolRowStatus::Failed
-        | ToolRowStatus::Cancelled
-        | ToolRowStatus::Stopped
-        | ToolRowStatus::Other => div().flex().flex_none().items_center().child(word),
+        ToolRowStatus::Failed | ToolRowStatus::Cancelled | ToolRowStatus::Stopped => div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap_2()
+            .child(
+                icon_sized(
+                    if row.status == ToolRowStatus::Failed {
+                        Icon::Warning
+                    } else {
+                        Icon::Cancel
+                    },
+                    px(metrics::TOOL_CHECK_SIZE),
+                )
+                .text_color(word_color),
+            )
+            .child(word),
+        ToolRowStatus::Other => div().flex().flex_none().items_center().child(word),
     }
 }
 
@@ -756,6 +773,7 @@ fn tool_row_element(view: &mut AppView, row: &ToolRowView, cx: &mut Context<AppV
                         div()
                             .truncate()
                             .text_size(font::BASE)
+                            .line_height(font::CONTROL_LINE_HEIGHT)
                             .text_color(dark().text.primary)
                             .child(row.headline.clone()),
                     ),
@@ -764,20 +782,13 @@ fn tool_row_element(view: &mut AppView, row: &ToolRowView, cx: &mut Context<AppV
                 .when_some(source_menu, |header, menu| header.child(menu)),
         )
         .when_some(row.detail.clone(), |element, detail| {
-            element.child(
-                div()
-                    .px_3()
-                    .pb_3()
-                    .text_size(font::XS)
-                    .line_height(font::from_pixels(20.0))
-                    .font_family("monospace")
-                    .text_color(dark().text.secondary)
-                    .child(super::markdown::source_text_element(
-                        format!("tool-sources-{}", row.event_id),
-                        detail,
-                        dark().text.secondary,
-                    )),
-            )
+            element.child(div().px_3().pb_3().text_color(dark().text.secondary).child(
+                super::markdown::source_text_element(
+                    format!("tool-sources-{}", row.event_id),
+                    detail,
+                    dark().text.secondary,
+                ),
+            ))
         })
         .when(
             row.result_can_expand && !row.event_id.is_empty(),
@@ -804,7 +815,7 @@ fn tool_result_expand_element(
     Button::new(button_id.clone())
         .variant(ButtonVariant::Ghost)
         .height(px(RESULT_EXPAND_HEIGHT))
-        .text_size(font::BODY_SM)
+        .text_size(font::BASE)
         .text_color(dark().text.secondary)
         .padding(ButtonPadding::Horizontal(metrics::PADDING_XS))
         .label(if expanded {
@@ -843,8 +854,7 @@ pub(super) fn tool_row_height(row: &ToolRowView, width: f32, rem: f32) -> f32 {
     };
     metrics::TOOL_ROW_HEIGHT
         + row.detail.as_deref().map_or(0.0, |detail| {
-            estimated_wrapped_lines(detail, (width - 1.5 * rem).max(1.0), font::XS.0 * rem) as f32
-                * (20.0 / 16.0 * rem).round()
+            super::markdown::source_text_height(detail, (width - 1.5 * rem).max(1.0), rem)
                 + 0.75 * rem
         })
         + expand
@@ -898,6 +908,11 @@ pub(super) fn fork_target<'a>(timeline: &'a [TimelineEntry], event_id: &str) -> 
 }
 
 impl AppView {
+    pub(super) fn copy_timeline_text(&mut self, text: String, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+        self.show_status_feedback(t("timeline.copied").into(), cx);
+    }
+
     pub(super) fn entry_menu_actions(&self, event_id: &str) -> Vec<EntryAction> {
         let mut actions = Vec::new();
         if let Some(entry) = self
@@ -996,9 +1011,7 @@ impl AppView {
         }
         self.close_menu_and_focus_trigger(MenuKind::Entry(event_id.into()), window, cx);
         match action.kind {
-            EntryActionKind::Copy(text) => {
-                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text))
-            }
+            EntryActionKind::Copy(text) => self.copy_timeline_text(text, cx),
             EntryActionKind::Open(url) => cx.open_url(&url),
             EntryActionKind::Fork => self.on_fork(event_id, window, cx),
             EntryActionKind::Info => {}
@@ -1159,7 +1172,8 @@ impl AppView {
                         div().flex().flex_row().flex_1().min_w_0().child(
                             div()
                                 .truncate()
-                                .text_size(font::BODY_SM)
+                                .text_size(font::BASE)
+                                .line_height(font::CONTROL_LINE_HEIGHT)
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(dark().text.secondary)
                                 .child(label),
@@ -1280,6 +1294,7 @@ impl AppView {
                     div()
                         .p(px(12.0))
                         .text_size(font::BASE)
+                        .line_height(font::DESCRIPTION_LINE_HEIGHT)
                         .text_color(dark().text.secondary)
                         .child(content.clone()),
                 );
@@ -1293,7 +1308,8 @@ impl AppView {
                     .gap_2()
                     .h(px(metrics::THINKING_HEADER_HEIGHT))
                     .px_2()
-                    .text_size(font::BODY_SM)
+                    .text_size(font::BASE)
+                    .line_height(font::CONTROL_LINE_HEIGHT)
                     .text_color(dark().text.secondary)
                     .child(icon_sized(Icon::File, px(12.0)))
                     .child(
@@ -1332,6 +1348,7 @@ impl AppView {
                     div()
                         .p(px(12.0))
                         .text_size(font::BASE)
+                        .line_height(font::DESCRIPTION_LINE_HEIGHT)
                         .text_color(dark().text.secondary)
                         .child(text.to_string()),
                 )
@@ -1510,7 +1527,8 @@ impl AppView {
                         div().flex().flex_row().flex_1().min_w_0().child(
                             div()
                                 .truncate()
-                                .text_size(font::BODY_SM)
+                                .text_size(font::DESCRIPTION)
+                                .line_height(font::DESCRIPTION_LINE_HEIGHT)
                                 .text_color(dark().semantic.danger_text)
                                 .child(view.description.clone()),
                         ),
@@ -1529,7 +1547,7 @@ impl AppView {
             .height(px(SUMMARY_NEXT_STEP_BUTTON_HEIGHT))
             .vcenter()
             .radius(metrics::CONTROL_RADIUS)
-            .text_size(font::BODY_SM)
+            .text_size(font::BASE)
             .label(t("run.open_provider_settings"))
             .track_focus(&focus)
             .on_click(cx.listener({
@@ -1555,7 +1573,7 @@ impl AppView {
             .flex_row()
             .gap_2()
             .child(div().w(px(SUMMARY_FAIL_ICON)).flex_none())
-            .child(button)
+            .child(self.settings_element(button_id).flex_none().child(button))
     }
 
     fn activate_open_providers_from_keyboard(
@@ -1641,8 +1659,8 @@ impl AppView {
                             div().flex().flex_row().flex_1().min_w_0().child(
                                 div()
                                     .flex_1()
-                                    .text_size(font::BODY_SM)
-                                    .line_height(font::from_pixels(metrics::MSG_LINE_HEIGHT))
+                                    .text_size(font::DESCRIPTION)
+                                    .line_height(font::DESCRIPTION_LINE_HEIGHT)
                                     .line_clamp(2)
                                     .text_color(dark().text.secondary)
                                     .child(view.description.clone()),

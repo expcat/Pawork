@@ -2,7 +2,9 @@
 //! name / transport / state / tools 数 / last_error 全部来自 Host 响应；
 //! 「已加载规则」分区无 Host 出口，本波不画（docs/gui-design.md §8）。
 
-use gpui::{div, prelude::*, px, Context, ScrollHandle};
+use std::collections::{HashMap, HashSet};
+
+use gpui::{div, prelude::*, px, Context, FocusHandle, ScrollHandle, SharedString};
 
 use crate::controller::McpServerEntry;
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
@@ -37,6 +39,9 @@ pub(super) struct ResourcesPanelState {
     /// 工作台 StatusBar 右栏仍走 status_hint）。成功回执才清除。
     pub action_error: Option<String>,
     pub scroll: ScrollHandle,
+    pub layouts: HashMap<String, ScrollHandle>,
+    pub details_open: HashSet<String>,
+    pub details_focus: HashMap<String, FocusHandle>,
 }
 
 impl Default for ResourcesPanelState {
@@ -49,6 +54,9 @@ impl Default for ResourcesPanelState {
             available: false,
             action_error: None,
             scroll: ScrollHandle::new(),
+            layouts: HashMap::new(),
+            details_open: HashSet::new(),
+            details_focus: HashMap::new(),
         }
     }
 }
@@ -123,7 +131,8 @@ pub(super) fn mcp_server_name_row(server: &McpServerEntry) -> gpui::Div {
                 .flex_1()
                 .min_w_0()
                 .truncate()
-                .text_size(font::SM)
+                .text_size(font::BASE)
+                .line_height(font::CONTROL_LINE_HEIGHT)
                 .text_color(dark().text.primary)
                 .child(server.name.clone()),
         )
@@ -147,98 +156,233 @@ pub(super) fn mcp_server_meta_text(server: &McpServerEntry) -> String {
     )
 }
 
+pub(super) fn resources_server_id(name: &str) -> String {
+    super::accessibility::dynamic_identifier("mcp-server", name)
+}
+
 impl AppView {
-    pub(super) fn resources_element(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn resources_can_refresh(&self) -> bool {
+        matches!(
+            self.projection.connection,
+            crate::projection::ConnectionState::Connected { .. }
+        ) && self.resources.fetch != ResourcesFetch::Fetching
+    }
+
+    pub(super) fn activate_resources_refresh(&mut self, cx: &mut Context<Self>) {
+        if self.resources_can_refresh() {
+            self.refresh_resources(cx);
+        }
+    }
+
+    pub(super) fn toggle_resources_details(&mut self, id: &str, cx: &mut Context<Self>) {
+        if !self.resources.details_open.remove(id) {
+            self.resources.details_open.insert(id.into());
+        }
+        cx.notify();
+    }
+
+    fn resources_error_element(
+        &mut self,
+        id: String,
+        summary: &'static str,
+        reason: String,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let expanded = self.resources.details_open.contains(&id);
+        let focus = self
+            .resources
+            .details_focus
+            .entry(id.clone())
+            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone();
+        let layout = self
+            .resources
+            .layouts
+            .entry(id.clone())
+            .or_default()
+            .clone();
+        let click = id.clone();
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .text_size(font::DESCRIPTION)
+            .line_height(font::DESCRIPTION_LINE_HEIGHT)
+            .child(
+                div()
+                    .text_color(dark().semantic.danger_text)
+                    .child(t(summary)),
+            )
+            .child(
+                div()
+                    .id(SharedString::from(format!("{id}-layout")))
+                    .flex_none()
+                    .track_scroll(&layout)
+                    .child(
+                        Button::new(SharedString::from(id.clone()))
+                            .variant(ButtonVariant::Ghost)
+                            .label(t(if expanded {
+                                "resources.hide_details"
+                            } else {
+                                "resources.details"
+                            }))
+                            .track_focus(&focus)
+                            .on_click(cx.listener(move |view, event, _, cx| {
+                                if !view.consume_button_key_click(&click, event) {
+                                    view.toggle_resources_details(&click, cx);
+                                }
+                            }))
+                            .on_activate(cx.listener(move |view, _, _, cx| {
+                                if view.open_menu.is_none() {
+                                    view.note_button_key_activate(&id);
+                                    view.toggle_resources_details(&id, cx);
+                                    cx.stop_propagation();
+                                }
+                            })),
+                    ),
+            )
+            .when(expanded, |body| {
+                body.child(
+                    div()
+                        .whitespace_normal()
+                        .text_color(dark().text.secondary)
+                        .child(reason),
+                )
+            })
+    }
+
+    pub(super) fn resources_element(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let servers = self.resources.servers.clone();
+        let failure = match &self.resources.fetch {
+            ResourcesFetch::Failed(reason) => Some(reason.clone()),
+            _ => None,
+        };
+        let mut ids = vec!["resources-refresh".to_string()];
+        if failure.is_some() {
+            ids.push("resources-query-error-details".into());
+        }
+        for server in &servers {
+            let id = resources_server_id(&server.name);
+            ids.push(id.clone());
+            if server.last_error.is_some() {
+                ids.push(format!("resources-error-details-{id}"));
+            }
+        }
+        self.resources.layouts.retain(|id, _| ids.contains(id));
+        self.resources
+            .details_focus
+            .retain(|id, _| ids.contains(id));
+        self.resources.details_open.retain(|id| ids.contains(id));
+        for id in ids {
+            self.resources.layouts.entry(id).or_default();
+        }
         let header = div()
             .flex()
             .flex_row()
             .items_center()
-            .gap_1()
+            .gap_2()
             .px_2()
             .py_1()
+            .flex_none()
             .border_b_1()
             .border_color(dark().border.subtle)
             .child(
                 Label::new(t("resources.mcp_title"))
-                    .size(font::XS)
-                    .color(dark().text.tertiary),
+                    .size(font::BODY)
+                    .line_height(font::SECTION_LINE_HEIGHT)
+                    .color(dark().text.primary),
             )
             .child(div().flex_1())
             .child(
-                Button::new("resources-refresh")
-                    .variant(ButtonVariant::Ghost)
-                    .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
-                    .text_color(dark().text.secondary)
-                    .child(icon_sized(Icon::Refresh, px(metrics::ICON_SM)))
-                    .tooltip(t("resources.tooltip_refresh"))
-                    .track_focus(&self.resources_refresh_focus)
-                    .on_click(cx.listener(|view, event, _window, cx| {
-                        if view.consume_button_key_click("resources-refresh", event) {
-                            return;
-                        }
-                        view.refresh_resources(cx);
-                    })),
+                div()
+                    .id("resources-refresh-layout")
+                    .flex_none()
+                    .track_scroll(&self.resources.layouts["resources-refresh"])
+                    .child(
+                        Button::new("resources-refresh")
+                            .variant(ButtonVariant::Ghost)
+                            .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
+                            .text_color(dark().text.secondary)
+                            .child(icon_sized(Icon::Refresh, px(metrics::ICON_SM)))
+                            .tooltip(t("resources.tooltip_refresh"))
+                            .track_focus(&self.resources_refresh_focus)
+                            .disabled(!self.resources_can_refresh())
+                            .on_click(cx.listener(|view, event, _, cx| {
+                                if !view.consume_button_key_click("resources-refresh", event) {
+                                    view.activate_resources_refresh(cx);
+                                }
+                            }))
+                            .on_activate(cx.listener(|view, _, _, cx| {
+                                if view.open_menu.is_none() {
+                                    view.note_button_key_activate("resources-refresh");
+                                    view.activate_resources_refresh(cx);
+                                    cx.stop_propagation();
+                                }
+                            })),
+                    ),
             );
-        let body = match &self.resources.fetch {
-            ResourcesFetch::Idle => {
-                resources_placeholder("resources.unavailable").into_any_element()
+        let mut list = div()
+            .id("mcp-server-list")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .track_scroll(&self.resources.scroll)
+            .overflow_y_scroll();
+        if let Some(reason) = failure {
+            list = list.child(div().p_3().flex_none().child(self.resources_error_element(
+                "resources-query-error-details".into(),
+                "resources.query_error",
+                reason,
+                cx,
+            )));
+            if !servers.is_empty() {
+                list = list.child(stale_notice(t("resources.retained")));
             }
-            ResourcesFetch::Fetching if self.resources.servers.is_empty() => {
-                resources_placeholder("resources.loading").into_any_element()
+        } else if servers.is_empty() {
+            list = list.child(resources_placeholder(match self.resources.fetch {
+                ResourcesFetch::Idle => "resources.unavailable",
+                ResourcesFetch::Fetching => "resources.loading",
+                _ => "resources.empty",
+            }));
+        }
+        for server in &servers {
+            let id = resources_server_id(&server.name);
+            let mut row = div()
+                .id(SharedString::from(format!("{id}-layout")))
+                .track_scroll(&self.resources.layouts[&id])
+                .flex_none()
+                .px_3()
+                .py_2()
+                .child(mcp_server_name_row(server))
+                .child(
+                    div()
+                        .whitespace_normal()
+                        .text_size(font::META)
+                        .line_height(font::META_LINE_HEIGHT)
+                        .text_color(dark().text.tertiary)
+                        .child(mcp_server_meta_text(server)),
+                );
+            if let Some(error) = &server.last_error {
+                row = row.child(self.resources_error_element(
+                    format!("resources-error-details-{id}"),
+                    "resources.server_error",
+                    error.clone(),
+                    cx,
+                ));
             }
-            ResourcesFetch::Failed(reason) => {
-                resources_placeholder_colored(reason.clone(), dark().semantic.danger_text)
-                    .into_any_element()
-            }
-            ResourcesFetch::Fetching | ResourcesFetch::Ready => {
-                if self.resources.servers.is_empty() {
-                    resources_placeholder("resources.empty").into_any_element()
-                } else {
-                    let mut list = div()
-                        .id("mcp-server-list")
-                        .flex()
-                        .flex_col()
-                        .track_scroll(&self.resources.scroll)
-                        .overflow_y_scroll();
-                    for server in &self.resources.servers {
-                        let row = div()
-                            .px_2()
-                            .py_2()
-                            .child(mcp_server_name_row(server))
-                            .child(
-                                div()
-                                    .w_full()
-                                    .whitespace_normal()
-                                    .text_size(font::XS)
-                                    .text_color(dark().text.tertiary)
-                                    .child(mcp_server_meta_text(server)),
-                            )
-                            .when_some(server.last_error.clone(), |row, error| {
-                                row.child(
-                                    div()
-                                        .w_full()
-                                        .whitespace_normal()
-                                        .text_size(font::SM)
-                                        .text_color(dark().semantic.danger_text)
-                                        .child(error),
-                                )
-                            });
-                        list = list.child(row);
-                    }
-                    list.into_any_element()
-                }
-            }
-        };
+            list = list.child(row);
+        }
         div()
             .flex()
             .flex_col()
             .flex_1()
             .min_h_0()
             .child(header)
-            .when_some(self.resources.stale_reason.clone(), |block, reason| {
-                block.child(stale_notice(reason))
+            .when_some(self.resources.stale_reason.clone(), |body, reason| {
+                body.child(stale_notice(reason))
             })
-            .child(body)
+            .child(list)
     }
 }
 
@@ -255,21 +399,12 @@ fn resources_placeholder(key: &'static str) -> EmptyState {
         t(key).to_string(),
         description.to_string(),
         dark().text.primary,
-    );
+    )
+    .top_aligned();
     if key == "resources.loading" {
         placeholder = placeholder.child(loading_skeleton("resources.loading-skeleton"));
     }
     placeholder
-}
-
-/// 失败占位：标题本地化；reason 为 wire 数据，不翻译。
-fn resources_placeholder_colored(text: impl Into<String>, color: gpui::Rgba) -> EmptyState {
-    EmptyState::labeled(
-        Icon::Resources,
-        t("resources.error_title"),
-        text.into(),
-        color,
-    )
 }
 
 #[cfg(test)]

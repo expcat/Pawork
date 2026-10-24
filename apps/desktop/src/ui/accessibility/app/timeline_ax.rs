@@ -35,6 +35,7 @@ impl AppView {
             .collect();
         let approval_height = self.projection.pending_approval.as_ref().map(|pending| {
             approval_card_height(
+                &pending.tool_name,
                 &pending.reason,
                 pending.detail.as_deref(),
                 column_width,
@@ -183,13 +184,24 @@ impl AppView {
         if let (Some(pending), Some((approval_top, approval_height))) =
             (self.projection.pending_approval.as_ref(), approval_top)
         {
-            // P4 片 3：卡高与 approval_card.rs 布局同源（标题 / reason 行
-            // 数 + 可选 detail + p_2 + 32px 按钮行）。P4 片 2F（D2）及
-            // review：卡作为真实 list 末项参与 start/offset/可见性计算；
-            // 滚离底部时不发布不可见审批动作，跟随溢出时首项可部分可见。
-            let approval = AxRect::new(column_x, approval_top, column_width, approval_height);
-            let button_row_y = approval_button_row_y(approval, rem_px);
-            let button_gap = APPROVAL_BUTTON_ROW_GAP_REMS * rem_px;
+            // 卡仍是 list 末项；按钮只发布实际绘制且位于视口内的框。
+            let measured = |id: &str| {
+                self.settings_element_layouts.get(id).map(|layout| {
+                    let b = layout.bounds().intersect(&measured_viewport);
+                    AxRect::new(
+                        b.origin.x.into(),
+                        b.origin.y.into(),
+                        f32::from(b.size.width).max(0.0),
+                        f32::from(b.size.height).max(0.0),
+                    )
+                })
+            };
+            let approval = measured("approval-card").unwrap_or(AxRect::new(
+                column_x,
+                approval_top,
+                column_width,
+                approval_height,
+            ));
             let enabled = self.can_approve();
             let focused = [
                 self.open_menu.is_none() && self.approve_once_focus.is_focused(window),
@@ -199,7 +211,6 @@ impl AppView {
             let mut approval_node =
                 AxNode::new("approval-card", AxRole::Group, "Approval", approval)
                     .value(format!("{} · {}", pending.tool_name, pending.reason));
-            let mut button_x = approval.x;
             for (ix, (id, label)) in [
                 ("approve-once", t("approval.allow_once")),
                 ("approve-for-run", t("approval.allow_for_run")),
@@ -208,22 +219,18 @@ impl AppView {
             .into_iter()
             .enumerate()
             {
-                let width = APPROVAL_BUTTON_SLOT_WIDTHS[ix];
+                let Some(bounds) = measured(id).filter(|b| b.width > 0.0 && b.height > 0.0) else {
+                    continue;
+                };
                 approval_node = approval_node.child({
-                    let mut button = AxNode::new(
-                        id,
-                        AxRole::Button,
-                        label,
-                        AxRect::new(button_x, button_row_y, width, APPROVAL_BUTTON_HEIGHT),
-                    )
-                    .enabled(enabled)
-                    .focused(focused[ix]);
+                    let mut button = AxNode::new(id, AxRole::Button, label, bounds)
+                        .enabled(enabled)
+                        .focused(focused[ix]);
                     if enabled {
                         button = button.action(AxAction::Press);
                     }
                     button
                 });
-                button_x += width + button_gap;
             }
             list = list.child(approval_node);
         }
@@ -579,19 +586,31 @@ impl AppView {
                             .action(AxAction::Press),
                         );
                     }
-                    if let Some(top) = layout.next_step_top() {
+                    let cta_id = run_open_providers_identifier(&terminal_entry.event_id);
+                    let cta_bounds = self
+                        .settings_element_layouts
+                        .get(&cta_id)
+                        .map(|handle| {
+                            let b = handle
+                                .bounds()
+                                .intersect(&self.timeline_list.viewport_bounds());
+                            AxRect::new(
+                                b.origin.x.into(),
+                                b.origin.y.into(),
+                                f32::from(b.size.width).max(0.0),
+                                f32::from(b.size.height).max(0.0),
+                            )
+                        })
+                        .filter(|b| b.width > 0.0 && b.height > 0.0);
+                    if let Some(bounds) = cta_bounds
+                        .filter(|_| layout.next_step == FailureNextStep::OpenProviderSettings)
+                    {
                         region = region.child(
                             AxNode::new(
-                                run_open_providers_identifier(&terminal_entry.event_id),
+                                cta_id,
                                 AxRole::Button,
                                 t("run.open_provider_settings"),
-                                AxRect::new(
-                                    rect.x + layout.next_step_x_inset(),
-                                    y + top,
-                                    (rect.width - layout.next_step_x_inset() - layout.pad_x)
-                                        .max(0.0),
-                                    SUMMARY_NEXT_STEP_BUTTON_HEIGHT,
-                                ),
+                                bounds,
                             )
                             .focused(
                                 self.open_menu.is_none()

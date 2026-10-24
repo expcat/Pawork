@@ -137,7 +137,7 @@ pub(super) fn tool_display_status<'a>(
     }
 }
 
-/// UI-3：消息间距 24px，工具组前 16px；独立终态页脚前 12px。
+/// UI-03：消息间距 32px；工具组与独立终态页脚沿用各自间距。
 pub(super) fn row_top_gap(row: &TimelineRow) -> f32 {
     match row {
         TimelineRow::Message { .. } | TimelineRow::Error { .. } | TimelineRow::RunPhase { .. } => {
@@ -172,7 +172,7 @@ fn message_entry_height(
         column_width
     };
     let header = if show_header {
-        default_text_line_height(font::BODY_SM.0 * rem_px).max(24.0) + metrics::MSG_LABEL_BODY_GAP
+        (font::META_LINE_HEIGHT.0 * rem_px).round().max(24.0) + metrics::MSG_LABEL_BODY_GAP
     } else {
         0.0
     };
@@ -180,23 +180,13 @@ fn message_entry_height(
     2.0 * vertical_inset + header + markdown_body_height(&measure, body_width, rem_px)
 }
 
-/// Markdown 正文体高：与 render 侧 message_body_element 的块高 + 段间距 +
-/// 代码块工具行补偿同源（用户 / 助手 / 错误消息与附件消息的文本段共用）。
+/// Markdown 的块字号 / 行高 / 代码头 / 列表间距直接由渲染模块提供。
 fn markdown_body_height(
     measure: &super::markdown::MessageMeasure,
     body_width: f32,
     rem_px: f32,
 ) -> f32 {
-    let body_font_px = font::BODY.0 * rem_px;
-    let body_line_height = (font::from_pixels(metrics::MSG_LINE_HEIGHT).0 * rem_px).round();
-    let blocks = measure.block_line_counts(body_width, body_font_px);
-    blocks
-        .iter()
-        .map(|lines| *lines as f32 * body_line_height)
-        .sum::<f32>()
-        + metrics::MSG_PARAGRAPH_GAP * blocks.len().saturating_sub(1) as f32
-        + measure.code_block_count() as f32
-            * (metrics::ICON_BUTTON_SIZE - body_line_height).max(0.0)
+    measure.height(body_width, rem_px)
 }
 
 /// 含附件用户消息的分段布局（RV-02）：渲染 / 测高 / AX 三处同源的单次
@@ -221,7 +211,7 @@ pub(super) fn user_segment_layouts(
 ) -> (f32, Vec<SegmentLayout>) {
     let body_width = (column_width - 2.0 * metrics::MSG_USER_INSET_X).max(0.0);
     let header =
-        default_text_line_height(font::BODY_SM.0 * rem_px).max(24.0) + metrics::MSG_LABEL_BODY_GAP;
+        (font::META_LINE_HEIGHT.0 * rem_px).round().max(24.0) + metrics::MSG_LABEL_BODY_GAP;
     let mut top = metrics::MSG_USER_INSET_Y + header;
     let mut layouts = Vec::new();
     let mut attachment_index = 0usize;
@@ -286,7 +276,7 @@ fn user_segmented_message_height(
 /// 思考展开区与渲染共用 12px 内边距和次级正文字号。
 pub(super) fn thinking_body_height(text: &str, width: f32, rem: f32) -> f32 {
     let font_px = font::BASE.0 * rem;
-    24.0 + default_text_line_height(font_px)
+    24.0 + (font::DESCRIPTION_LINE_HEIGHT.0 * rem).round()
         * estimated_wrapped_lines(text, (width - 24.0).max(0.0), font_px).max(1) as f32
 }
 
@@ -296,30 +286,9 @@ pub(super) fn thinking_body_height(text: &str, width: f32, rem: f32) -> f32 {
 /// 认证 CTA 为独立行，Review changes 仍在右侧不增高（只取 max 与按钮槽）。
 pub(super) struct RunSummaryCardLayout {
     pub height: f32,
-    pub pad_x: f32,
-    pub pad_y: f32,
-    pub gap: f32,
     pub title_row: f32,
     pub reason_height: f32,
     pub next_step: FailureNextStep,
-}
-
-impl RunSummaryCardLayout {
-    /// 认证 CTA 顶边相对卡片顶；无 CTA 为 None。
-    pub fn next_step_top(&self) -> Option<f32> {
-        if self.next_step != FailureNextStep::OpenProviderSettings {
-            return None;
-        }
-        let mut top = self.pad_y + self.title_row;
-        if self.reason_height > 0.0 {
-            top += self.gap + self.reason_height;
-        }
-        Some(top + self.gap)
-    }
-
-    pub fn next_step_x_inset(&self) -> f32 {
-        self.pad_x + SUMMARY_FAIL_ICON + self.gap
-    }
 }
 
 pub(super) fn run_summary_card_layout(
@@ -342,7 +311,7 @@ pub(super) fn run_summary_card_layout(
     let gap = SUMMARY_BANNER_GAP_REMS * rem_px;
     let (title_row, reason_height) = if failed {
         (
-            SUMMARY_FAIL_ICON.max(default_text_line_height(font::BODY_SM.0 * rem_px)),
+            SUMMARY_FAIL_ICON.max((font::DESCRIPTION_LINE_HEIGHT.0 * rem_px).round()),
             0.0,
         )
     } else {
@@ -354,10 +323,10 @@ pub(super) fn run_summary_card_layout(
         };
         let desc_width =
             (column_width - (pad_x * 2.0 + SUMMARY_STATUS_CIRCLE + gap + review_slot)).max(0.0);
-        let desc_font_px = font::BODY_SM.0 * rem_px;
+        let desc_font_px = font::DESCRIPTION.0 * rem_px;
         let desc_lines =
             estimated_wrapped_lines(&description, desc_width, desc_font_px).clamp(1, 2);
-        let reason_line_height = (font::from_pixels(metrics::MSG_LINE_HEIGHT).0 * rem_px).round();
+        let reason_line_height = (font::DESCRIPTION_LINE_HEIGHT.0 * rem_px).round();
         (title_row, desc_lines as f32 * reason_line_height)
     };
     let mut content = title_row;
@@ -371,10 +340,7 @@ pub(super) fn run_summary_card_layout(
         content = content.max(metrics::SUMMARY_BUTTON_HEIGHT);
     }
     RunSummaryCardLayout {
-        height: pad_y * 2.0 + content,
-        pad_x,
-        pad_y,
-        gap,
+        height: 2.0 + pad_y * 2.0 + content,
         title_row,
         reason_height,
         next_step,
@@ -585,11 +551,11 @@ pub(super) fn timeline_row_height(
                 );
                 height += metrics::TIMELINE_FOOTER_GAP;
             }
-            // 页脚行（BODY_SM 标签恒高于「···」按钮）。
-            height += default_text_line_height(font::BODY_SM.0 * rem_px);
+            // 终态页脚还包含 24px 消息菜单。
+            height += (font::META_LINE_HEIGHT.0 * rem_px).round().max(24.0);
             height
         }
-        TimelineRow::LiveRunMetrics => default_text_line_height(font::BODY_SM.0 * rem_px),
+        TimelineRow::LiveRunMetrics => (font::META_LINE_HEIGHT.0 * rem_px).round(),
     }
 }
 
@@ -706,6 +672,7 @@ impl AppView {
         let rem_px = f32::from(window.rem_size());
         let approval = self.projection.pending_approval.as_ref().map(|pending| {
             approval_card_height(
+                &pending.tool_name,
                 &pending.reason,
                 pending.detail.as_deref(),
                 column_width,
@@ -842,7 +809,8 @@ impl AppView {
                 .gap(px(metrics::SPACE_4))
                 .px(px(metrics::TIMELINE_CONTENT_INSET))
                 .pt(px(metrics::SPACE_6))
-                .pb(px(metrics::SPACE_8))
+                // Composer 自带 16px 顶部留白，两者合计 32px。
+                .pb(px(metrics::SPACE_8 - metrics::COMPOSER_OUTER_TOP))
                 .overflow_y_scroll()
                 .child(
                     div()
@@ -860,6 +828,7 @@ impl AppView {
                     self.shell_element("workspace-empty-title")
                         .flex_none()
                         .text_size(font::DISPLAY)
+                        .line_height(font::from_pixels(36.0))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_center()
                         .child(workspace_empty_title()),
@@ -1209,7 +1178,7 @@ mod tests {
         );
         assert_eq!(
             auth_layout.title_row,
-            SUMMARY_FAIL_ICON.max(default_text_line_height(font::BODY_SM.0 * rem))
+            SUMMARY_FAIL_ICON.max((font::DESCRIPTION_LINE_HEIGHT.0 * rem).round())
         );
         assert_eq!(auth_layout.reason_height, 0.0);
         assert!(auth_layout.title_row < 40.0);

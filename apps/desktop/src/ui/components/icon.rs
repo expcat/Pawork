@@ -50,6 +50,13 @@ pub enum Icon {
     Advanced,
     About,
     Project,
+    Plan,
+    Goal,
+    Recording,
+    Drawing,
+    Video,
+    Computer,
+    Browser,
 }
 
 impl Icon {
@@ -96,6 +103,13 @@ impl Icon {
             Self::Advanced => "icons/advanced.svg",
             Self::About => "icons/about.svg",
             Self::Project => "icons/project.svg",
+            Self::Plan => "icons/plan.svg",
+            Self::Goal => "icons/goal.svg",
+            Self::Recording => "icons/recording.svg",
+            Self::Drawing => "icons/drawing.svg",
+            Self::Video => "icons/video.svg",
+            Self::Computer => "icons/computer.svg",
+            Self::Browser => "icons/browser.svg",
         }
     }
 
@@ -141,6 +155,13 @@ impl Icon {
             Self::Advanced,
             Self::About,
             Self::Project,
+            Self::Plan,
+            Self::Goal,
+            Self::Recording,
+            Self::Drawing,
+            Self::Video,
+            Self::Computer,
+            Self::Browser,
         ]
     }
 }
@@ -153,7 +174,7 @@ pub fn icon(icon: Icon) -> Svg {
 }
 
 /// 指定边长（chip / 行内 16px，工具勾 14px 等）。
-/// 默认不染色：Svg 作为 alpha mask 时继承父级 `text_color`。
+/// 默认显式使用 text.primary；调用方可覆盖 alpha mask 的颜色。
 pub fn icon_sized(icon: Icon, size: impl Into<Pixels>) -> Svg {
     let size = size.into();
     svg()
@@ -216,6 +237,13 @@ fn icon_bytes(path: &str) -> Option<&'static [u8]> {
         "icons/advanced.svg" => include_bytes!("../../../assets/icons/advanced.svg").as_slice(),
         "icons/about.svg" => include_bytes!("../../../assets/icons/about.svg").as_slice(),
         "icons/project.svg" => include_bytes!("../../../assets/icons/project.svg").as_slice(),
+        "icons/plan.svg" => include_bytes!("../../../assets/icons/plan.svg").as_slice(),
+        "icons/goal.svg" => include_bytes!("../../../assets/icons/goal.svg").as_slice(),
+        "icons/recording.svg" => include_bytes!("../../../assets/icons/recording.svg").as_slice(),
+        "icons/drawing.svg" => include_bytes!("../../../assets/icons/drawing.svg").as_slice(),
+        "icons/video.svg" => include_bytes!("../../../assets/icons/video.svg").as_slice(),
+        "icons/computer.svg" => include_bytes!("../../../assets/icons/computer.svg").as_slice(),
+        "icons/browser.svg" => include_bytes!("../../../assets/icons/browser.svg").as_slice(),
         _ => return None,
     })
 }

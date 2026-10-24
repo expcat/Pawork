@@ -3,7 +3,7 @@
 //! diff_get 的 Host 响应；未拉取或失败时诚实显示 unavailable / 错误，不画
 //! 演示数据（docs/gui-design.md §8）。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use gpui::{div, point, prelude::*, px, Context, MouseDownEvent, ScrollHandle, SharedString};
 
@@ -181,6 +181,7 @@ pub(super) struct ChangesPanelState {
     pub stale_reason: Option<String>,
     pub list_scroll: ScrollHandle,
     pub diff_scroll: ScrollHandle,
+    pub layouts: HashMap<String, ScrollHandle>,
 }
 
 impl Default for ChangesPanelState {
@@ -198,6 +199,7 @@ impl Default for ChangesPanelState {
             stale_reason: None,
             list_scroll: ScrollHandle::new(),
             diff_scroll: ScrollHandle::new(),
+            layouts: HashMap::new(),
         }
     }
 }
@@ -350,7 +352,7 @@ impl ChangesPanelState {
         if file.binary || file.hunks.is_empty() {
             return false;
         }
-        let content_width = (diff_longest_line(file) as f32 + 12.0) * font::SM.0 * rem_px;
+        let content_width = (diff_longest_line(file) as f32 + 12.0) * font::BASE.0 * rem_px;
         content_width > metrics::INSPECTOR_WIDTH
     }
 
@@ -393,11 +395,44 @@ impl ChangesPanelState {
 
 impl AppView {
     /// Changes 页内容（二级页签 + Files / Summary）。
+    pub(super) fn changes_can_refresh(&self) -> bool {
+        matches!(
+            self.projection.connection,
+            crate::projection::ConnectionState::Connected { .. }
+        ) && self.inspector_workspace_id().is_some()
+            && self.changes.fetch != ChangesFetch::Fetching
+    }
+
+    pub(super) fn activate_changes_refresh(&mut self, cx: &mut Context<Self>) {
+        if self.changes_can_refresh() {
+            self.refresh_changes(cx);
+        }
+    }
+
     pub(super) fn changes_element(
-        &self,
+        &mut self,
         window: &gpui::Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let mut ids = vec![
+            "changes-header".to_string(),
+            "changes-tabs".into(),
+            "changes-tab-files".into(),
+            "changes-tab-summary".into(),
+            "changes-refresh".into(),
+            "changes-diff-scroll-left".into(),
+            "changes-diff-scroll-right".into(),
+        ];
+        ids.extend(
+            self.changes
+                .files
+                .iter()
+                .map(|file| format!("changes-file-{}", file.path)),
+        );
+        self.changes.layouts.retain(|id, _| ids.contains(id));
+        for id in ids {
+            self.changes.layouts.entry(id).or_default();
+        }
         self.note_diff_horizontal_measure(window, cx);
         let tab = self.changes.tab;
         let secondary_tab =
@@ -405,9 +440,10 @@ impl AppView {
                 div()
                     .id(id)
                     .debug_selector(|| id.to_string())
+                    .track_scroll(&self.changes.layouts[id])
                     .relative()
                     .w(px(metrics::CHANGES_TAB_WIDTH))
-                    .h(px(metrics::CHANGES_TAB_HEIGHT))
+                    .min_h(px(metrics::CHANGES_TAB_HEIGHT))
                     .flex_none()
                     .flex()
                     .items_center()
@@ -422,7 +458,8 @@ impl AppView {
                         self.changes_tab_focus[target as usize].is_focused(window),
                         |tab| tab.child(focus_ring(px(0.0))),
                     )
-                    .text_size(font::BODY_SM)
+                    .text_size(font::BASE)
+                    .line_height(font::CONTROL_LINE_HEIGHT)
                     .text_color(if current {
                         dark().text.primary
                     } else {
@@ -455,42 +492,64 @@ impl AppView {
                     }))
             };
         let header = div()
+            .id("changes-header")
+            .track_scroll(&self.changes.layouts["changes-header"])
             .flex()
             .flex_row()
             .items_center()
             .pl_3()
             .pr_2()
-            .h(px(metrics::CHANGES_TAB_HEIGHT))
+            .min_h(px(metrics::CHANGES_TAB_HEIGHT))
             .flex_none()
             .border_b_1()
             .border_color(dark().border.subtle)
-            .child(secondary_tab(
-                "changes-tab-files",
-                t("changes.files"),
-                tab == ChangesTab::Files,
-                ChangesTab::Files,
-            ))
-            .child(secondary_tab(
-                "changes-tab-summary",
-                t("changes.summary"),
-                tab == ChangesTab::Summary,
-                ChangesTab::Summary,
-            ))
+            .child(
+                div()
+                    .id("changes-tabs-layout")
+                    .flex()
+                    .track_scroll(&self.changes.layouts["changes-tabs"])
+                    .child(secondary_tab(
+                        "changes-tab-files",
+                        t("changes.files"),
+                        tab == ChangesTab::Files,
+                        ChangesTab::Files,
+                    ))
+                    .child(secondary_tab(
+                        "changes-tab-summary",
+                        t("changes.summary"),
+                        tab == ChangesTab::Summary,
+                        ChangesTab::Summary,
+                    )),
+            )
             .child(div().flex_1())
             .child(
-                Button::new("changes-refresh")
-                    .variant(ButtonVariant::Ghost)
-                    .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
-                    .text_color(dark().text.secondary)
-                    .child(icon_sized(Icon::Refresh, px(metrics::ICON_SM)))
-                    .tooltip(t("changes.tooltip_refresh"))
-                    .track_focus(&self.changes_refresh_focus)
-                    .on_click(cx.listener(|view, event, _window, cx| {
-                        if view.consume_button_key_click("changes-refresh", event) {
-                            return;
-                        }
-                        view.refresh_changes(cx);
-                    })),
+                div()
+                    .id("changes-refresh-layout")
+                    .flex_none()
+                    .track_scroll(&self.changes.layouts["changes-refresh"])
+                    .child(
+                        Button::new("changes-refresh")
+                            .variant(ButtonVariant::Ghost)
+                            .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
+                            .text_color(dark().text.secondary)
+                            .child(icon_sized(Icon::Refresh, px(metrics::ICON_SM)))
+                            .tooltip(t("changes.tooltip_refresh"))
+                            .track_focus(&self.changes_refresh_focus)
+                            .disabled(!self.changes_can_refresh())
+                            .on_click(cx.listener(|view, event, _window, cx| {
+                                if view.consume_button_key_click("changes-refresh", event) {
+                                    return;
+                                }
+                                view.activate_changes_refresh(cx);
+                            }))
+                            .on_activate(cx.listener(|view, _, _, cx| {
+                                if view.open_menu.is_none() {
+                                    view.note_button_key_activate("changes-refresh");
+                                    view.activate_changes_refresh(cx);
+                                    cx.stop_propagation();
+                                }
+                            })),
+                    ),
             );
         div()
             .flex()
@@ -520,11 +579,10 @@ impl AppView {
                         .py_1()
                         .border_b_1()
                         .border_color(dark().border.subtle)
-                        .text_size(font::XS)
+                        .text_size(font::DESCRIPTION)
+                        .line_height(font::DESCRIPTION_LINE_HEIGHT)
                         .text_color(dark().text.tertiary)
-                        .child(format!(
-                            "Showing changes for latest session {data_session} — not the active session."
-                        )),
+                        .child(t("changes.session_mismatch").replace("{}", &data_session)),
                 )
             })
             .child(match tab {
@@ -544,6 +602,9 @@ impl AppView {
 
     fn changes_files_element(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let body = match &self.changes.fetch {
+            _ if self.inspector_workspace_id().is_none() => {
+                changes_placeholder("changes.no_workspace").into_any_element()
+            }
             ChangesFetch::Idle => changes_placeholder("changes.unavailable").into_any_element(),
             ChangesFetch::Fetching if self.changes.files.is_empty() => {
                 changes_placeholder("changes.loading").into_any_element()
@@ -593,7 +654,8 @@ impl AppView {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .text_size(font::SM)
+                        .text_size(font::BASE)
+                        .line_height(font::CONTROL_LINE_HEIGHT)
                         .text_color(mark_color)
                         .child(mark),
                 )
@@ -601,7 +663,8 @@ impl AppView {
                     div().flex().flex_row().flex_1().min_w_0().child(
                         div()
                             .truncate()
-                            .text_size(font::SM)
+                            .text_size(font::BASE)
+                            .line_height(font::CONTROL_LINE_HEIGHT)
                             .text_color(dark().text.primary)
                             .child(path.clone()),
                     ),
@@ -613,7 +676,8 @@ impl AppView {
                         .flex()
                         .justify_end()
                         .gap_1()
-                        .text_size(font::SM)
+                        .text_size(font::BASE)
+                        .line_height(font::CONTROL_LINE_HEIGHT)
                         .child(
                             div()
                                 .text_color(dark().semantic.success_fg)
@@ -628,12 +692,19 @@ impl AppView {
             if let Some(focus) = focus {
                 row = row.track_focus(&focus);
             }
-            list = list.child(row.on_click(cx.listener(move |view, event, _window, cx| {
-                if view.consume_row_key_click(&path, event) {
-                    return;
-                }
-                view.on_select_diff_file(&path, cx);
-            })));
+            let layout_id = format!("changes-file-{}", file.path);
+            list = list.child(
+                div()
+                    .id(SharedString::from(format!("{layout_id}-layout")))
+                    .flex_none()
+                    .track_scroll(&self.changes.layouts[&layout_id])
+                    .child(row.on_click(cx.listener(move |view, event, _window, cx| {
+                        if view.consume_row_key_click(&path, event) {
+                            return;
+                        }
+                        view.on_select_diff_file(&path, cx);
+                    }))),
+            );
         }
         div()
             .flex()
@@ -657,7 +728,7 @@ impl AppView {
             DiffFetch::Ready(file) => {
                 let header = div()
                     .w_full()
-                    .h(px(metrics::DIFF_HEADER_HEIGHT))
+                    .min_h(px(metrics::DIFF_HEADER_HEIGHT))
                     .flex_none()
                     .flex()
                     .flex_row()
@@ -704,7 +775,8 @@ impl AppView {
                     .overflow_y_scroll()
                     .overflow_x_scroll()
                     .font_family(font::MONO)
-                    .text_size(font::SM);
+                    .text_size(font::BASE)
+                    .line_height(font::DESCRIPTION_LINE_HEIGHT);
                 if file.binary {
                     body = body.child(
                         div()
@@ -732,7 +804,7 @@ impl AppView {
                         .flex_col()
                         .flex_none()
                         .min_w_full()
-                        .w(gpui::Rems((longest_line as f32 + 12.0) * font::SM.0));
+                        .w(gpui::Rems((longest_line as f32 + 12.0) * font::BASE.0));
                     for hunk in &file.hunks {
                         let numbers = diff_hunk_line_numbers(&hunk.header, &hunk.lines);
                         content = content.child(
@@ -846,7 +918,7 @@ impl AppView {
             .justify_end()
             .gap_1()
             .px_2()
-            .h(px(metrics::DIFF_HEADER_HEIGHT))
+            .min_h(px(metrics::DIFF_HEADER_HEIGHT))
             .border_t_1()
             .border_color(dark().border.subtle)
             .child(self.diff_scroll_button(
@@ -879,22 +951,35 @@ impl AppView {
         direction: f32,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        Button::new(id)
-            .variant(ButtonVariant::Ghost)
-            .padding(ButtonPadding::None)
-            .width(px(metrics::ICON_BUTTON_SIZE))
-            .height(px(metrics::ICON_BUTTON_SIZE))
-            .center()
-            .disabled(!enabled)
-            .child(icon_sized(glyph, px(metrics::ICON_SM)))
-            .tooltip(t(label))
-            .track_focus(focus)
-            .on_click(cx.listener(move |view, event, _window, cx| {
-                if view.consume_button_key_click(id, event) {
-                    return;
-                }
-                view.scroll_diff_horizontal(direction, cx);
-            }))
+        div()
+            .id(SharedString::from(format!("{id}-layout")))
+            .flex_none()
+            .track_scroll(&self.changes.layouts[id])
+            .child(
+                Button::new(id)
+                    .variant(ButtonVariant::Ghost)
+                    .padding(ButtonPadding::None)
+                    .width(px(metrics::ICON_BUTTON_SIZE))
+                    .height(px(metrics::ICON_BUTTON_SIZE))
+                    .center()
+                    .disabled(!enabled)
+                    .child(icon_sized(glyph, px(metrics::ICON_SM)))
+                    .tooltip(t(label))
+                    .track_focus(focus)
+                    .on_click(cx.listener(move |view, event, _window, cx| {
+                        if view.consume_button_key_click(id, event) {
+                            return;
+                        }
+                        view.scroll_diff_horizontal(direction, cx);
+                    }))
+                    .on_activate(cx.listener(move |view, _, _, cx| {
+                        if view.open_menu.is_none() {
+                            view.note_button_key_activate(id);
+                            view.scroll_diff_horizontal(direction, cx);
+                            cx.stop_propagation();
+                        }
+                    })),
+            )
     }
 
     pub(super) fn scroll_diff_horizontal(&mut self, direction: f32, cx: &mut Context<Self>) {
@@ -911,6 +996,9 @@ impl AppView {
 
     fn changes_summary_element(&self) -> impl IntoElement {
         let body = match &self.changes.fetch {
+            _ if self.inspector_workspace_id().is_none() => {
+                changes_placeholder("changes.no_workspace").into_any_element()
+            }
             ChangesFetch::Idle => changes_placeholder("changes.unavailable").into_any_element(),
             ChangesFetch::Fetching if self.changes.files.is_empty() => {
                 changes_placeholder("changes.loading").into_any_element()
@@ -949,7 +1037,8 @@ impl AppView {
                     .flex_col()
                     .gap_2()
                     .p_2()
-                    .text_size(font::SM)
+                    .text_size(font::BASE)
+                    .line_height(font::CONTROL_LINE_HEIGHT)
                     .child(summary_row(t("changes.session"), session))
                     .child(summary_row(t("changes.files"), files.to_string()))
                     .child(summary_row(
@@ -1279,6 +1368,7 @@ fn changes_placeholder(key: &'static str) -> EmptyState {
         "changes.unavailable" => t("changes.unavailable_desc"),
         "changes.loading" => t("changes.loading_desc"),
         "changes.no_active_session" => t("changes.no_active_session_desc"),
+        "changes.no_workspace" => t("changes.no_workspace_desc"),
         "changes.no_latest_result" => t("changes.no_latest_result_desc"),
         "changes.empty" => t("changes.empty_desc"),
         "changes.diff_select_file" => t("changes.diff_select_file_desc"),
@@ -1290,7 +1380,8 @@ fn changes_placeholder(key: &'static str) -> EmptyState {
         t(key).to_string(),
         description.to_string(),
         dark().text.primary,
-    );
+    )
+    .top_aligned();
     if key == "changes.loading" || key == "changes.diff_loading" {
         placeholder = placeholder.child(loading_skeleton(format!("{key}-skeleton")));
     }
@@ -1299,21 +1390,26 @@ fn changes_placeholder(key: &'static str) -> EmptyState {
 
 /// 失败占位：标题本地化；reason 为 wire 数据，不翻译。
 fn changes_placeholder_colored(text: impl Into<String>, color: gpui::Rgba) -> EmptyState {
-    EmptyState::labeled(Icon::Changes, t("changes.error_title"), text.into(), color)
+    EmptyState::labeled(Icon::Changes, t("changes.error_title"), text.into(), color).top_aligned()
 }
 
 fn summary_row(label: &str, value: String) -> impl IntoElement {
     div()
         .flex()
         .flex_row()
+        .flex_none()
+        .items_start()
         .gap_2()
         .child(
             div()
-                .w(px(metrics::SUMMARY_LABEL_WIDTH))
+                .w(gpui::rems(
+                    metrics::SUMMARY_LABEL_WIDTH / font::BASE_REM_PIXELS,
+                ))
+                .flex_none()
                 .text_color(dark().text.secondary)
                 .child(label.to_string()),
         )
-        .child(div().min_w_0().child(value))
+        .child(div().flex_1().min_w_0().child(value))
 }
 
 fn diff_number_gutter(n: Option<u32>, bg: gpui::Rgba) -> impl IntoElement {
@@ -1326,7 +1422,8 @@ fn diff_number_gutter(n: Option<u32>, bg: gpui::Rgba) -> impl IntoElement {
         .py_1()
         .bg(bg)
         .font_family(font::MONO)
-        .text_size(font::SM)
+        .text_size(font::BASE)
+        .line_height(font::DESCRIPTION_LINE_HEIGHT)
         .text_color(dark().diff.gutter_fg)
         .child(format_line_no(n))
 }

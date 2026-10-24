@@ -16,7 +16,8 @@ use super::i18n::t;
 use super::theme::{dark, font, metrics};
 use super::AppView;
 
-/// 代码复制走 SVG；命中区与 Header 图标按钮同为 36×36。
+/// 代码头与复制动作共用 32px 槽；代码正文独立使用 14/22。
+const CODE_HEADER_HEIGHT: f32 = metrics::ICON_BUTTON_MIN_SIZE;
 const TABLE_CELL_PAD_X: f32 = 6.0;
 const LINK_LABEL_URL_CHARS: usize = 32;
 
@@ -59,6 +60,30 @@ struct Block {
 }
 
 impl Block {
+    fn font_size(&self) -> gpui::Rems {
+        match self.kind {
+            BlockKind::Code => font::BASE,
+            BlockKind::Heading => font::HEADER_TITLE,
+            _ => font::BODY,
+        }
+    }
+
+    fn line_height(&self) -> gpui::Rems {
+        if self.kind == BlockKind::Code {
+            font::DESCRIPTION_LINE_HEIGHT
+        } else {
+            font::from_pixels(metrics::MSG_LINE_HEIGHT)
+        }
+    }
+
+    fn line_gap(&self) -> f32 {
+        if self.kind == BlockKind::List {
+            metrics::SPACE_1
+        } else {
+            0.0
+        }
+    }
+
     fn inset(&self) -> f32 {
         match self.kind {
             BlockKind::Code => 24.0,
@@ -312,7 +337,45 @@ pub(super) fn source_actions(text: &str) -> Vec<MessageAction> {
     actions
 }
 
-pub(super) fn source_text_element(id: String, text: String, color: Rgba) -> gpui::AnyElement {
+fn source_line_style(line: &str) -> (gpui::Rems, gpui::Rems) {
+    if http_url(line.trim()) && !line.trim().contains(char::is_whitespace) {
+        (font::META, font::META_LINE_HEIGHT)
+    } else {
+        (font::BASE, font::DESCRIPTION_LINE_HEIGHT)
+    }
+}
+
+/// 工具原文与来源 URL 共用同一分行、字号和行高，供首帧测高。
+pub(super) fn source_text_height(text: &str, width: f32, rem: f32) -> f32 {
+    text.lines()
+        .map(|line| {
+            let (size, line_height) = source_line_style(line);
+            super::timeline_entry::estimated_wrapped_lines(line, width, size.0 * rem).max(1) as f32
+                * (line_height.0 * rem).round()
+        })
+        .sum()
+}
+
+pub(super) fn source_text_element(id: String, text: String, color: Rgba) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .children(text.lines().enumerate().map(|(index, line)| {
+            let (size, line_height) = source_line_style(line);
+            div()
+                .text_size(size)
+                .line_height(line_height)
+                .font_family(font::MONO)
+                .min_h(line_height)
+                .child(source_line_element(
+                    format!("{id}-{index}"),
+                    line.to_owned(),
+                    color,
+                ))
+        }))
+}
+
+fn source_line_element(id: String, text: String, color: Rgba) -> gpui::AnyElement {
     let links = source_links(&text);
     if links.is_empty() {
         return text.into_any_element();
@@ -326,7 +389,7 @@ pub(super) fn source_text_element(id: String, text: String, color: Rgba) -> gpui
             }
             runs.push(TextRun {
                 len,
-                font: gpui::font("monospace"),
+                font: gpui::font(font::MONO),
                 color: color.into(),
                 background_color: None,
                 strikethrough: None,
@@ -342,7 +405,7 @@ pub(super) fn source_text_element(id: String, text: String, color: Rgba) -> gpui
     if start < text.len() {
         runs.push(TextRun {
             len: text.len() - start,
-            font: gpui::font("monospace"),
+            font: gpui::font(font::MONO),
             color: color.into(),
             background_color: None,
             underline: None,
@@ -467,19 +530,13 @@ impl MessageMeasure {
             .any(|block| matches!(block.kind, BlockKind::Code | BlockKind::Table))
     }
 
-    pub(super) fn code_block_count(&self) -> usize {
-        self.blocks
-            .iter()
-            .filter(|block| block.kind == BlockKind::Code)
-            .count()
-    }
-
     /// 仍是平均字宽 0.6 × 字号的近似；按渲染可见文本与引用/代码缩进估算。
-    /// 代码头按 ICON_BUTTON_SIZE 计入一行（timeline 测高再补像素差）；表格按内容列宽不折行。
-    pub(super) fn block_line_counts(&self, width_px: f32, font_px: f32) -> Vec<usize> {
+    /// 代码头计入一行，height 补其像素差；表格按内容列宽不折行。
+    fn block_line_counts(&self, width_px: f32, rem_px: f32) -> Vec<usize> {
         self.blocks
             .iter()
             .map(|block| {
+                let font_px = block.font_size().0 * rem_px;
                 let chars_per_line = (((width_px - block.inset()).max(1.0) / (font_px * 0.6))
                     .floor() as usize)
                     .max(1);
@@ -503,6 +560,29 @@ impl MessageMeasure {
                         .sum::<usize>()
             })
             .collect()
+    }
+
+    pub(super) fn height(&self, width_px: f32, rem_px: f32) -> f32 {
+        self.blocks
+            .iter()
+            .zip(self.block_line_counts(width_px, rem_px))
+            .map(|(block, lines)| {
+                let line_height = (block.line_height().0 * rem_px).round();
+                lines as f32 * line_height
+                    + if block.kind == BlockKind::Code {
+                        CODE_HEADER_HEIGHT - line_height
+                    } else {
+                        0.0
+                    }
+                    + if block.kind == BlockKind::Table {
+                        block.table.len() as f32
+                    } else {
+                        0.0
+                    }
+                    + block.line_gap() * block.lines.len().saturating_sub(1) as f32
+            })
+            .sum::<f32>()
+            + metrics::MSG_PARAGRAPH_GAP * self.blocks.len().saturating_sub(1) as f32
     }
 }
 
@@ -632,24 +712,22 @@ fn copy_code_button(
             Button::new(SharedString::from(identifier.clone()))
                 .variant(ButtonVariant::Ghost)
                 .padding(ButtonPadding::None)
-                .width(px(metrics::ICON_BUTTON_SIZE))
-                .height(px(metrics::ICON_BUTTON_SIZE))
+                .width(px(CODE_HEADER_HEIGHT))
+                .height(px(CODE_HEADER_HEIGHT))
                 .center()
                 .vcenter()
                 .text_color(dark().text.secondary)
                 .child(icon(Icon::Copy))
                 .tooltip(t("timeline.copy_code"))
                 .track_focus(&focus)
-                .on_click(move |_, _, cx| {
+                .on_click(cx.listener(move |view, _, _, cx| {
                     cx.stop_propagation();
-                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(click_content.clone()));
-                })
-                .on_activate(move |_, _, cx| {
+                    view.copy_timeline_text(click_content.clone(), cx);
+                }))
+                .on_activate(cx.listener(move |view, _, _, cx| {
                     cx.stop_propagation();
-                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                        activate_content.clone(),
-                    ));
-                }),
+                    view.copy_timeline_text(activate_content.clone(), cx);
+                })),
         )
 }
 
@@ -880,7 +958,11 @@ pub(super) fn message_body_element(
     let blocks = parse_cached(text);
     let last_block = blocks.len().saturating_sub(1);
     for (index, block) in blocks.iter().enumerate() {
-        let mut element = div().flex().flex_col();
+        let mut element = div()
+            .flex()
+            .flex_col()
+            .text_size(block.font_size())
+            .line_height(block.line_height());
         if block.kind == BlockKind::Code {
             let language_label = block
                 .language
@@ -898,10 +980,11 @@ pub(super) fn message_body_element(
                         .flex()
                         .flex_row()
                         .items_center()
-                        .h(px(metrics::ICON_BUTTON_SIZE))
+                        .h(px(CODE_HEADER_HEIGHT))
                         .child(div().flex().flex_row().flex_1().min_w_0().child({
                             let label = div()
                                 .text_size(font::BODY_SM)
+                                .line_height(font::META_LINE_HEIGHT)
                                 .text_color(dark().text.secondary)
                                 .truncate();
                             #[cfg(test)]
@@ -1010,7 +1093,7 @@ pub(super) fn message_body_element(
                     .text_system()
                     .shape_line(
                         text.into(),
-                        font::BODY.to_pixels(window.rem_size()),
+                        block.font_size().to_pixels(window.rem_size()),
                         &[run],
                         None,
                     )
@@ -1018,8 +1101,8 @@ pub(super) fn message_body_element(
             } else {
                 px(0.)
             };
-            let mut line_row = div()
-                .min_h(font::from_pixels(metrics::MSG_LINE_HEIGHT))
+            let line_row = div()
+                .min_h(block.line_height())
                 .when(block.kind == BlockKind::Code, |line| {
                     line.whitespace_nowrap().min_w(code_width)
                 })
@@ -1035,9 +1118,16 @@ pub(super) fn message_body_element(
                     block.kind,
                     color,
                 ));
-            if attach_caret && line_index == last_line {
-                line_row = line_row.child(streaming_caret(color));
-            }
+            #[cfg(test)]
+            let line_row = line_row.debug_selector({
+                let key = format!("{entry_id}-md-{index}-{line_index}");
+                move || key
+            });
+            let line_row = if attach_caret && line_index == last_line {
+                line_row.child(streaming_caret(color))
+            } else {
+                line_row
+            };
             line_rows.push(line_row.into_any_element());
         }
         element = if block.kind == BlockKind::Code {
@@ -1056,7 +1146,7 @@ pub(super) fn message_body_element(
         } else if block.kind == BlockKind::Table {
             element.w_full().min_w_0()
         } else {
-            let mut lines = div().flex().flex_col();
+            let mut lines = div().flex().flex_col().gap(px(block.line_gap()));
             for row in line_rows {
                 lines = lines.child(row);
             }
@@ -1125,7 +1215,7 @@ mod tests {
         assert_eq!(blocks[4].lines[0][0].text, "let x = **raw**;");
         assert_eq!(blocks[4].language.as_deref(), Some("rust"));
         assert_eq!(
-            MessageMeasure::new(text).block_line_counts(600.0, 14.0),
+            MessageMeasure::new(text).block_line_counts(600.0, 16.0),
             [1, 1, 2, 1, 3]
         );
         assert_eq!(parse("```\nlet x = 1;\n```")[0].language, None);
@@ -1164,7 +1254,7 @@ mod tests {
         assert!(!actions[4].open);
         assert!(actions[4].label.contains("other.test"));
         assert_eq!(
-            MessageMeasure::new(text).block_line_counts(900.0, 14.0),
+            MessageMeasure::new(text).block_line_counts(900.0, 16.0),
             [2, 3, 1]
         );
         let url = "https://en.wikipedia.org/wiki/Function_(mathematics)";

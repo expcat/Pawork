@@ -19,6 +19,7 @@ impl AppView {
             .track_scroll(&self.settings_scale_layout)
             .flex()
             .flex_row()
+            .flex_wrap()
             .items_center()
             .gap(px(SETTINGS_APPEARANCE_CONTROL_GAP))
             .min_w_0();
@@ -40,18 +41,30 @@ impl AppView {
             let button = Button::new(id)
                 .track_focus(&focus)
                 .variant(if selected {
-                    ButtonVariant::Primary
-                } else {
                     ButtonVariant::Raised
+                } else {
+                    ButtonVariant::Ghost
                 })
                 .height(px(SETTINGS_APPEARANCE_CONTROL_HEIGHT))
                 .width(px(SETTINGS_APPEARANCE_CONTROL_WIDTH))
-                .padding(ButtonPadding::Wide)
+                .padding(ButtonPadding::None)
                 .center()
                 .radius(6.0)
                 .bordered()
                 .text_size(font::BASE)
-                .label(format!("{}%", scale.percent()))
+                .child(
+                    div()
+                        .font_weight(if selected {
+                            FontWeight::MEDIUM
+                        } else {
+                            FontWeight::NORMAL
+                        })
+                        .child(format!(
+                            "{}{}%",
+                            if selected { "✓ " } else { "" },
+                            scale.percent()
+                        )),
+                )
                 .tooltip(tooltip)
                 .on_click(cx.listener(move |view, event, window, cx| {
                     if view.consume_button_key_click(id, event) {
@@ -72,6 +85,7 @@ impl AppView {
             .track_scroll(&self.settings_language_layout)
             .flex()
             .flex_row()
+            .flex_wrap()
             .items_center()
             .gap(px(SETTINGS_APPEARANCE_CONTROL_GAP))
             .min_w_0();
@@ -92,18 +106,30 @@ impl AppView {
             let button = Button::new(id)
                 .track_focus(&focus)
                 .variant(if selected {
-                    ButtonVariant::Primary
-                } else {
                     ButtonVariant::Raised
+                } else {
+                    ButtonVariant::Ghost
                 })
                 .height(px(SETTINGS_APPEARANCE_CONTROL_HEIGHT))
                 .width(px(SETTINGS_APPEARANCE_CONTROL_WIDTH))
-                .padding(ButtonPadding::Wide)
+                .padding(ButtonPadding::None)
                 .center()
                 .radius(6.0)
                 .bordered()
                 .text_size(font::BASE)
-                .label(language.display_name())
+                .child(
+                    div()
+                        .font_weight(if selected {
+                            FontWeight::MEDIUM
+                        } else {
+                            FontWeight::NORMAL
+                        })
+                        .child(format!(
+                            "{}{}",
+                            if selected { "✓ " } else { "" },
+                            language.display_name()
+                        )),
+                )
                 .tooltip(tooltip)
                 .on_click(cx.listener(move |view, event, _window, cx| {
                     if view.consume_button_key_click(id, event) {
@@ -170,12 +196,14 @@ impl AppView {
                             .flex()
                             .flex_col()
                             .gap_3()
+                            .max_w(px(840.0))
                             .p_4()
                             .rounded(px(8.0))
                             .bg(dark().surface.raised)
                             .child(
                                 div()
                                     .text_size(font::PAGE_TITLE)
+                                    .line_height(font::from_pixels(32.0))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(dark().text.primary)
                                     .child(t("settings.appearance.sample_heading")),
@@ -189,16 +217,23 @@ impl AppView {
                             )
                             .child(
                                 div()
-                                    .text_size(font::BASE)
-                                    .line_height(gpui::rems(1.4))
+                                    .text_size(font::DESCRIPTION)
+                                    .line_height(font::DESCRIPTION_LINE_HEIGHT)
                                     .text_color(dark().text.secondary)
                                     .child(t("settings.appearance.sample_sub")),
                             )
                             .child(
                                 div()
+                                    .text_size(font::META)
+                                    .line_height(font::META_LINE_HEIGHT)
+                                    .text_color(dark().text.tertiary)
+                                    .child(t("settings.appearance.sample_meta")),
+                            )
+                            .child(
+                                div()
                                     .font_family(font::MONO)
-                                    .text_size(font::BODY)
-                                    .line_height(font::from_pixels(metrics::MSG_LINE_HEIGHT))
+                                    .text_size(font::BASE)
+                                    .line_height(font::DESCRIPTION_LINE_HEIGHT)
                                     .text_color(dark().text.primary)
                                     .child(t("settings.appearance.sample_code")),
                             ),

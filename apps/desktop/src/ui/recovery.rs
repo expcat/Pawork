@@ -139,16 +139,25 @@ impl AppView {
         self.recovery_element("connection-notice")
             .flex_none()
             .p_4()
-            .child(div().text_size(font::TITLE).child(title))
+            .child(
+                div()
+                    .text_size(font::BODY)
+                    .line_height(font::SECTION_LINE_HEIGHT)
+                    .child(title),
+            )
             .when(
                 self.connection_attempts > 1
                     && matches!(self.projection.connection, ConnectionState::Failed { .. }),
                 |area| {
                     area.child(
-                        div().mt_2().text_size(font::SM).child(
-                            t("recovery.attempt_failed")
-                                .replace("{}", &self.connection_attempts.to_string()),
-                        ),
+                        div()
+                            .mt_2()
+                            .text_size(font::META)
+                            .line_height(font::META_LINE_HEIGHT)
+                            .child(
+                                t("recovery.attempt_failed")
+                                    .replace("{}", &self.connection_attempts.to_string()),
+                            ),
                     )
                 },
             )
@@ -156,7 +165,8 @@ impl AppView {
                 div()
                     .mt_2()
                     .whitespace_normal()
-                    .text_size(font::BODY)
+                    .text_size(font::DESCRIPTION)
+                    .line_height(font::DESCRIPTION_LINE_HEIGHT)
                     .child(help),
             )
             .when_some(self.connection_error_detail(), |area, reason| {
@@ -164,7 +174,8 @@ impl AppView {
                     div()
                         .mt_2()
                         .whitespace_normal()
-                        .text_size(font::SM)
+                        .text_size(font::DESCRIPTION)
+                        .line_height(font::DESCRIPTION_LINE_HEIGHT)
                         .text_color(dark().text.secondary)
                         .child(reason.to_string()),
                 )
@@ -255,6 +266,12 @@ impl AppView {
                 .into(),
             );
         }
+        match terminal.runtime_state.as_deref() {
+            Some("exited") => return Some(t("recovery.terminal_exited").into()),
+            Some("killed") => return Some(t("recovery.terminal_stopped").into()),
+            Some("failed") => return Some(t("recovery.terminal_exit_failed").into()),
+            _ => {}
+        }
         if terminal.session_id.is_none() || terminal_can_reopen(terminal) {
             if self.terminal_read_only() {
                 return Some(t("recovery.terminal_read_only").into());
@@ -271,7 +288,8 @@ impl AppView {
         self.recovery_element("terminal-notice")
             .flex_none()
             .p_3()
-            .text_size(font::SM)
+            .text_size(font::DESCRIPTION)
+            .line_height(font::DESCRIPTION_LINE_HEIGHT)
             .child(
                 div()
                     .whitespace_normal()

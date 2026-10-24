@@ -18,6 +18,7 @@ pub struct EmptyState {
     gap: Pixels,
     pad_x: Pixels,
     pad_y: Pixels,
+    top_aligned: bool,
     children: Vec<AnyElement>,
 }
 
@@ -29,6 +30,7 @@ impl EmptyState {
             gap: px(metrics::SPACE_2),
             pad_x: px(metrics::SPACE_6),
             pad_y: px(metrics::SPACE_6),
+            top_aligned: false,
             children: Vec::new(),
         }
     }
@@ -42,16 +44,27 @@ impl EmptyState {
         Self::new()
             .icon(icon)
             .icon_size(px(metrics::ICON_SIZE))
-            .child(Label::new(title).size(font::BASE).color(title_color))
+            .child(
+                Label::new(title)
+                    .size(font::BODY)
+                    .line_height(font::SECTION_LINE_HEIGHT)
+                    .color(title_color),
+            )
             .child(
                 Label::new(description)
-                    .size(font::SM)
+                    .size(font::DESCRIPTION)
+                    .line_height(font::DESCRIPTION_LINE_HEIGHT)
                     .color(dark().text.secondary),
             )
     }
 
     pub fn icon(mut self, icon: Icon) -> Self {
         self.icon = Some(icon);
+        self
+    }
+
+    pub fn top_aligned(mut self) -> Self {
+        self.top_aligned = true;
         self
     }
 
@@ -80,7 +93,7 @@ impl RenderOnce for EmptyState {
             .flex_1()
             .min_h_0()
             .items_center()
-            .justify_center()
+            .when(!self.top_aligned, |root| root.justify_center())
             .gap(self.gap)
             .px(self.pad_x)
             .py(self.pad_y);
@@ -101,7 +114,8 @@ pub fn stale_notice(reason: impl AsRef<str>) -> gpui::Div {
         .py_1()
         .border_b_1()
         .border_color(dark().semantic.warning_text)
-        .text_size(font::XS)
+        .text_size(font::DESCRIPTION)
+        .line_height(font::DESCRIPTION_LINE_HEIGHT)
         .text_color(dark().semantic.warning_text)
         .child(format!("{} · {reason}", t("common.stale_data")))
 }

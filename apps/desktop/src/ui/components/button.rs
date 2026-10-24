@@ -26,7 +26,7 @@ pub enum ButtonVariant {
     Success,
     /// surface.raised 控件面；hover → surface.hover。
     Raised,
-    /// 32×32 圆形图标按钮（Composer Send / Cancel 同槽）。颜色映射与
+    /// 圆形图标按钮（Composer Send / Cancel 同槽，现行调用为 36×36）。颜色映射与
     /// Primary / Danger 相同，尺寸由 `icon_circle` builder 钉死，不改默认档。
     IconCircle,
 }
@@ -150,6 +150,7 @@ impl Button {
         self
     }
 
+    /// 最小高度；内容可以撑高，焦点描边不参与测量。
     pub fn height(mut self, height: Pixels) -> Self {
         self.height = Some(height);
         self
@@ -185,7 +186,7 @@ impl Button {
         self
     }
 
-    /// Composer 动作槽：32×32 圆形图标按钮。不改默认 padding / radius，
+    /// Composer 圆形动作槽（调用方传入边长）。不改默认 padding / radius，
     /// Rail / 审批按钮不得走此入口。
     pub fn icon_circle(mut self, size: f32) -> Self {
         if matches!(self.variant, ButtonVariant::Primary) {
@@ -306,7 +307,28 @@ impl RenderOnce for Button {
         // debug_bounds 只索引 debug_selector，不索引 element id。
         // release 构建里该方法是空操作。
         let selector = self.id.to_string();
-        let mut button = div().id(self.id).debug_selector(|| selector);
+        let text_size = self.text_size.unwrap_or(font::BASE);
+        let icon_only = self.label.is_none();
+        let min_height = self.height.unwrap_or(px(if icon_only {
+            metrics::ICON_BUTTON_MIN_SIZE
+        } else {
+            metrics::BUTTON_MIN_HEIGHT
+        }));
+        let mut button = div()
+            .id(self.id)
+            .debug_selector(|| selector)
+            .min_h(min_height)
+            .flex_shrink_0()
+            .flex()
+            .items_center();
+        if icon_only && self.width.is_none() {
+            button = button.min_w(px(metrics::ICON_BUTTON_MIN_SIZE));
+        }
+        // 显式尺寸控件把留白交给居中布局，放大文字不再被固定盒裁切。
+        // 不指定尺寸的文字按钮保留上下内边距并由内容撑高。
+        if !self.vcenter {
+            button = button.justify_center();
+        }
         if self.center {
             button = button.flex().items_center().justify_center();
         }
@@ -325,7 +347,9 @@ impl RenderOnce for Button {
         if let Some(color) = text_color {
             button = button.text_color(color);
         }
-        button = button.text_size(self.text_size.unwrap_or(font::BASE));
+        button = button
+            .text_size(text_size)
+            .line_height(font::control_line_height(text_size));
         // 聚焦描边覆盖层圆角与外壳 rounded 同源（IconCircle / circle 的
         // radius 由 icon_circle 钉死为 size/2）。
         let ring_radius = match self.radius {
@@ -344,15 +368,12 @@ impl RenderOnce for Button {
         }
         button = match self.padding {
             ButtonPadding::None => button,
-            ButtonPadding::Normal => button.px_2().py_1(),
-            ButtonPadding::Wide => button.px_3().py_1(),
+            ButtonPadding::Normal => button.px_2().when(self.height.is_none(), |b| b.py_1()),
+            ButtonPadding::Wide => button.px_3().when(self.height.is_none(), |b| b.py_1()),
             ButtonPadding::Horizontal(x) => button.px(px(x)),
         };
         if let Some(width) = self.width {
             button = button.w(width);
-        }
-        if let Some(height) = self.height {
-            button = button.h(height);
         }
         if let Some(max_width) = self.max_width {
             // 只钳上限，不设 min_w_0：否则内容测宽为 0，可用空间会把触发器
@@ -403,5 +424,64 @@ impl RenderOnce for Button {
             });
         }
         button
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{Context, Render};
+
+    #[gpui::test]
+    fn content_height_and_focus_share_button_geometry(cx: &mut gpui::TestAppContext) {
+        struct Host(FocusHandle);
+        impl Render for Host {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .child(
+                        Button::new("text-button")
+                            .label("Apply 应用")
+                            .track_focus(&self.0),
+                    )
+                    .child(
+                        Button::new("icon-button")
+                            .padding(ButtonPadding::None)
+                            .child(crate::ui::components::icon::icon_sized(
+                                crate::ui::components::icon::Icon::Refresh,
+                                px(metrics::ICON_SM),
+                            )),
+                    )
+            }
+        }
+        let (host, cx) = cx.add_window_view(|_, cx| Host(cx.focus_handle()));
+        for scale in [font::TextScale::Percent100, font::TextScale::Percent150] {
+            cx.update(|window, cx| {
+                window.set_rem_size(px(scale.rem_pixels()));
+                host.update(cx, |_, cx| cx.notify());
+            });
+            cx.refresh().unwrap();
+            cx.run_until_parked();
+            let before = cx.debug_bounds("text-button").unwrap();
+            assert!(before.size.height >= px(36.0));
+            if scale == font::TextScale::Percent150 {
+                assert!(
+                    before.size.height > px(36.0),
+                    "large text must grow its button: {before:?}"
+                );
+            }
+            let icon = cx.debug_bounds("icon-button").unwrap();
+            assert!(icon.size.width >= px(32.0) && icon.size.height >= px(32.0));
+            cx.update(|window, cx| {
+                window.focus(&host.read(cx).0);
+                crate::ui::components::focus_ring::set_keyboard_focus(true, window, cx);
+            });
+            cx.refresh().unwrap();
+            cx.run_until_parked();
+            assert_eq!(before, cx.debug_bounds("text-button").unwrap());
+            cx.update(|window, _| window.blur());
+        }
     }
 }

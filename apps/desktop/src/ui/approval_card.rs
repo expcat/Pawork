@@ -5,56 +5,60 @@ use gpui::{div, prelude::*, px, Context, SharedString};
 
 use crate::ui::components::button::{Button, ButtonVariant};
 use crate::ui::i18n::t;
-use crate::ui::theme::{dark, font};
-use crate::ui::timeline_entry::{default_text_line_height, estimated_wrapped_lines};
+use crate::ui::theme::{dark, font, metrics};
+use crate::ui::timeline_entry::estimated_wrapped_lines;
 
 use super::AppView;
 
-/// 审批卡几何（render 与 AX 同源，P4 片 3）：p_2 内边距 + 标题 / reason
-/// （SM 默认行高）+ 可选 detail（XS 默认行高）+ 32px 按钮行；文本换行按
-/// 公式化估算（gpui 实际按像素 wrap）。
+/// 首帧测高使用与 render 相同的 14/22 文本、间距和按钮高度；稳定帧 AX
+/// 读取卡片和按钮实测框，不估算翻译后的按钮宽度。
 pub(crate) const APPROVAL_CARD_PAD_REMS: f32 = 0.5;
-pub(crate) const APPROVAL_BUTTON_ROW_GAP_REMS: f32 = 0.5;
-pub(crate) const APPROVAL_BUTTON_HEIGHT: f32 = 32.0;
-/// AX 按钮槽宽（顺序 once / for-run / deny）：按钮实际宽随文案与字号档
-/// 缩放，此处为冻结估计槽，保证顺序排布与 gap_2 间距可公式化。
-pub(crate) const APPROVAL_BUTTON_SLOT_WIDTHS: [f32; 3] = [104.0, 116.0, 72.0];
+pub(crate) const APPROVAL_BUTTON_HEIGHT: f32 = metrics::BUTTON_MIN_HEIGHT;
 
 /// 审批卡内容高度公式（AX 卡 rect 与 render 布局同源；行数按估算）。
 pub(crate) fn approval_card_height(
+    tool_name: &str,
     reason: &str,
     detail: Option<&str>,
     card_width: f32,
     rem_px: f32,
 ) -> f32 {
     let pad = APPROVAL_CARD_PAD_REMS * rem_px;
-    let sm_px = font::SM.0 * rem_px;
-    let xs_px = font::XS.0 * rem_px;
-    let inner_width = (card_width - pad * 2.0).max(0.0);
-    let sm_line = default_text_line_height(sm_px);
-    let reason_lines = estimated_wrapped_lines(reason, inner_width, sm_px).max(1);
+    let font_px = font::DESCRIPTION.0 * rem_px;
+    let inner_width = (card_width - pad * 2.0 - 1.0).max(0.0);
+    let line_height = (font::DESCRIPTION_LINE_HEIGHT.0 * rem_px).round();
+    let title = t("approval.title").replace("{}", tool_name);
+    let title_lines = estimated_wrapped_lines(&title, inner_width, font_px).max(1);
+    let reason_lines = estimated_wrapped_lines(reason, inner_width, font_px).max(1);
     let detail_lines = detail
         .filter(|detail| !detail.is_empty())
-        .map(|detail| estimated_wrapped_lines(detail, inner_width, xs_px).max(1))
+        .map(|detail| estimated_wrapped_lines(detail, inner_width, font_px).max(1))
         .unwrap_or(0);
     pad * 2.0
-        + sm_line
-        + sm_line * reason_lines as f32
-        + default_text_line_height(xs_px) * detail_lines as f32
+        + line_height * (title_lines + reason_lines + detail_lines) as f32
+        + pad * if detail_lines > 0 { 3.0 } else { 2.0 }
         + APPROVAL_BUTTON_HEIGHT
 }
 
 impl AppView {
     /// 审批卡作为 timeline list 的末项渲染；仅在 pending 存在时挂载。
     /// 按钮 focus handle 为 app 级状态，条目虚拟化卸载不丢失。
-    pub(super) fn approval_card_element(&self, cx: &mut Context<Self>) -> gpui::Div {
+    pub(super) fn approval_card_element(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
         let pending = self
             .projection
             .pending_approval
             .as_ref()
-            .expect("approval card renders only while pending approval exists");
+            .expect("approval card renders only while pending approval exists")
+            .clone();
         let can_approve = self.can_approve();
-        let mut card = div()
+        let mut card = self
+            .settings_element("approval-card")
+            .flex()
+            .flex_col()
+            .gap_2()
             .p_2()
             .rounded_md()
             .border_l_1()
@@ -62,13 +66,16 @@ impl AppView {
             .bg(dark().semantic.warning_bg)
             .child(
                 div()
-                    .text_size(font::SM)
+                    .text_size(font::DESCRIPTION)
+                    .line_height(font::DESCRIPTION_LINE_HEIGHT)
+                    .font_weight(gpui::FontWeight::MEDIUM)
                     .text_color(dark().semantic.warning_text)
                     .child(t("approval.title").replace("{}", &pending.tool_name)),
             )
             .child(
                 div()
-                    .text_size(font::SM)
+                    .text_size(font::DESCRIPTION)
+                    .line_height(font::DESCRIPTION_LINE_HEIGHT)
                     .text_color(dark().text.primary)
                     .child(pending.reason.clone()),
             );
@@ -79,7 +86,9 @@ impl AppView {
         {
             card = card.child(
                 div()
-                    .text_size(font::XS)
+                    .text_size(font::DESCRIPTION)
+                    .line_height(font::DESCRIPTION_LINE_HEIGHT)
+                    .font_family(font::MONO)
                     .text_color(dark().text.detail)
                     .child(detail.to_string()),
             );
@@ -130,7 +139,6 @@ impl AppView {
                 let mut button = Button::new(id)
                     .variant(variant)
                     .disabled(!can_approve)
-                    // P4 片 3：按钮行 32px 槽位与 AX rect 同源。
                     .height(px(APPROVAL_BUTTON_HEIGHT))
                     .center()
                     .track_focus(&focus)
@@ -150,7 +158,7 @@ impl AppView {
                             cx.stop_propagation();
                         }));
                 }
-                button
+                self.settings_element(id).flex_none().child(button)
             }));
         card.child(row)
     }

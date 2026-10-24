@@ -8,30 +8,6 @@ struct ActivityPopoverAxGeometry {
     subagents: AxRect,
 }
 
-fn header_action_ax_rect(frame: AxRect) -> AxRect {
-    let content_top = frame.y + metrics::HEADER_SAFE_STRIP;
-    let content_height = (frame.height - 2.0 * metrics::HEADER_SAFE_STRIP).max(0.0);
-    AxRect::new(
-        (frame.x + frame.width - metrics::HEADER_INSET_RIGHT - metrics::HEADER_ACTION_WIDTH)
-            .max(frame.x),
-        content_top + ((content_height - metrics::HEADER_ACTION_HEIGHT) / 2.0).max(0.0),
-        metrics::HEADER_ACTION_WIDTH,
-        metrics::HEADER_ACTION_HEIGHT,
-    )
-}
-
-/// OPT-4b：折叠态 Activity 触发器槽——位于最右动作槽（inspector-expand）
-/// 左侧一格，与 render 的 HEADER_ACTION_GAP 排列同源。
-fn header_activity_ax_rect(frame: AxRect) -> AxRect {
-    let right = header_action_ax_rect(frame);
-    AxRect::new(
-        (right.x - metrics::HEADER_ACTION_WIDTH - metrics::HEADER_ACTION_GAP).max(frame.x),
-        right.y,
-        metrics::HEADER_ACTION_WIDTH,
-        metrics::HEADER_ACTION_HEIGHT,
-    )
-}
-
 fn activity_popover_ax_geometry(
     header_frame: AxRect,
     trigger: AxRect,
@@ -664,24 +640,18 @@ impl AppView {
 
     /// F-05 Header 语义树（与 render 同源谓词 / metrics）：标题 / branch /
     /// live 终态 / 新建任务按钮。各项可见条件与 render 完全一致（无数据
-    /// 诚实隐藏；几何共享 HEADER_* 常量，文本宽度为近似值）。
+    /// 诚实隐藏；标题、chip 与动作框均取自真实布局）。
     fn header_ax(&self, window: &Window, frame: AxRect, inspector_open: bool) -> AxNode {
-        let content_top = frame.y + metrics::HEADER_SAFE_STRIP;
-        let content_height = (frame.height - 2.0 * metrics::HEADER_SAFE_STRIP).max(0.0);
-        let row_height = metrics::HEADER_STATUS_DOT_SIZE + 14.0;
-        let row_y = content_top + ((content_height - row_height) / 2.0).max(0.0);
         let mut header = AxNode::new("workspace-header", AxRole::Group, "Workspace header", frame);
         for node in self.navigation_header_ax(window) {
             header = header.child(node);
         }
-        let x = frame.x + metrics::TIMELINE_CONTENT_INSET;
         if let Some(title) = self.projection.workspace_header_title() {
-            let width = 340.0_f32.min((frame.x + frame.width - x).max(0.0));
             header = header.child(AxNode::new(
                 "header-title",
                 AxRole::StaticText,
                 crate::ui::i18n::session_title(title),
-                AxRect::new(x, row_y, width, row_height),
+                self.shell_ax_rect("header-title"),
             ));
         }
         if let Some(branch) = self.header_branch() {
@@ -706,7 +676,6 @@ impl AppView {
                 .description("Live status"),
             );
         }
-        let action = header_action_ax_rect(frame);
         // R6 Wave A（F-12）+ OPT-4b：与 render 同用 activity_header_visibility
         // 口径；折叠态 Activity 左移一格、inspector-expand 占最右动作槽，
         // 浮层右缘与触发器右缘对齐；展开态最右槽恢复 New task。
@@ -716,7 +685,7 @@ impl AppView {
         );
         if trigger_visible {
             // 折叠态 Activity 槽位于重开按钮左侧一格（gap 与 render 同源）。
-            let trigger_rect = header_activity_ax_rect(frame);
+            let trigger_rect = self.shell_ax_rect("header-activity-layout");
             header = header.child(
                 AxNode::new(
                     "inspector-toggle",
@@ -829,7 +798,7 @@ impl AppView {
                     "inspector-expand",
                     AxRole::Button,
                     t("header.tooltip_open_inspector"),
-                    action,
+                    self.shell_ax_rect("header-expand-layout"),
                 )
                 .focused(self.open_menu.is_none() && self.inspector_expand_focus.is_focused(window))
                 .action(AxAction::Press),
@@ -842,7 +811,7 @@ impl AppView {
                     "header-new-task",
                     AxRole::Button,
                     t("timeline.new_task"),
-                    action,
+                    self.shell_ax_rect("header-new-task-layout"),
                 )
                 .enabled(self.can_create_task())
                 .focused(self.open_menu.is_none() && self.header_new_task_focus.is_focused(window))

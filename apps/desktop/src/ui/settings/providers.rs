@@ -39,7 +39,7 @@ impl AppView {
             .vcenter()
             .radius(6.0)
             .bordered()
-            .text_size(font::BODY_SM)
+            .text_size(font::BASE)
             .label(t("settings.refresh"))
             .tooltip(t("settings.providers.refresh_tooltip"))
             .disabled(!refresh_enabled)
@@ -157,13 +157,12 @@ impl AppView {
         let expand = self.settings_provider_expand_button(&provider_id, expanded, cx);
         let header = self
             .settings_element(dynamic_identifier("settings-provider-header", &provider_id))
-            .h(px(metrics::SETTINGS_PROVIDER_HEADER_HEIGHT))
-            .overflow_hidden()
+            .min_h(px(metrics::SETTINGS_PROVIDER_HEADER_HEIGHT))
             .flex()
-            .flex_row()
             .items_center()
             .gap_3()
             .px_4()
+            .py_3()
             .child(
                 div()
                     .w(px(metrics::SETTINGS_PROVIDER_STATUS_DOT))
@@ -173,75 +172,65 @@ impl AppView {
                     .bg(connection_color),
             )
             .child(
-                self.settings_element(dynamic_identifier("settings-provider-name", &provider_id))
-                    .flex()
-                    .flex_row()
-                    .flex_1()
-                    .min_w_0()
-                    .child(
-                        div()
-                            .truncate()
-                            .text_size(font::BODY)
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(dark().text.primary)
-                            .child(provider.display_name.clone()),
-                    ),
-            )
-            .child(
-                div().flex().flex_row().flex_none().child(
-                    div()
-                        .truncate()
-                        .text_size(font::BASE)
-                        .text_color(dark().text.secondary)
-                        .child(auth_methods),
-                ),
-            )
-            .child(
                 div()
                     .flex()
-                    .flex_row()
+                    .flex_1()
+                    .min_w_0()
+                    .flex_wrap()
                     .items_center()
-                    .gap_1()
-                    .flex_none()
-                    .h(px(24.0))
-                    .px_2()
-                    .rounded(px(metrics::CONTROL_RADIUS))
-                    .bg(dark().surface.hover)
+                    .gap_4()
                     .child(
                         self.settings_element(dynamic_identifier(
-                            "settings-provider-connection",
+                            "settings-provider-name",
                             &provider_id,
                         ))
-                        .flex()
-                        .flex_row()
+                        .flex_1()
+                        .min_w(px(220.0))
+                        .max_w_full()
                         .child(
                             div()
-                                .truncate()
+                                .whitespace_normal()
                                 .text_size(font::BASE)
-                                .text_color(connection_color)
-                                .child(provider.auth_label()),
+                                .line_height(font::CONTROL_LINE_HEIGHT)
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(dark().text.primary)
+                                .child(provider.display_name.clone()),
+                        )
+                        .child(
+                            div()
+                                .whitespace_normal()
+                                .text_size(font::META)
+                                .line_height(font::META_LINE_HEIGHT)
+                                .text_color(dark().text.secondary)
+                                .child(auth_methods),
                         ),
                     )
                     .child(
                         div()
-                            .text_size(font::BASE)
-                            .text_color(dark().text.secondary)
-                            .child(" · "),
-                    )
-                    .child(
-                        self.settings_element(dynamic_identifier(
-                            "settings-provider-catalog",
-                            &provider_id,
-                        ))
-                        .flex()
-                        .flex_row()
-                        .child(
-                            div()
-                                .truncate()
-                                .text_size(font::XS)
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                self.settings_element(dynamic_identifier(
+                                    "settings-provider-connection",
+                                    &provider_id,
+                                ))
+                                .text_size(font::BASE)
+                                .line_height(font::CONTROL_LINE_HEIGHT)
+                                .text_color(connection_color)
+                                .child(provider.auth_label()),
+                            )
+                            .child(
+                                self.settings_element(dynamic_identifier(
+                                    "settings-provider-catalog",
+                                    &provider_id,
+                                ))
+                                .text_size(font::META)
+                                .line_height(font::META_LINE_HEIGHT)
                                 .text_color(dark().text.secondary)
                                 .child(catalog_summary),
-                        ),
+                            ),
                     ),
             )
             .child(
@@ -438,6 +427,7 @@ impl AppView {
         div()
             .flex()
             .items_center()
+            .flex_wrap()
             .gap_4()
             .px_4()
             .py_4()
@@ -449,7 +439,8 @@ impl AppView {
                     .flex()
                     .flex_col()
                     .flex_1()
-                    .min_w_0()
+                    .min_w(px(280.0))
+                    .max_w(px(480.0))
                     .gap_1()
                     .child(settings_label(title))
                     .child(settings_copy(subtitle)),
@@ -515,7 +506,7 @@ impl AppView {
                 .gap_1()
                 .child(
                     Label::new(state_label)
-                        .size(font::BODY_SM)
+                        .size(font::BASE)
                         .color(dark().text.secondary),
                 )
                 .child(toggle),
@@ -549,7 +540,7 @@ impl AppView {
             .vcenter()
             .radius(6.0)
             .bordered()
-            .text_size(font::BODY_SM)
+            .text_size(font::BASE)
             .label(t("settings.providers.manage_models"))
             .tooltip(t("settings.providers.manage_models_tooltip"))
             .disabled(!manage_enabled);

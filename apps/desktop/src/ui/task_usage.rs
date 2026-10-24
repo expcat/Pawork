@@ -1,6 +1,6 @@
 //! 任务统计窗口；数据只经 Controller → GUI Host 获取。
 use super::accessibility::{AxAction, AxRequest, AxRole};
-use super::product_access::PanelAccess;
+use super::product_access::{product_actions, product_heading, product_panel, PanelAccess};
 use super::*;
 use gpui::{size, AnyElement, Bounds, WindowBounds, WindowOptions};
 use pawork_client::{
@@ -286,12 +286,11 @@ impl UsageView {
             .clone()
             .tab_stop(enabled);
         let mouse = action.clone();
-        let button = Button::new(id.clone())
-            .label(label.clone())
+        let mut button = Button::new(id.clone())
             .track_focus(&focus)
             .disabled(!enabled)
             .variant(if selected {
-                ButtonVariant::Primary
+                ButtonVariant::Raised
             } else {
                 ButtonVariant::Ghost
             })
@@ -301,11 +300,22 @@ impl UsageView {
                 }
             }))
             .on_activate(cx.listener(move |view, _, _, cx| view.perform(action.clone(), cx)));
+        if id.starts_with("usage-record-") || id.starts_with("usage-drill-") {
+            button = button
+                .width((window.viewport_size().width - px(48.0)).max(px(0.0)))
+                .child(div().w_full().whitespace_normal().child(label.clone()));
+        } else {
+            button = button.label(if selected {
+                format!("✓ {label}")
+            } else {
+                label.clone()
+            });
+        }
         self.access.wrap(
             &id,
             &label,
             AxRole::Button,
-            None,
+            selected.then(|| tr("Selected", "已选中").into()),
             enabled,
             focus.is_focused(window),
             button,
@@ -320,13 +330,36 @@ impl UsageView {
             false,
             false,
             div()
-                .text_size(font::BODY_SM)
-                .text_color(dark().text.secondary)
+                .w_full()
+                .whitespace_normal()
+                .text_size(if matches!(id, "usage-coverage" | "usage-scope") {
+                    font::META
+                } else {
+                    font::BASE
+                })
+                .line_height(if matches!(id, "usage-coverage" | "usage-scope") {
+                    font::META_LINE_HEIGHT
+                } else {
+                    font::DESCRIPTION_LINE_HEIGHT
+                })
+                .text_color(if id == "usage-error" || id == "usage-detail-error" {
+                    dark().semantic.danger_text
+                } else {
+                    dark().text.secondary
+                })
                 .child(label.clone()),
         )
     }
-    fn ax_action(&mut self, request: AxRequest, _: &mut Window, cx: &mut Context<Self>) {
-        if self.access.permits(&request) && request.action == AxAction::Press {
+    fn ax_action(&mut self, request: AxRequest, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.access.permits(&request) {
+            return;
+        }
+        if request.action == AxAction::Focus {
+            if let Some(focus) = self.focus.get(&request.identifier) {
+                window.focus(focus);
+                cx.notify();
+            }
+        } else if request.action == AxAction::Press {
             if let Some(action) = self.actions.get(&request.identifier).cloned() {
                 self.perform(action, cx);
             }
@@ -339,13 +372,21 @@ impl Render for UsageView {
         install_appkit_tab_monitor(window, cx);
         self.access.begin();
         self.actions.clear();
-        let mut header = div().flex().items_center().justify_between().gap_3().child(
-            div()
-                .text_size(font::HEADER_TITLE)
-                .font_weight(FontWeight::MEDIUM)
-                .child(i18n::t("usage.title")),
-        );
-        let mut actions = div().flex().gap_2();
+        let mut header = div()
+            .flex()
+            .flex_col()
+            .flex_none()
+            .gap(px(16.0))
+            .child(product_heading(
+                &mut self.access,
+                Icon::Clock,
+                i18n::t("usage.title"),
+                tr(
+                    "Inspect recorded calls and their reported usage.",
+                    "查看已记录调用及其回传用量。",
+                ),
+            ));
+        let mut actions = product_actions();
         for (id, label, action) in [
             (
                 "usage-clear",
@@ -365,12 +406,12 @@ impl Render for UsageView {
             ));
         }
         header = header.child(actions);
-        let mut filters = div().flex().flex_col().gap_1();
+        let mut filters = div().flex().flex_col().flex_none().gap(px(16.0));
         let mut group = div()
             .flex()
             .flex_wrap()
             .items_center()
-            .gap_1()
+            .gap(px(8.0))
             .child(tr("Group by", "分组"));
         for (i, (by, label)) in [
             (TaskUsageGroupBy::Task, tr("Task", "完整任务")),
@@ -401,7 +442,7 @@ impl Render for UsageView {
             .flex()
             .flex_wrap()
             .items_center()
-            .gap_1()
+            .gap(px(8.0))
             .child(tr("Operations", "消耗类型"));
         for (i, op) in [
             None,
@@ -434,7 +475,7 @@ impl Render for UsageView {
             .flex()
             .flex_wrap()
             .items_center()
-            .gap_1()
+            .gap(px(8.0))
             .child(tr("Status", "状态"));
         for (i, s) in [
             None,
@@ -459,7 +500,7 @@ impl Render for UsageView {
             ));
         }
         filters = filters.child(states);
-        let mut ranges = div().flex().flex_wrap().items_center().gap_1();
+        let mut ranges = product_actions().child(tr("Time", "时间"));
         for (i, (days, label)) in [
             (None, tr("All time", "全部时间")),
             (Some(1), tr("24 hours", "近 24 小时")),
@@ -504,10 +545,9 @@ impl Render for UsageView {
             .id("usage-content")
             .flex()
             .flex_col()
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .gap_3();
+            .flex_none()
+            .w_full()
+            .gap(px(16.0));
         let show_list = self.selected.is_none();
         if self.busy && show_list {
             content = content.child(self.text("usage-loading", tr("Loading…", "正在查询…").into()));
@@ -519,8 +559,76 @@ impl Render for UsageView {
             ));
         }
         if let Some(report) = self.report.clone().filter(|_| show_list) {
-            content=content.child(div().p_3().rounded_md().bg(dark().surface.raised).child(self.text("usage-totals",totals(&report.totals))))
-                .child(self.text("usage-coverage",tr("Totals cover every matching record. Media duration is planned, cost is split by currency. Native entries summarize Runs; local operations are client reports.","统计覆盖全部匹配记录。视频秒数为计划值，费用按币种区分。原生条目汇总 Run，本地操作注明客户端报告。").into()));
+            let t = &report.totals;
+            let mut summary = div()
+                .flex()
+                .flex_col()
+                .flex_none()
+                .gap(px(8.0))
+                .p(px(16.0))
+                .rounded_md()
+                .bg(dark().surface.raised);
+            for (label, value) in [
+                (tr("Records", "记录"), t.records.to_string()),
+                (
+                    tr("Generation attempts", "生成尝试"),
+                    t.generation_calls.to_string(),
+                ),
+                (
+                    tr("Failed / cancelled / unconfirmed", "失败 / 取消 / 未确认"),
+                    format!("{} / {} / {}", t.failed, t.cancelled, t.unfinished),
+                ),
+                (
+                    tr("Known input / output tokens", "已知输入 / 输出 Token"),
+                    format!("{} / {}", t.tokens.input_tokens, t.tokens.output_tokens),
+                ),
+                (
+                    tr("Calls with unknown tokens", "Token 未回传调用"),
+                    t.unknown_token_calls.to_string(),
+                ),
+                (
+                    tr("Cache read / write tokens", "缓存读 / 写 Token"),
+                    format!(
+                        "{} / {}",
+                        t.tokens.cache_read_tokens, t.tokens.cache_write_tokens
+                    ),
+                ),
+                (
+                    tr("Known output images", "已知输出图片"),
+                    t.output_images.to_string(),
+                ),
+                (
+                    tr("Planned video seconds", "视频计划秒数"),
+                    t.planned_video_seconds.to_string(),
+                ),
+            ] {
+                summary = summary.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_start()
+                        .gap(px(8.0))
+                        .child(
+                            div()
+                                .w(px(260.0))
+                                .max_w_full()
+                                .text_color(dark().text.secondary)
+                                .child(label),
+                        )
+                        .child(div().flex_1().min_w(px(120.0)).child(value)),
+                );
+            }
+            summary = summary.child(div().whitespace_normal().child(costs(t)));
+            let summary = self.access.wrap(
+                "usage-totals",
+                &totals(t),
+                AxRole::StaticText,
+                None,
+                false,
+                false,
+                summary,
+            );
+            content = content.child(summary).child(self.text("usage-coverage", tr("Totals cover every matching record. Media duration is planned, cost is split by currency. Native entries summarize Runs; local operations are client reports.", "统计覆盖全部匹配记录。视频秒数为计划值，费用按币种区分。原生条目汇总 Run，本地操作注明客户端报告。").into()));
             if report.totals.records == 0 {
                 content=content.child(self.text("usage-empty",tr("No records match. New calls are logged after this update; historical missing usage cannot be recovered.","没有匹配记录。更新后的新调用会被记录，历史缺失用量无法从结果反推。").into()));
             }
@@ -700,6 +808,7 @@ impl Render for UsageView {
             detail = detail.child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .gap_2()
                     .child(self.button(
                         "usage-copy-id".into(),
@@ -725,23 +834,16 @@ impl Render for UsageView {
                 .id("usage-detail-content")
                 .flex()
                 .flex_col()
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .gap_3()
+                .flex_none()
+                .w_full()
+                .gap(px(16.0))
                 .child(detail);
         }
-        self.access.sync(window, cx, Self::ax_action);
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .p_4()
-            .bg(dark().bg.base)
-            .text_color(dark().text.primary)
-            .child(components::focus_ring::track_pointer_input())
-            .capture_key_down(components::focus_ring::key_down)
+        self.access
+            .sync(window, cx, |view| &mut view.access, Self::ax_action);
+        product_panel("usage-panel", &self.access)
+            .text_size(font::BASE)
+            .line_height(font::DESCRIPTION_LINE_HEIGHT)
             .on_key_down(cx.listener(|view, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key == "escape" {
                     view.selected = None;
@@ -1225,6 +1327,35 @@ mod tests {
     }
 
     fn click(cx: &mut gpui::VisualTestContext, id: &'static str) {
+        // The entire form scrolls now. Use the product AX focus path to reveal
+        // the requested control before performing the actual pointer click.
+        cx.update(|window, cx| {
+            if let Some(view) = window.root::<UsageView>().flatten() {
+                view.update(cx, |view, cx| {
+                    view.ax_action(
+                        AxRequest {
+                            identifier: id.into(),
+                            action: AxAction::Focus,
+                            value: None,
+                        },
+                        window,
+                        cx,
+                    )
+                });
+            }
+        });
+        cx.refresh().expect("draw");
+        cx.run_until_parked();
+        cx.refresh().expect("draw");
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            if let Some(view) = window.root::<UsageView>().flatten() {
+                view.update(cx, |view, cx| {
+                    view.access.publish(window);
+                    cx.notify();
+                });
+            }
+        });
         cx.refresh().expect("draw");
         cx.run_until_parked();
         let bounds = cx

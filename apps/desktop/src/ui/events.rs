@@ -496,8 +496,9 @@ impl AppView {
                 self.status_hint = Some(i18n::t("status.project_opened").replace("{}", &name));
             }
             ControllerEvent::SessionForked { session_id } => {
-                self.status_hint = Some(i18n::t("status.forked").replace("{}", &session_id));
+                let feedback = i18n::t("status.forked").replace("{}", &session_id);
                 self.open_session(session_id, cx);
+                self.show_status_feedback(feedback, cx);
             }
             ControllerEvent::TerminalCreated {
                 workspace_id,

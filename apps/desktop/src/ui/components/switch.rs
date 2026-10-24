@@ -138,13 +138,17 @@ impl RenderOnce for Switch {
             window.request_animation_frame();
         }
         let theme = theme(cx);
-        // 轨道色：开 = 主色；关 / 禁用 = strong 描边色（禁用不另开色档）。
-        let track_bg = if self.checked {
+        // 开 = 主色、关 = strong；禁用使用 disabled 面与滑块，状态词由调用方保留。
+        let track_bg = if !enabled {
+            theme.surface.disabled
+        } else if self.checked {
             theme.accent.primary
         } else {
             theme.border.strong
         };
-        let dot_color = if self.checked {
+        let dot_color = if !enabled {
+            theme.text.disabled
+        } else if self.checked {
             theme.text.on_accent
         } else {
             theme.text.secondary
@@ -181,6 +185,8 @@ impl RenderOnce for Switch {
         }
         if enabled {
             switch = switch.cursor_pointer();
+            let pressed = theme.surface.pressed;
+            switch = switch.active(move |style| style.bg(pressed));
             if self.checked {
                 let hover = theme.accent.hover;
                 switch = switch.hover(move |style| style.bg(hover));

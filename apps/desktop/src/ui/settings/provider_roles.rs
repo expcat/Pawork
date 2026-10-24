@@ -21,8 +21,8 @@ impl AppView {
             .settings_element("settings-default-roles")
             .flex()
             .flex_col()
-            .gap_3()
-            .pt_6()
+            .gap_4()
+            .pt_8()
             .border_t_1()
             .border_color(dark().border.subtle)
             .child(
@@ -78,7 +78,7 @@ impl AppView {
             .vcenter()
             .radius(6.0)
             .bordered()
-            .text_size(font::BODY_SM)
+            .text_size(font::BASE)
             .label(self.settings_role_value_label(role))
             .tooltip(settings_role_description_label(role))
             .disabled(!enabled);
@@ -114,7 +114,9 @@ impl AppView {
         div()
             .id(("settings-role-row", ix))
             .flex()
+            .flex_wrap()
             .items_center()
+            .max_w(px(840.0))
             .gap_4()
             .py_4()
             .when(ix + 1 < SettingsRole::ALL.len(), |row| {
@@ -125,7 +127,8 @@ impl AppView {
                     .flex()
                     .flex_col()
                     .flex_1()
-                    .min_w_0()
+                    .min_w(px(280.0))
+                    .max_w(px(480.0))
                     .gap_1()
                     .child(settings_label(role.label()))
                     .child(settings_copy(settings_role_description_label(role))),
@@ -238,13 +241,15 @@ impl AppView {
                     .min_w_0()
                     .child(
                         div()
-                            .text_size(font::SM)
+                            .text_size(font::BASE)
                             .text_color(dark().text.primary)
                             .child(t("settings.roles.empty_title")),
                     )
                     .child(
                         div()
-                            .text_size(font::XS)
+                            .whitespace_normal()
+                            .text_size(font::DESCRIPTION)
+                            .line_height(font::DESCRIPTION_LINE_HEIGHT)
                             .text_color(dark().text.secondary)
                             .child(t("settings.roles.empty_hint")),
                     ),
@@ -273,7 +278,7 @@ impl AppView {
                 .items_center()
                 .min_w_0()
                 .truncate()
-                .text_size(font::SM)
+                .text_size(font::BASE)
                 .text_color(dark().text.secondary)
                 .child(display_name),
             );
@@ -343,7 +348,7 @@ impl AppView {
         &mut self,
         role: SettingsRole,
         down_position: Option<Point<Pixels>>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if !self.settings_role_menu_enabled(role) {
@@ -353,6 +358,12 @@ impl AppView {
         if matches!(self.open_menu, Some(MenuKind::SettingsRole(open)) if open == role) {
             self.settings_element_layouts
                 .remove(&format!("settings-role-menu-{}", role.wire_name()));
+            if let Some(focus) = self
+                .settings_action_focus
+                .get(&settings_role_trigger_identifier(role))
+            {
+                window.focus(focus);
+            }
         }
     }
 

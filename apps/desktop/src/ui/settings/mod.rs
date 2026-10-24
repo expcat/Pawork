@@ -26,7 +26,6 @@ pub(super) use crate::ui::components::button::{Button, ButtonPadding, ButtonVari
 pub(super) use crate::ui::components::focus_ring::focus_ring;
 pub(super) use crate::ui::components::icon::{icon, icon_sized, Icon};
 pub(super) use crate::ui::components::label::Label;
-pub(super) use crate::ui::components::list_row::ListRow;
 pub(super) use crate::ui::components::panel::Panel;
 pub(super) use crate::ui::theme::{dark, font, metrics};
 
@@ -51,14 +50,14 @@ pub(super) const SETTINGS_CONTENT_PAD: f32 = 32.0;
 /// Settings 动作与导航沿用工作台的 36px / 40px 命中区。
 pub(super) const SETTINGS_CONTROL_HEIGHT: f32 = 36.0;
 pub(crate) const SETTINGS_NAV_HEIGHT: f32 = 40.0;
-/// 两行审批说明与内边距随字号一起增长（render / AX 同源）。
+/// 审批行最小高度随字号增长，长说明由实际内容撑高。
 pub(crate) const SETTINGS_APPROVAL_ROW_REMS: f32 = 3.5;
 /// Provider 页内容高度自然排版，AX 读取实际框；这里只固定控件宽度。
 pub(crate) const SETTINGS_ROLE_MENU_WIDTH: f32 = 260.0;
 pub(crate) const SETTINGS_MODELS_MENU_WIDTH: f32 = 320.0;
 pub(crate) const SETTINGS_MODELS_MENU_MAX_HEIGHT: f32 = 520.0;
 /// Manage models 弹层推理强度 chip 高（ADR-063；独立于页面主控件）。
-pub(crate) const SETTINGS_MODEL_EFFORT_CHIP_HEIGHT: f32 = 24.0;
+pub(crate) const SETTINGS_MODEL_EFFORT_CHIP_HEIGHT: f32 = 36.0;
 /// Usage 进度条槽位几何（固定槽位，恒无填充；ADR-056 D5）。
 pub(crate) const SETTINGS_PROVIDER_USAGE_BAR_WIDTH: f32 = 120.0;
 pub(crate) const SETTINGS_PROVIDER_USAGE_BAR_HEIGHT: f32 = 4.0;
@@ -1044,7 +1043,7 @@ pub(crate) fn settings_auth_actions(
 
 /// UI-5：全宽分区以间距和细分隔线组织；正文允许自然换行。
 fn settings_column() -> gpui::Div {
-    div().w_full().flex().flex_col().gap_6()
+    div().w_full().flex().flex_col().gap_4()
 }
 
 // flex_col 的横向 stretch 决定分区宽度；百分比宽度会在内容测量时收缩。
@@ -1052,8 +1051,8 @@ fn settings_section() -> gpui::Div {
     div()
         .flex()
         .flex_col()
-        .gap_3()
-        .pt_6()
+        .gap_4()
+        .pt_8()
         .border_t_1()
         .border_color(dark().border.subtle)
 }
@@ -1061,9 +1060,10 @@ fn settings_section() -> gpui::Div {
 fn settings_copy(text: impl Into<String>) -> gpui::Div {
     div()
         .w_full()
+        .max_w(px(480.0))
         .whitespace_normal()
-        .text_size(font::BASE)
-        .line_height(gpui::rems(1.4))
+        .text_size(font::DESCRIPTION)
+        .line_height(font::DESCRIPTION_LINE_HEIGHT)
         .text_color(dark().text.secondary)
         .child(text.into())
 }
@@ -1071,6 +1071,7 @@ fn settings_copy(text: impl Into<String>) -> gpui::Div {
 fn settings_label(text: &'static str) -> gpui::Div {
     div()
         .text_size(font::BODY)
+        .line_height(font::SECTION_LINE_HEIGHT)
         .font_weight(FontWeight::MEDIUM)
         .text_color(dark().text.primary)
         .child(text)
@@ -1131,11 +1132,12 @@ fn settings_page_icon(page: SettingsPage) -> Icon {
 }
 
 pub(super) fn status_line(text: &str, color: gpui::Rgba) -> impl IntoElement {
-    div().child(
-        Label::new(text.to_string())
-            .size(font::BODY_SM)
-            .color(color),
-    )
+    div()
+        .whitespace_normal()
+        .text_size(font::DESCRIPTION)
+        .line_height(font::DESCRIPTION_LINE_HEIGHT)
+        .text_color(color)
+        .child(text.to_string())
 }
 
 #[cfg(test)]
@@ -1445,6 +1447,7 @@ impl AppView {
             .child(
                 div()
                     .text_size(font::PAGE_TITLE)
+                    .line_height(font::from_pixels(32.0))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(dark().text.primary)
                     .child(title),
@@ -1466,7 +1469,8 @@ impl AppView {
             .px_4()
             .rounded(px(6.0))
             .bg(dark().surface.raised)
-            .text_size(font::BASE)
+            .text_size(font::DESCRIPTION)
+            .line_height(font::DESCRIPTION_LINE_HEIGHT)
             .whitespace_normal()
             .text_color(if matches!(kind, "error" | "action") {
                 dark().semantic.danger_text

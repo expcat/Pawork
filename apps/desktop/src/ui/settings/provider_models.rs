@@ -393,7 +393,7 @@ impl AppView {
             .gap_1()
             .child(
                 Label::new(t("settings.providers.effort_label"))
-                    .size(font::XS)
+                    .size(font::BASE)
                     .color(dark().text.secondary),
             )
             .child(
@@ -426,7 +426,7 @@ impl AppView {
             .variant(ButtonVariant::Raised)
             .height(px(SETTINGS_MODEL_EFFORT_CHIP_HEIGHT))
             .radius(6.0)
-            .text_size(font::XS)
+            .text_size(font::BASE)
             .label(default_label)
             .tooltip(t("settings.providers.effort_default_tooltip"))
             .disabled(!enabled)
@@ -462,10 +462,14 @@ impl AppView {
                 .variant(ButtonVariant::Raised)
                 .height(px(SETTINGS_MODEL_EFFORT_CHIP_HEIGHT))
                 .radius(6.0)
-                .text_size(font::XS)
-                .label(level.clone())
+                .text_size(font::BASE)
+                .label(format!(
+                    "{}{}",
+                    if selected_chip { "✓ " } else { "" },
+                    level
+                ))
                 .text_color(if selected_chip {
-                    dark().accent.primary
+                    dark().text.primary
                 } else {
                     dark().text.secondary
                 })
@@ -499,7 +503,7 @@ impl AppView {
                 .variant(ButtonVariant::Ghost)
                 .height(px(SETTINGS_MODEL_EFFORT_CHIP_HEIGHT))
                 .radius(6.0)
-                .text_size(font::XS)
+                .text_size(font::BASE)
                 .label(t("settings.subagents.reset"))
                 .tooltip(t("settings.providers.effort_range_tooltip"))
                 .disabled(!enabled)
@@ -628,7 +632,7 @@ impl AppView {
                     .gap_1()
                     .child(
                         div()
-                            .text_size(font::SM)
+                            .text_size(font::BASE)
                             .text_color(dark().text.primary)
                             .child(format!(
                                 "{} · {}",
@@ -654,7 +658,9 @@ impl AppView {
             )
             .child(
                 self.settings_element(format!("settings-models-scope-{provider_id}"))
-                    .text_size(font::XS)
+                    .whitespace_normal()
+                    .text_size(font::DESCRIPTION)
+                    .line_height(font::DESCRIPTION_LINE_HEIGHT)
                     .text_color(dark().text.secondary)
                     .child(t("settings.providers.catalog_scope")),
             );
@@ -687,7 +693,7 @@ impl AppView {
                 .vcenter()
                 .radius(6.0)
                 .bordered()
-                .text_size(font::SM)
+                .text_size(font::BASE)
                 .label(label)
                 .disabled(!all_enabled)
                 .on_click(cx.listener(move |view, event, _window, cx| {
@@ -719,7 +725,7 @@ impl AppView {
             .vcenter()
             .radius(6.0)
             .bordered()
-            .text_size(font::SM)
+            .text_size(font::BASE)
             .label(t("settings.providers.models_refresh"))
             .disabled(!writes)
             .on_click(cx.listener(move |view, event, _window, cx| {
@@ -760,13 +766,15 @@ impl AppView {
                         .min_w_0()
                         .child(
                             div()
-                                .text_size(font::SM)
+                                .text_size(font::BASE)
                                 .text_color(dark().text.primary)
                                 .child(t("settings.providers.models_empty_title")),
                         )
                         .child(
                             div()
-                                .text_size(font::XS)
+                                .whitespace_normal()
+                                .text_size(font::DESCRIPTION)
+                                .line_height(font::DESCRIPTION_LINE_HEIGHT)
                                 .text_color(dark().text.secondary)
                                 .child(t("settings.providers.models_empty_hint")),
                         ),
@@ -779,7 +787,7 @@ impl AppView {
                     self.settings_element(format!("settings-models-no-results-{provider_id}"))
                         .px_2()
                         .py_3()
-                        .text_size(font::SM)
+                        .text_size(font::BASE)
                         .text_color(dark().text.secondary)
                         .child(t("model_search.no_results")),
                 ),
@@ -840,9 +848,8 @@ impl AppView {
                 div()
                     .flex()
                     .flex_col()
-                    .gap_1()
-                    .min_w_0()
-                    .py_2()
+                    .gap_2()
+                    .py_3()
                     .border_t_1()
                     .border_color(dark().border.subtle)
                     .px_1()
@@ -859,10 +866,10 @@ impl AppView {
                                     .id(SharedString::from(format!("model-label-{switch_id}")))
                                     .flex_1()
                                     .min_w_0()
-                                    .overflow_x_scroll()
+                                    .whitespace_normal()
                                     .child(
                                         div()
-                                            .text_size(font::SM)
+                                            .text_size(font::BASE)
                                             .text_color(dark().text.primary)
                                             .child(model.display_name.clone()),
                                     )

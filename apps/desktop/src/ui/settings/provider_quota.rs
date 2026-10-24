@@ -344,13 +344,13 @@ impl AppView {
                                 div().flex().flex_row().flex_1().min_w_0().child(
                                     div()
                                         .truncate()
-                                        .text_size(font::BODY_SM)
+                                        .text_size(font::BASE)
                                         .text_color(dark().text.secondary)
                                         .child(row.title),
                                 ),
                             )
                             .child(
-                                Label::new(percent).size(font::BODY_SM).color(
+                                Label::new(percent).size(font::BASE).color(
                                     row.used
                                         .map(quota_bar_color)
                                         .unwrap_or(dark().text.tertiary),
@@ -360,9 +360,20 @@ impl AppView {
                     .child(track)
                     .when(!caption.is_empty(), |block| {
                         block.child(
-                            Label::new(caption)
-                                .size(font::BODY_SM)
-                                .color(dark().text.tertiary),
+                            div()
+                                .whitespace_normal()
+                                .text_size(if row.stale || row.loading {
+                                    font::DESCRIPTION
+                                } else {
+                                    font::META
+                                })
+                                .line_height(if row.stale || row.loading {
+                                    font::DESCRIPTION_LINE_HEIGHT
+                                } else {
+                                    font::META_LINE_HEIGHT
+                                })
+                                .text_color(dark().text.secondary)
+                                .child(caption),
                         )
                     }),
             );
@@ -386,7 +397,7 @@ impl AppView {
                         .vcenter()
                         .radius(6.0)
                         .bordered()
-                        .text_size(font::BODY_SM)
+                        .text_size(font::BASE)
                         .label(t("settings.quota.refresh"))
                         .disabled(!enabled)
                         .on_click(cx.listener(move |view, event, _, cx| {

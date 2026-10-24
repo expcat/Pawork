@@ -123,13 +123,16 @@ impl AppView {
             .child(
                 div()
                     .w_full()
+                    .max_w(px(840.0))
                     .flex()
+                    .flex_wrap()
                     .items_center()
                     .gap_3()
                     .child(
                         self.settings_element("settings-proxy-input")
                             .flex()
-                            .flex_1()
+                            .w(px(320.0))
+                            .max_w_full()
                             .min_w_0()
                             .when(!writes, |el| el.opacity(0.55))
                             .child(proxy_input),

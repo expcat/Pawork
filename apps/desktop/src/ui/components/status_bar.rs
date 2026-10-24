@@ -1,10 +1,31 @@
 //! StatusBar 底部状态行容器（R8 波 B 轨 1）。
 
-use gpui::{div, prelude::*, px, AnyElement, App, IntoElement, RenderOnce, Styled, Window};
+use gpui::{
+    div, prelude::*, px, AnyElement, App, Context, IntoElement, RenderOnce, Styled, Window,
+};
 
 use crate::ui::theme::{font, metrics, theme};
 
-/// 底部 30px 状态行：bg.panel + 顶描边 + SM 次要文字（GUI4 三栏）。
+impl crate::ui::AppView {
+    /// 复制 / 字号等普通反馈共用可替换的 3s 计时任务；不写 status_hint，
+    /// 持久错误始终优先，旧任务也不能清除新反馈。
+    pub(in crate::ui) fn show_status_feedback(&mut self, text: String, cx: &mut Context<Self>) {
+        self.status_feedback = Some(text);
+        let timer = cx
+            .background_executor()
+            .timer(std::time::Duration::from_secs(3));
+        self.status_feedback_task = Some(cx.spawn(async move |this, cx| {
+            timer.await;
+            let _ = this.update(cx, |view, cx| {
+                view.status_feedback = None;
+                cx.notify();
+            });
+        }));
+        cx.notify();
+    }
+}
+
+/// 底部 30px 状态行：bg.panel + 顶描边 + 12/18 辅助文字（GUI4 三栏）。
 ///
 /// 左：项目 / 分支；中：Run 用量（AX 仍只发这一串）；右：连接 / 瞬态反馈。
 /// 左右栏不发布 AX，避免与 TaskRail / Composer 同源节点重复。R6 Wave A
@@ -30,7 +51,7 @@ impl StatusBar {
         self
     }
 
-    /// 行内绝对居中的信息串（忽略左右栏宽度，保持真居中）。
+    /// 用量占据自身宽度，左右栏等分剩余空间，保持居中且互不覆盖。
     pub fn centered(mut self, child: impl IntoElement) -> Self {
         self.centered = Some(child.into_any_element());
         self
@@ -63,17 +84,16 @@ impl RenderOnce for StatusBar {
             .border_t_1()
             .border_color(theme.border.subtle)
             .bg(theme.bg.panel)
-            .text_size(font::SM)
+            .text_size(font::META)
+            .line_height(font::META_LINE_HEIGHT)
             .text_color(theme.text.secondary)
             .child(status_slot(self.leading, true))
             .when_some(self.centered, |bar, centered| {
                 bar.child(
                     div()
-                        .absolute()
-                        .left_0()
-                        .right_0()
-                        .top_0()
-                        .bottom_0()
+                        .debug_selector(|| "status-bar-center-slot".into())
+                        .flex_none()
+                        .max_w_full()
                         .flex()
                         .min_w_0()
                         .items_center()
@@ -89,6 +109,13 @@ impl RenderOnce for StatusBar {
 
 fn status_slot(child: Option<AnyElement>, leading: bool) -> gpui::Div {
     div()
+        .debug_selector(move || {
+            if leading {
+                "status-bar-leading-slot".into()
+            } else {
+                "status-bar-trailing-slot".into()
+            }
+        })
         .relative()
         .occlude()
         .flex()

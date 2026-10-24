@@ -2,7 +2,7 @@
 //!
 //! GPUI border 参与盒模型，动态添加会压缩内容或改变尺寸。这里使用
 //! absolute + inset_0 覆盖层，无 hitbox、不 track_focus、不参与布局。
-//! 控件持焦且使用键盘导航时才绘制中性描边；鼠标点击不显示。
+//! 控件持焦且使用键盘导航时才绘制 accent 描边；鼠标点击不显示。
 //! 业务选中态与焦点独立，禁止用动态 border / padding 改变控件几何。
 
 use gpui::{
@@ -69,7 +69,7 @@ impl RenderOnce for FocusRing {
             .rounded(self.0)
             .when(keyboard_focus_visible(cx), |ring| {
                 ring.border(px(metrics::FOCUS_RING_WIDTH))
-                    .border_color(theme(cx).text.secondary)
+                    .border_color(theme(cx).accent.primary)
             })
     }
 }

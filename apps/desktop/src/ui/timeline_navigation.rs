@@ -414,6 +414,7 @@ impl AppView {
         id: &str,
         label: &str,
         enabled: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let focus = self.navigation_focus(id, cx);
@@ -421,12 +422,34 @@ impl AppView {
         let key_id = id.to_owned();
         let is_turn = id.starts_with("timeline-nav-turn-");
         let width = f32::from(self.timeline_list.viewport_bounds().size.width).max(200.0);
+        let width = if is_turn {
+            width - 1.5 * f32::from(window.rem_size())
+        } else {
+            180.0
+        };
+        let selected = self
+            .timeline_navigation
+            .selected
+            .as_ref()
+            .is_some_and(|key| self.turn_identifier(key) == id);
+        let visible = input_area::ellipsized_label(
+            window,
+            label,
+            width - f32::from(window.rem_size()),
+            font::BASE,
+        );
         self.navigation_element(id).child(
             Button::new(SharedString::from(id.to_owned()))
-                .variant(ButtonVariant::Ghost)
-                .label(SharedString::from(label.to_owned()))
+                .variant(if selected {
+                    ButtonVariant::Raised
+                } else {
+                    ButtonVariant::Ghost
+                })
+                .text_size(font::BASE)
+                .label(visible)
+                .tooltip(SharedString::from(label.to_owned()))
                 .height(px(36.0))
-                .max_width(px(if is_turn { width } else { 180.0 }))
+                .max_width(px(width))
                 .track_focus(&focus)
                 .disabled(!enabled)
                 .on_click(cx.listener(move |view, event, window, cx| {
@@ -564,11 +587,17 @@ impl AppView {
                     self.navigation_element("timeline-nav-input-layout")
                         .flex_1()
                         .min_w_0()
+                        // 键绑定先于 keydown 分发；截住 NewLine，避免查询换行后重置命中。
+                        .capture_action(cx.listener(|view, _: &text_input::NewLine, _, cx| {
+                            view.step_find(false, cx);
+                            cx.stop_propagation();
+                        }))
                         .child(self.timeline_navigation.input.clone()),
                 )
                 .child(
                     self.navigation_element("timeline-nav-count")
                         .text_size(font::BODY_SM)
+                        .line_height(font::META_LINE_HEIGHT)
                         .child(self.find_count()),
                 )
                 .child(self.navigation_icon_button(
@@ -593,6 +622,8 @@ impl AppView {
         let mut panel = self
             .navigation_element("timeline-navigation")
             .flex_none()
+            .text_size(font::BASE)
+            .line_height(font::CONTROL_LINE_HEIGHT)
             .px_3()
             .py_2()
             .flex()
@@ -604,6 +635,7 @@ impl AppView {
             .child(
                 self.navigation_element("timeline-nav-scope")
                     .text_size(font::BODY_SM)
+                    .line_height(font::META_LINE_HEIGHT)
                     .text_color(dark().text.secondary)
                     .child(scope),
             );
@@ -626,7 +658,7 @@ impl AppView {
                     self.timeline_navigation.focused_turn = Some(id.clone());
                     self.timeline_navigation.scroll.scroll_to_item(index);
                 }
-                list = list.child(self.navigation_button(&id, &title, true, cx));
+                list = list.child(self.navigation_button(&id, &title, true, window, cx));
             }
             panel = panel.child(list);
         }
@@ -741,6 +773,12 @@ impl AppView {
                 continue;
             }
             let mut button = AxNode::new(&id, AxRole::Button, label, rect)
+                .selected(
+                    self.timeline_navigation
+                        .selected
+                        .as_ref()
+                        .is_some_and(|key| self.turn_identifier(key) == id),
+                )
                 .enabled(enabled)
                 .focused(
                     self.timeline_navigation
@@ -918,12 +956,14 @@ mod tests {
         cx.update(|_, cx| {
             let v = view.read(cx);
             assert_eq!(v.find_count(), "2 / 12");
+            assert_eq!(v.timeline_navigation.input.read(cx).text(), "match");
         });
         cx.simulate_keystrokes("shift-enter");
         cx.refresh().unwrap();
         cx.update(|_, cx| {
             let v = view.read(cx);
             assert_eq!(v.find_count(), "1 / 12");
+            assert_eq!(v.timeline_navigation.input.read(cx).text(), "match");
         });
         cx.update(|window, cx| {
             view.update(cx, |v, cx| {

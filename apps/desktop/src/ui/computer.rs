@@ -1700,8 +1700,9 @@ impl AppView {
             .border_color(dark().border.subtle)
             .child(
                 Label::new(t("computer.title"))
-                    .size(font::XS)
-                    .color(dark().text.tertiary),
+                    .size(font::BODY)
+                    .line_height(font::SECTION_LINE_HEIGHT)
+                    .color(dark().text.primary),
             )
             .child(div().flex_1())
             .child(
@@ -1768,7 +1769,8 @@ impl AppView {
                         .py_1()
                         .border_b_1()
                         .border_color(dark().semantic.danger_text)
-                        .text_size(font::XS)
+                        .text_size(font::DESCRIPTION)
+                        .line_height(font::DESCRIPTION_LINE_HEIGHT)
                         .text_color(dark().semantic.danger_text)
                         .child(format!("{} · {reason}", t("computer.action_failed"))),
                 )
@@ -1782,7 +1784,8 @@ impl AppView {
                             .py_1()
                             .border_b_1()
                             .border_color(color)
-                            .text_size(font::XS)
+                            .text_size(font::DESCRIPTION)
+                            .line_height(font::DESCRIPTION_LINE_HEIGHT)
                             .text_color(color)
                             .child(text),
                     )
@@ -1818,7 +1821,8 @@ impl AppView {
                 div()
                     .px_1()
                     .py_1()
-                    .text_size(font::XS)
+                    .text_size(font::DESCRIPTION)
+                    .line_height(font::DESCRIPTION_LINE_HEIGHT)
                     .text_color(dark().text.tertiary)
                     .child(t("computer.scope_note")),
             );
@@ -1889,7 +1893,8 @@ impl AppView {
                 .gap_2()
                 .child(
                     Label::new(t("computer.observations_title"))
-                        .size(font::XS)
+                        .size(font::BODY)
+                        .line_height(font::SECTION_LINE_HEIGHT)
                         .color(dark().text.tertiary),
                 )
                 .child(div().flex_1())
@@ -1899,7 +1904,8 @@ impl AppView {
             ComputerFetch::Failed => {
                 section = section.child(
                     div()
-                        .text_size(font::XS)
+                        .text_size(font::DESCRIPTION)
+                        .line_height(font::DESCRIPTION_LINE_HEIGHT)
                         .text_color(dark().semantic.danger_text)
                         .child(format!(
                             "{} · {}",
@@ -1911,7 +1917,8 @@ impl AppView {
             ComputerFetch::Fetching => {
                 section = section.child(
                     div()
-                        .text_size(font::XS)
+                        .text_size(font::DESCRIPTION)
+                        .line_height(font::DESCRIPTION_LINE_HEIGHT)
                         .text_color(dark().text.tertiary)
                         .child(t("computer.observations_loading")),
                 );
@@ -1919,7 +1926,8 @@ impl AppView {
             _ if self.computer.observations.is_empty() => {
                 section = section.child(
                     div()
-                        .text_size(font::XS)
+                        .text_size(font::DESCRIPTION)
+                        .line_height(font::DESCRIPTION_LINE_HEIGHT)
                         .text_color(dark().text.tertiary)
                         .child(t("computer.observations_empty")),
                 );
@@ -1957,7 +1965,8 @@ impl AppView {
         if self.computer.obs_truncated {
             section = section.child(
                 div()
-                    .text_size(font::XS)
+                    .text_size(font::DESCRIPTION)
+                    .line_height(font::DESCRIPTION_LINE_HEIGHT)
                     .text_color(dark().text.tertiary)
                     .child(t("computer.observations_truncated")),
             );
@@ -2133,8 +2142,8 @@ impl AppView {
                     .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
                     .text_color(dark().text.secondary)
                     .label(SharedString::from(label))
-                    .text_size(font::SM)
-                    .height(px(28.0))
+                    .text_size(font::BASE)
+                    .height(px(36.0))
                     .radius(6.0)
                     .track_focus(&focus)
                     .on_click(cx.listener(move |view, event, _window, cx| {
@@ -2285,7 +2294,8 @@ impl AppView {
                     .rounded(px(4.0))
                     .border_1()
                     .border_color(dark().border.subtle)
-                    .text_size(font::XS)
+                    .text_size(font::DESCRIPTION)
+                    .line_height(font::DESCRIPTION_LINE_HEIGHT)
                     .text_color(color)
                     .child(format!("{glyph} {}", action_name(cap.action))),
             );
@@ -2312,14 +2322,15 @@ impl AppView {
                         div().flex_1().min_w_0().child(
                             div()
                                 .truncate()
-                                .text_size(font::SM)
+                                .text_size(font::BASE)
+                                .line_height(font::CONTROL_LINE_HEIGHT)
                                 .text_color(dark().text.primary)
                                 .child(target_title(state)),
                         ),
                     )
                     .child(
                         Label::new(grant_label(state.grant))
-                            .size(font::XS)
+                            .size(font::BASE)
                             .color(grant_color(state.grant)),
                     ),
             )
@@ -2337,7 +2348,8 @@ impl AppView {
             .child(
                 div()
                     .w_full()
-                    .text_size(font::XS)
+                    .text_size(font::DESCRIPTION)
+                    .line_height(font::DESCRIPTION_LINE_HEIGHT)
                     .text_color(dark().text.secondary)
                     .child(target_state_text(state)),
             )
@@ -2346,7 +2358,8 @@ impl AppView {
             card = card.child(
                 div()
                     .w_full()
-                    .text_size(font::XS)
+                    .text_size(font::DESCRIPTION)
+                    .line_height(font::DESCRIPTION_LINE_HEIGHT)
                     .text_color(dark().text.tertiary)
                     .child(note),
             );
@@ -2355,7 +2368,8 @@ impl AppView {
             card = card.child(
                 div()
                     .w_full()
-                    .text_size(font::XS)
+                    .text_size(font::DESCRIPTION)
+                    .line_height(font::DESCRIPTION_LINE_HEIGHT)
                     .text_color(dark().semantic.warning_text)
                     .child(t("computer.permission_note")),
             );
@@ -2364,6 +2378,7 @@ impl AppView {
             div()
                 .flex()
                 .flex_row()
+                .flex_wrap()
                 .gap_2()
                 .pt_1()
                 .child(self.computer_action_button(
@@ -2440,8 +2455,8 @@ impl AppView {
                     .variant(variant)
                     .disabled(!enabled)
                     .label(label)
-                    .text_size(font::SM)
-                    .height(px(28.0))
+                    .text_size(font::BASE)
+                    .height(px(36.0))
                     .radius(6.0)
                     .track_focus(&focus)
                     .on_click(cx.listener(move |view, event, _window, cx| {
@@ -2472,11 +2487,12 @@ fn computer_placeholder(key: &'static str) -> EmptyState {
         _ => t("common.placeholder_no_details"),
     };
     let mut placeholder = EmptyState::labeled(
-        Icon::Approvals,
+        Icon::Computer,
         t(key).to_string(),
         description.to_string(),
         dark().text.primary,
-    );
+    )
+    .top_aligned();
     if key == "computer.loading" {
         placeholder = placeholder.child(loading_skeleton("computer.loading-skeleton"));
     }
@@ -2486,11 +2502,12 @@ fn computer_placeholder(key: &'static str) -> EmptyState {
 /// 失败占位：标题本地化；reason 为 wire 数据，不翻译。
 fn computer_placeholder_colored(reason: String) -> EmptyState {
     EmptyState::labeled(
-        Icon::Approvals,
+        Icon::Computer,
         t("computer.error_title"),
         reason,
         dark().semantic.danger_text,
     )
+    .top_aligned()
 }
 
 /// tracked 布局的 AX 矩形（可选按滚动视口裁剪）；未测量 / 零面积不发布
@@ -4044,17 +4061,6 @@ mod tests {
                     description.contains("2 observations"),
                     "group carries observation count: {description}"
                 );
-                // 观测行：最新（990）与历史（800）都按实测几何发布，
-                // value 携带 run 标识（观测自带事实，不与目标卡对齐）。
-                let newest_id = observation_row_id((990, 0));
-                let newest = tree.find(&newest_id).expect("newest observation row");
-                assert!(newest.label.contains("computer"));
-                assert!(newest
-                    .value
-                    .as_deref()
-                    .unwrap_or_default()
-                    .contains("run r1"));
-                assert!(tree.find(&observation_row_id((800, 0))).is_some());
                 // 停止按钮与授权按钮同 gate：无 client 时禁用。
                 let stop_id = action_id(COMPUTER_STOP_PREFIX, &app_key);
                 let stop = tree.find(&stop_id).expect("stop button");
@@ -4066,6 +4072,32 @@ mod tests {
                 };
                 view.handle_accessibility_request(request, window, cx);
                 assert!(view.computer.stop.is_none(), "禁用 Press 不产生停止状态");
+                // 目标卡与观测共用真实滚动区；放大文字后不能假定
+                // 顶部停止按钮和底部观测行同时可见。
+                view.computer.scroll.set_offset(gpui::point(
+                    px(0.0),
+                    -view.computer.scroll.max_offset().height,
+                ));
+                cx.notify();
+            });
+        });
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                let tree = view.accessibility_tree(window, cx);
+                tree.validate().unwrap();
+                // 观测行：最新（990）与历史（800）都按实测几何发布，
+                // value 携带 run 标识（观测自带事实，不与目标卡对齐）。
+                let newest_id = observation_row_id((990, 0));
+                let newest = tree.find(&newest_id).expect("newest observation row");
+                assert!(newest.label.contains("computer"));
+                assert!(newest
+                    .value
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains("run r1"));
+                assert!(tree.find(&observation_row_id((800, 0))).is_some());
                 // 行 Press（enabled）走选择入口：无 client 时加载不可用
                 // 如实记录错误，不崩溃、不冒充已加载。
                 let request = crate::ui::accessibility::AxRequest {

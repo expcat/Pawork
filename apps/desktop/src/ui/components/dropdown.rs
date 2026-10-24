@@ -21,7 +21,7 @@ pub const ANCHOR_GAP_Y: f32 = metrics::MENU_ANCHOR_GAP;
 pub const MENU_MAX_HEIGHT: f32 = 240.0;
 
 /// MenuRow 菜单选项行（§8.1：选中项用 check + label，不用整行亮蓝；
-/// 禁用行 text.ghost 且无交互）。
+/// 禁用行 text.disabled 且无交互）。
 #[derive(IntoElement)]
 pub struct MenuRow {
     id: SharedString,
@@ -55,13 +55,13 @@ impl MenuRow {
     }
 
     /// 键盘高亮行（R3 Wave B 菜单 ↑/↓）：未选中行用 surface.raised（与
-    /// hover 同 token）；选中行保持 accent.primary 不叠加（§8.1）。
+    /// hover 同 token）；选中行保持 raised + check（§8.1）。
     pub fn highlighted(mut self, highlighted: bool) -> Self {
         self.highlighted = highlighted;
         self
     }
 
-    /// 禁用行（如不可用 Fork）：text.ghost、无 hover / 点击。
+    /// 禁用行（如不可用 Fork）：保持可读，无 hover / 点击。
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
@@ -87,10 +87,12 @@ impl RenderOnce for MenuRow {
             .min_w_0()
             .items_center()
             .gap_2()
-            .h(px(metrics::MENU_ROW_HEIGHT))
+            .min_h(px(metrics::MENU_ROW_HEIGHT))
+            .flex_shrink_0()
             .px_2()
             .rounded(px(metrics::CONTROL_RADIUS))
             .text_size(font::BASE)
+            .line_height(font::CONTROL_LINE_HEIGHT)
             .child(
                 div()
                     .w(px(metrics::SPACE_4))
@@ -100,7 +102,7 @@ impl RenderOnce for MenuRow {
             );
         if self.disabled {
             return row
-                .text_color(theme.text.ghost)
+                .text_color(theme.text.disabled)
                 .child(div().flex_1().min_w_0().truncate().child(self.label));
         }
         row = row

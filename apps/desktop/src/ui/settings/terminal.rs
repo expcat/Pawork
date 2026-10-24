@@ -129,13 +129,16 @@ impl AppView {
             .child(
                 div()
                     .w_full()
+                    .max_w(px(840.0))
                     .flex()
+                    .flex_wrap()
                     .items_center()
                     .gap_3()
                     .child(
                         self.settings_element("settings-terminal-shell-input")
                             .flex()
-                            .flex_1()
+                            .w(px(320.0))
+                            .max_w_full()
                             .min_w_0()
                             .when(!writes, |el| el.opacity(0.55))
                             .child(shell_input),
@@ -155,6 +158,7 @@ impl AppView {
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .items_end()
                     .gap_3()
                     .child(
@@ -190,13 +194,15 @@ impl AppView {
             settings_section().child(
                 div()
                     .w_full()
+                    .max_w(px(840.0))
                     .flex()
+                    .flex_wrap()
                     .items_center()
-                    .gap_6()
+                    .gap_4()
                     .child(
                         self.settings_element("settings-terminal-effect")
-                            .flex_1()
-                            .min_w_0()
+                            .w(px(480.0))
+                            .max_w_full()
                             .child(settings_copy(settings_terminal_effect_note())),
                     )
                     .child(

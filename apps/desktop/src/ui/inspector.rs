@@ -123,8 +123,8 @@ impl InspectorTab {
             Self::Changes => Icon::Changes,
             Self::Terminal => Icon::Terminal,
             Self::Resources => Icon::Resources,
-            Self::Computer => Icon::Approvals,
-            Self::Browser => Icon::Network,
+            Self::Computer => Icon::Computer,
+            Self::Browser => Icon::Browser,
             Self::Files => Icon::File,
             Self::Subagent => Icon::Subagents,
             Self::Home => Icon::Inspector,
@@ -229,7 +229,8 @@ impl AppView {
             strip = strip.child(
                 div()
                     .px_2()
-                    .text_size(font::SM)
+                    .text_size(font::BASE)
+                    .line_height(font::CONTROL_LINE_HEIGHT)
                     .text_color(dark().text.secondary)
                     .child(t("inspector.panel")),
             );
@@ -282,7 +283,7 @@ impl AppView {
                         Button::new("inspector-approval-hint")
                             .variant(ButtonVariant::Ghost)
                             .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
-                            .text_size(font::SM)
+                            .text_size(font::BASE)
                             .text_color(dark().semantic.warning_text)
                             .label(t("inspector.return_for_approval"))
                             .track_focus(&self.inspector_approval_focus)
@@ -516,7 +517,7 @@ impl AppView {
                             .width(px(PANEL_TAB_WIDTH - 28.0))
                             .height(px(metrics::ICON_BUTTON_SIZE))
                             .vcenter()
-                            .text_size(font::SM)
+                            .text_size(font::BASE)
                             .tooltip(tab.label.clone())
                             .child(
                                 div()
@@ -653,11 +654,15 @@ impl AppView {
                                                 .flex_col()
                                                 .gap_1()
                                                 .child(
-                                                    div().text_size(font::BASE).child(tool.label()),
+                                                    div()
+                                                        .text_size(font::BASE)
+                                                        .line_height(font::CONTROL_LINE_HEIGHT)
+                                                        .child(tool.label()),
                                                 )
                                                 .child(
                                                     div()
-                                                        .text_size(font::XS)
+                                                        .text_size(font::DESCRIPTION)
+                                                        .line_height(font::DESCRIPTION_LINE_HEIGHT)
                                                         .text_color(dark().text.secondary)
                                                         .child(tool.hint()),
                                                 ),
@@ -695,7 +700,8 @@ impl AppView {
                 div()
                     .flex_none()
                     .mt_auto()
-                    .text_size(font::SM)
+                    .text_size(font::BASE)
+                    .line_height(font::CONTROL_LINE_HEIGHT)
                     .text_color(dark().text.secondary)
                     .child(t("inspector.home_hint")),
             )

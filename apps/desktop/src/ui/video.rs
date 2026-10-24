@@ -1,5 +1,5 @@
 //! Remote video references are edited locally and sent only with the next explicit turn.
-use super::accessibility::{AxRequest, AxRole};
+use super::accessibility::{AxAction, AxRequest, AxRole};
 use super::product_access::{
     edit_input, product_action, product_actions, product_error, product_field, product_heading,
     product_panel, PanelAccess,
@@ -130,8 +130,15 @@ impl VideoView {
         }
         match request.identifier.as_str() {
             "video-urls" => edit_input(&self.urls, request, window, cx),
-            "video-save" => self.action(0, window, cx),
-            "video-cancel" => self.action(1, window, cx),
+            "video-save" | "video-cancel" => {
+                let index = usize::from(request.identifier == "video-cancel");
+                if request.action == AxAction::Focus {
+                    window.focus(&self.focus[index]);
+                    cx.notify();
+                } else if request.action == AxAction::Press {
+                    self.action(index, window, cx);
+                }
+            }
             _ => {}
         }
     }
@@ -169,12 +176,9 @@ impl Render for VideoView {
                 })
                 .label(i18n::t(label))
                 .track_focus(&self.focus[i])
-                .on_click(cx.listener(move |view, event, window, cx| {
-                    if AppView::click_down_position(event).is_some() {
-                        view.action(i, window, cx);
-                    }
-                }))
-                .on_activate(cx.listener(move |view, _, window, cx| view.action(i, window, cx)));
+                // Keep the window alive through keyup so its keyboard click cannot
+                // land on a focused control in the parent window after closing.
+                .on_click(cx.listener(move |view, _, window, cx| view.action(i, window, cx)));
             actions = actions.child(self.access.wrap(
                 id,
                 i18n::t(label),
@@ -203,14 +207,17 @@ impl Render for VideoView {
             false,
             status_body,
         );
-        self.access.sync(window, cx, Self::ax_action);
-        product_panel("video-panel")
+        self.access
+            .sync(window, cx, |view| &mut view.access, Self::ax_action);
+        product_panel("video-panel", &self.access)
             .child(product_heading(
+                &mut self.access,
+                Icon::Video,
                 i18n::t("video.title"),
                 i18n::t("video.hint"),
             ))
-            .child(status)
             .child(urls)
+            .when(self.error.is_some(), |body| body.child(status))
             .child(actions)
     }
 }

@@ -610,9 +610,9 @@ pub struct AppView {
     /// 连接迟到的 terminal 回执污染新连接上的 pending 状态。
     event_task: Option<gpui::Task<()>>,
     status_hint: Option<String>,
-    /// 字号反馈独立于操作错误；替换任务即取消上一次收起计时。
-    text_scale_feedback: Option<String>,
-    text_scale_feedback_task: Option<gpui::Task<()>>,
+    /// 复制 / 字号反馈独立于操作错误；替换任务即取消上一次收起计时。
+    status_feedback: Option<String>,
+    status_feedback_task: Option<gpui::Task<()>>,
     text_scale: font::TextScale,
     /// 正式窗口 bootstrap 开启磁盘存储；纯 UI 测试构造不访问用户配置。
     persist_appearance: bool,
@@ -1013,8 +1013,8 @@ impl AppView {
             _terminal_key_intercept: None,
             event_task: None,
             status_hint: None,
-            text_scale_feedback: None,
-            text_scale_feedback_task: None,
+            status_feedback: None,
+            status_feedback_task: None,
             text_scale: font::TextScale::default(),
             persist_appearance: false,
             appearance_error: None,
@@ -1079,6 +1079,10 @@ impl AppView {
                 .tab_index(RAIL_TAB_INDEX_RECONNECT),
             shell_layouts: [
                 "workspace-header",
+                "header-title",
+                "header-new-task-layout",
+                "header-activity-layout",
+                "header-expand-layout",
                 "workspace-empty-title",
                 "workspace-empty-hint",
                 "workspace-empty-action",
@@ -1478,23 +1482,29 @@ impl AppView {
             .py(px(metrics::HEADER_SAFE_STRIP))
             .pl(px(metrics::TIMELINE_CONTENT_INSET))
             .pr(px(metrics::HEADER_INSET_RIGHT))
+            .gap(px(metrics::HEADER_ACTION_GAP))
             .bg(dark().bg.base)
             .child(
                 div()
                     .flex()
                     .flex_row()
-                    .items_center()
+                    .items_baseline()
                     .flex_1()
                     .min_w_0()
                     .gap(px(metrics::HEADER_TITLE_META_GAP))
                     .when_some(title, |row, title| {
                         row.child(
-                            div()
+                            self.shell_element("header-title")
                                 .flex_shrink()
                                 .truncate()
                                 .text_size(font::HEADER_TITLE)
+                                .line_height(font::from_pixels(26.0))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(dark().text.primary)
+                                .tooltip({
+                                    let title = SharedString::from(title.clone());
+                                    move |_, cx| tooltip_text(title.clone(), cx)
+                                })
                                 .child(title),
                         )
                     })
@@ -1540,13 +1550,16 @@ impl AppView {
                             .flex_row()
                             .flex_none()
                             .gap(px(metrics::HEADER_ACTION_GAP))
-                            .child(trigger)
-                            .child(inspector_expand),
+                            .child(self.shell_element("header-activity-layout").child(trigger))
+                            .child(
+                                self.shell_element("header-expand-layout")
+                                    .child(inspector_expand),
+                            ),
                     )
                 })
             })
             .when(!activity_trigger_visible && !workspace_empty, |header| {
-                header.child(new_task)
+                header.child(self.shell_element("header-new-task-layout").child(new_task))
             })
     }
 
@@ -1594,7 +1607,8 @@ impl AppView {
             .py(px(metrics::HEADER_CHIP_PAD_Y))
             .rounded(px(metrics::HEADER_CHIP_RADIUS))
             .bg(dark().surface.raised)
-            .text_size(font::BODY_SM)
+            .text_size(font::META)
+            .line_height(font::META_LINE_HEIGHT)
             .text_color(dark().text.secondary)
     }
 
@@ -2318,11 +2332,11 @@ impl AppView {
         }
     }
 
-    /// GUI4：状态栏右栏优先 status_hint，其次字号反馈，否则连接文案。
+    /// 状态栏右栏优先持久错误，其次限时反馈，否则连接文案。
     pub(super) fn status_bar_trailing_text(&self) -> String {
         self.status_hint
             .clone()
-            .or_else(|| self.text_scale_feedback.clone())
+            .or_else(|| self.status_feedback.clone())
             .unwrap_or_else(|| self.connection_status_label())
     }
 
@@ -2874,7 +2888,7 @@ impl AppView {
                 let epoch = self.changes.begin_refresh();
                 self.controller.diff_list_files(workspace, epoch);
             }
-            (true, None) => self.changes.mark_failed("no workspace"),
+            (true, None) => self.changes.mark_failed(i18n::t("changes.no_workspace")),
             _ => self.changes.mark_stale("not connected"),
         }
         cx.notify();
@@ -2892,7 +2906,9 @@ impl AppView {
                 let epoch = self.changes.begin_diff_fetch(path);
                 self.controller.diff_get(workspace, path.to_string(), epoch);
             }
-            (true, None) => self.changes.mark_diff_failed("no workspace"),
+            (true, None) => self
+                .changes
+                .mark_diff_failed(i18n::t("changes.no_workspace")),
             _ => self.changes.mark_diff_failed("not connected"),
         }
         cx.notify();
@@ -3035,16 +3051,10 @@ impl AppView {
         }
         self.text_scale = scale;
         window.set_rem_size(px(scale.rem_pixels()));
-        self.text_scale_feedback =
-            Some(i18n::t("status.text_scale").replace("{}", &scale.percent().to_string()));
-        let timer = cx.background_executor().timer(Duration::from_secs(3));
-        self.text_scale_feedback_task = Some(cx.spawn(async move |this, cx| {
-            timer.await;
-            let _ = this.update(cx, |view, cx| {
-                view.text_scale_feedback = None;
-                cx.notify();
-            });
-        }));
+        self.show_status_feedback(
+            i18n::t("status.text_scale").replace("{}", &scale.percent().to_string()),
+            cx,
+        );
         cx.notify();
     }
 

@@ -328,7 +328,7 @@ fn subagent_chip_text_max(window: &Window, port_width: f32) -> Option<f32> {
 /// 会把最后一个字形折到下一行，而元素仍按一行排，高度对不上。
 /// 超出视口文字区时改用文字区宽并换行。
 fn subagent_chip_label_width(window: &Window, title: &str, text_max: Option<f32>) -> f32 {
-    let full = super::input_area::shape_label_width(window, title, font::BODY_SM).ceil();
+    let full = super::input_area::shape_label_width(window, title, font::BASE).ceil();
     match text_max {
         Some(max) => {
             if full <= max {
@@ -614,12 +614,12 @@ impl AppView {
                             ))
                             .track_focus(&focus)
                             .variant(if is_selected {
-                                ButtonVariant::Primary
-                            } else {
                                 ButtonVariant::Raised
+                            } else {
+                                ButtonVariant::Ghost
                             })
                             .radius(6.0)
-                            .text_size(font::BODY_SM)
+                            .text_size(font::BASE)
                             // 竞品共识（Claude Code Agent map / Cursor
                             // Agents Window）：并发列表每项带状态点；
                             // chip 名称前缀 Ø6 语义点，颜色同 Header 映射。
@@ -764,7 +764,8 @@ impl AppView {
                     div()
                         .px_2()
                         .py_1()
-                        .text_size(font::SM)
+                        .text_size(font::BASE)
+                        .line_height(font::CONTROL_LINE_HEIGHT)
                         .text_color(dark().semantic.danger_text)
                         .child(error),
                 )
@@ -774,7 +775,8 @@ impl AppView {
                     div()
                         .px_2()
                         .py_1()
-                        .text_size(font::SM)
+                        .text_size(font::BASE)
+                        .line_height(font::CONTROL_LINE_HEIGHT)
                         .text_color(dark().text.secondary)
                         // RV-11：断线保留内容但如实标注过期（本地化前缀 +
                         // 原始 reason；数据内容不翻译）。
@@ -868,7 +870,8 @@ impl AppView {
         if conversation.loading && items.is_empty() {
             transcript = transcript.child(
                 div()
-                    .text_size(font::SM)
+                    .text_size(font::BASE)
+                    .line_height(font::CONTROL_LINE_HEIGHT)
                     .text_color(dark().text.secondary)
                     .child(t("subagents.loading")),
             );
@@ -893,10 +896,14 @@ impl AppView {
                 .flex_col()
                 .gap_1()
                 .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .child(div().flex_1().min_w_0().child(agent.title.clone())),
+                    div().flex().flex_row().child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(font::BODY)
+                            .line_height(font::SECTION_LINE_HEIGHT)
+                            .child(agent.title.clone()),
+                    ),
                 )
                 .child(
                     div()
@@ -906,9 +913,17 @@ impl AppView {
                         .gap_2()
                         .flex_wrap()
                         .child(
-                            Label::new(agent.model_id.clone())
-                                .size(font::XS)
-                                .color(dark().text.tertiary),
+                            Label::new(format!(
+                                "{} / {} · {}",
+                                agent.provider_id,
+                                agent.model_id,
+                                agent
+                                    .effort
+                                    .as_deref()
+                                    .unwrap_or(t("settings.subagents.effort_default"))
+                            ))
+                            .size(font::XS)
+                            .color(dark().text.tertiary),
                         )
                         .child(
                             Label::new(status)
@@ -965,7 +980,8 @@ impl AppView {
                 subagent_item_focus_handle(self, cx, &format!("{}:result-text", agent.agent_id));
             let result_body = if result_repeated {
                 div()
-                    .text_size(font::SM)
+                    .text_size(font::BASE)
+                    .line_height(font::CONTROL_LINE_HEIGHT)
                     .text_color(dark().text.secondary)
                     .child(t("subagents.result_in_transcript"))
                     .into_any_element()
@@ -982,7 +998,8 @@ impl AppView {
                 .into_any_element()
             } else {
                 div()
-                    .text_size(font::SM)
+                    .text_size(font::BASE)
+                    .line_height(font::CONTROL_LINE_HEIGHT)
                     .text_color(dark().text.secondary)
                     .child(subagent_result_summary(result))
                     .into_any_element()
@@ -1075,7 +1092,8 @@ impl AppView {
                     )
                     .child(
                         div()
-                            .text_size(font::SM)
+                            .text_size(font::BASE)
+                            .line_height(font::CONTROL_LINE_HEIGHT)
                             .text_color(dark().text.primary)
                             .child(text),
                     )
@@ -1104,7 +1122,8 @@ impl AppView {
                     )
                     .child(
                         div()
-                            .text_size(font::SM)
+                            .text_size(font::BASE)
+                            .line_height(font::CONTROL_LINE_HEIGHT)
                             .text_color(dark().text.primary)
                             .child(text),
                     )
@@ -1166,7 +1185,8 @@ impl AppView {
                     )
                     .child(
                         div()
-                            .text_size(font::SM)
+                            .text_size(font::BASE)
+                            .line_height(font::CONTROL_LINE_HEIGHT)
                             .text_color(dark().text.tertiary)
                             // 思考全文随外层 transcript 滚动（同主 Timeline 展开
                             // 思考盒）：不做内嵌滚动，避免滚轮被内层吃掉。
@@ -1214,7 +1234,7 @@ impl AppView {
                         .child(
                             Button::new(button_id)
                                 .variant(ButtonVariant::Ghost)
-                                .text_size(font::SM)
+                                .text_size(font::BASE)
                                 .text_color(dark().text.secondary)
                                 .padding(ButtonPadding::Horizontal(metrics::PADDING_XS))
                                 .track_focus(&focus)
@@ -1278,9 +1298,9 @@ impl AppView {
                         // 等宽小号，随外层 transcript 滚动。
                         .child(
                             div()
-                                .text_size(font::XS)
-                                .line_height(font::from_pixels(20.0))
-                                .font_family("monospace")
+                                .text_size(font::BASE)
+                                .line_height(font::DESCRIPTION_LINE_HEIGHT)
+                                .font_family(font::MONO)
                                 .text_color(dark().text.secondary)
                                 .child(super::timeline_entry::arguments_secondary(
                                     arguments.as_deref(),
@@ -1288,9 +1308,9 @@ impl AppView {
                         )
                         .child(
                             div()
-                                .text_size(font::XS)
-                                .line_height(font::from_pixels(20.0))
-                                .font_family("monospace")
+                                .text_size(font::BASE)
+                                .line_height(font::DESCRIPTION_LINE_HEIGHT)
+                                .font_family(font::MONO)
                                 .text_color(dark().text.secondary)
                                 .child(preview),
                         );
@@ -1313,7 +1333,8 @@ impl AppView {
                 .child(subagent_run_label(&state))
                 .into_any_element(),
             PanelItem::Error(text) => div()
-                .text_size(font::SM)
+                .text_size(font::BASE)
+                .line_height(font::CONTROL_LINE_HEIGHT)
                 .text_color(dark().semantic.danger_text)
                 .child(text)
                 .into_any_element(),
@@ -1346,7 +1367,7 @@ impl AppView {
             .child(
                 Button::new(button_id)
                     .variant(ButtonVariant::Ghost)
-                    .text_size(font::BODY_SM)
+                    .text_size(font::BASE)
                     .text_color(dark().text.secondary)
                     .padding(ButtonPadding::Horizontal(metrics::PADDING_XS))
                     .label(if expanded {
@@ -1397,7 +1418,7 @@ impl AppView {
             .child(
                 Button::new(button_id)
                     .variant(ButtonVariant::Ghost)
-                    .text_size(font::BODY_SM)
+                    .text_size(font::BASE)
                     .text_color(dark().text.secondary)
                     .padding(ButtonPadding::Horizontal(metrics::PADDING_XS))
                     .label(if expanded {
@@ -1422,7 +1443,9 @@ impl AppView {
 }
 
 fn subagent_placeholder(title: &'static str, description: String) -> gpui::AnyElement {
-    EmptyState::labeled(Icon::Subagents, title, description, dark().text.primary).into_any_element()
+    EmptyState::labeled(Icon::Subagents, title, description, dark().text.primary)
+        .top_aligned()
+        .into_any_element()
 }
 
 /// 「子代理」对话栏 AX：Group 节点携带当前面板状态摘要（被选代理 /
@@ -4298,8 +4321,9 @@ mod tests {
                     let port = view.subagent_chips_scroll.bounds();
                     let text_max = super::subagent_chip_text_max(window, px_of(port.size.width));
                     let rem = px_of(window.rem_size());
-                    let font_px = 12.0 * f32::from(scale.percent()) / 100.0;
-                    let expected_h = (font_px * 1.618034).round() + 2.0 * 0.25 * rem;
+                    let expected_h =
+                        (20.0 * f32::from(scale.percent()) / 100.0 + 2.0 * 0.25 * rem)
+                            .max(metrics::ICON_BUTTON_MIN_SIZE);
                     eprintln!(
                         "RV06 scale={}% window={width}x{height} placement={} port={:.1}x{:.1} wide={:.1}x{:.1} wide_label={:.1}x{:.1} done_h={:.1} expected_h={:.1} offset_x={:.1} wide_left={:.1} port_left={:.1}",
                         scale.percent(),
@@ -4320,7 +4344,7 @@ mod tests {
                     let wide_full = super::super::input_area::shape_label_width(
                         window,
                         &wide_short,
-                        font::BODY_SM,
+                        font::BASE,
                     )
                     .ceil();
                     let wide_max = text_max.expect("chip port width");
@@ -4391,11 +4415,8 @@ mod tests {
                         );
                     }
 
-                    let font_size = font::BODY_SM.to_pixels(window.rem_size());
-                    let line_height = window
-                        .text_style()
-                        .line_height
-                        .to_pixels(font_size.into(), window.rem_size());
+                    let font_size = font::BASE.to_pixels(window.rem_size());
+                    let line_height = font::CONTROL_LINE_HEIGHT.to_pixels(window.rem_size());
                     let style = window.text_style();
                     for (id, raw, _) in &titles {
                         let short = super::short_title(raw);
@@ -4518,7 +4539,7 @@ mod tests {
             let offset_x = px_of(view.subagent_chips_scroll.offset().x);
             let short = super::short_title(&wide_title);
             let full =
-                super::super::input_area::shape_label_width(window, &short, font::BODY_SM).ceil();
+                super::super::input_area::shape_label_width(window, &short, font::BASE).ceil();
             let max = super::subagent_chip_text_max(window, px_of(port.size.width)).expect("port");
             (port, full, max, offset_x)
         });

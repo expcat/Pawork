@@ -91,7 +91,7 @@ impl AppView {
             .settings_element(dynamic_identifier("settings-mcp-server", &server.name))
             .flex()
             .flex_col()
-            .gap_3()
+            .gap_4()
             .p_4()
             .rounded(px(4.0))
             .border_1()
@@ -237,8 +237,9 @@ fn settings_mcp_server_heading(server: &McpServerEntry) -> gpui::Div {
         .child(
             div().flex().flex_row().flex_1().min_w_0().child(
                 div()
-                    .truncate()
-                    .text_size(font::SM)
+                    .whitespace_normal()
+                    .text_size(font::BASE)
+                    .line_height(font::CONTROL_LINE_HEIGHT)
                     .text_color(dark().text.primary)
                     .child(server.name.clone()),
             ),
@@ -264,10 +265,21 @@ fn settings_mcp_server_details(server: &McpServerEntry) -> gpui::Div {
         .w_full()
         .child(settings_mcp_wrapped(summary, dark().text.secondary));
     if let Some(error) = nonempty_mcp_error(server) {
-        details = details.child(settings_mcp_wrapped(
-            error.to_string(),
-            dark().semantic.danger_text,
-        ));
+        details = details
+            .child(
+                div()
+                    .whitespace_normal()
+                    .text_size(font::DESCRIPTION)
+                    .line_height(font::DESCRIPTION_LINE_HEIGHT)
+                    .text_color(dark().semantic.danger_text)
+                    .child(t("settings.tools.failure_summary")),
+            )
+            .child(
+                settings_mcp_wrapped(error.to_string(), dark().text.secondary)
+                    .font_family(font::MONO)
+                    .text_size(font::BASE)
+                    .line_height(font::DESCRIPTION_LINE_HEIGHT),
+            );
     }
     details
 }
@@ -283,8 +295,8 @@ fn settings_mcp_wrapped(text: String, color: gpui::Rgba) -> gpui::Div {
     div()
         .w_full()
         .whitespace_normal()
-        .text_size(font::SM)
-        .line_height(gpui::rems(1.4))
+        .text_size(font::META)
+        .line_height(font::META_LINE_HEIGHT)
         .text_color(color)
         .child(text)
 }

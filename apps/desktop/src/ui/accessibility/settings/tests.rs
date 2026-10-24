@@ -196,8 +196,10 @@ fn settings_controls_follow_layout_and_scroll(cx: &mut gpui::TestAppContext) {
         let save = view.settings_element_layouts["settings-proxy-save"].bounds();
         let clear = view.settings_element_layouts["settings-proxy-clear"].bounds();
         assert!(
-            (clear.right() - view.settings_scroll.bounds().right()).abs() < px(1.0),
-            "clear {:?}, viewport {:?}",
+            clear.right() <= view.settings_scroll.bounds().right()
+                && input.bounds().size.width <= px(320.0)
+                && save.left() - child.right() <= px(24.0),
+            "bounded editor and adjacent actions: clear {:?}, viewport {:?}",
             clear,
             view.settings_scroll.bounds()
         );

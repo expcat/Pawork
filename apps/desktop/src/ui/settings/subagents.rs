@@ -5,7 +5,7 @@ use crate::projection::{SettingsSubagentsState, SubagentModelRule, SubagentSetti
 use crate::ui::components::switch::Switch;
 
 /// 权限 chip 高度（独立于页面主控件，保持紧凑）。
-const SUBAGENT_CHIP_HEIGHT: f32 = 28.0;
+const SUBAGENT_CHIP_HEIGHT: f32 = 36.0;
 
 impl AppView {
     /// 「子代理」页：全局开关 + 并发上限 + 每模型规则（可发起 / 可作为
@@ -135,30 +135,28 @@ impl AppView {
             )
             .child(
                 self.settings_element("settings-subagents-concurrency-hint")
-                    .child(
-                        Label::new(t("settings.subagents.concurrency_hint"))
-                            .size(font::BODY_SM)
-                            .color(dark().text.tertiary),
-                    ),
+                    .child(settings_copy(t("settings.subagents.concurrency_hint"))),
             );
         if let Some(error) = concurrency_error {
             concurrency_column = concurrency_column.child(
                 self.settings_element("settings-subagents-concurrency-error")
-                    .child(
-                        Label::new(error)
-                            .size(font::BODY_SM)
-                            .color(dark().semantic.danger_text),
-                    ),
+                    .whitespace_normal()
+                    .text_size(font::DESCRIPTION)
+                    .line_height(font::DESCRIPTION_LINE_HEIGHT)
+                    .text_color(dark().semantic.danger_text)
+                    .child(error),
             );
         }
         // 通用区：全局开关 + 并发上限。
         let general = settings_section()
+            .max_w(px(840.0))
             .child(settings_label(t("settings.subagents.general_label")))
             .child(
                 div()
                     .id("settings-subagents-enabled-row")
                     .flex()
                     .items_center()
+                    .flex_wrap()
                     .gap_4()
                     .px_4()
                     .py_4()
@@ -170,7 +168,8 @@ impl AppView {
                             .flex()
                             .flex_col()
                             .flex_1()
-                            .min_w_0()
+                            .min_w(px(280.0))
+                            .max_w(px(480.0))
                             .gap_1()
                             .child(settings_label(t("settings.subagents.enabled_label")))
                             .child(settings_copy(t("settings.subagents.enabled_note"))),
@@ -183,7 +182,7 @@ impl AppView {
                             .gap_1()
                             .child(
                                 Label::new(enabled_state)
-                                    .size(font::BODY_SM)
+                                    .size(font::BASE)
                                     .color(dark().text.secondary),
                             )
                             // AX bounds 同源：开关须包 settings_element。
@@ -201,6 +200,7 @@ impl AppView {
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .items_end()
                     .gap_3()
                     .child(concurrency_column)
@@ -337,18 +337,19 @@ impl AppView {
             },
         );
 
-        let mut name_row = div().flex().items_center().gap_2().child(
+        let mut name_row = div().flex().flex_wrap().items_center().gap_2().child(
             self.settings_element(dynamic_identifier(
                 "settings-subagent-model-name",
                 &format!("{provider_id}:{model_id}"),
             ))
             .flex_1()
-            .min_w_0()
-            .child(
-                Label::new(model.display_name.clone())
-                    .size(font::BODY)
-                    .color(dark().text.primary),
-            ),
+            .min_w(px(280.0))
+            .max_w_full()
+            .whitespace_normal()
+            .text_size(font::BASE)
+            .line_height(font::CONTROL_LINE_HEIGHT)
+            .text_color(dark().text.primary)
+            .child(model.display_name.clone()),
         );
         // 与 Composer 和目录使用同一能力词汇。
         for (capable, label) in [
@@ -396,7 +397,7 @@ impl AppView {
                             .gap_1()
                             .child(
                                 Label::new(t("settings.subagents.allow_spawn"))
-                                    .size(font::BODY_SM)
+                                    .size(font::BASE)
                                     .color(dark().text.secondary),
                             )
                             .child(spawn_switch),
@@ -409,7 +410,7 @@ impl AppView {
                             .gap_1()
                             .child(
                                 Label::new(t("settings.subagents.allow_delegate"))
-                                    .size(font::BODY_SM)
+                                    .size(font::BASE)
                                     .color(dark().text.secondary),
                             )
                             .child(delegate_switch),
@@ -454,7 +455,7 @@ impl AppView {
                             .gap_1()
                             .child(
                                 Label::new(t("settings.subagents.effort_default"))
-                                    .size(font::BODY_SM)
+                                    .size(font::BASE)
                                     .color(dark().text.secondary),
                             )
                             .child(self.subagent_effort_default_button(
@@ -468,12 +469,15 @@ impl AppView {
                     .child(
                         div()
                             .flex()
-                            .flex_none()
+                            .flex_1()
+                            .min_w(px(280.0))
+                            .max_w_full()
+                            .flex_wrap()
                             .items_center()
-                            .gap_1()
+                            .gap_2()
                             .child(
                                 Label::new(t("settings.subagents.effort_allowed"))
-                                    .size(font::BODY_SM)
+                                    .size(font::BASE)
                                     .color(dark().text.secondary),
                             )
                             .map(|chips| {
@@ -510,7 +514,7 @@ impl AppView {
                 .variant(ButtonVariant::Raised)
                 .height(px(SUBAGENT_CHIP_HEIGHT))
                 .radius(6.0)
-                .text_size(font::BODY_SM)
+                .text_size(font::BASE)
                 .label(t("settings.subagents.reset"))
                 .tooltip(t("settings.subagents.reset_tooltip"))
                 .disabled(!writes)
@@ -556,11 +560,15 @@ impl AppView {
             .variant(ButtonVariant::Raised)
             .height(px(SUBAGENT_CHIP_HEIGHT))
             .radius(6.0)
-            .text_size(font::BODY_SM)
-            .label(subagent_permission_label(permission))
+            .text_size(font::BASE)
+            .label(format!(
+                "{}{}",
+                if granted { "✓ " } else { "" },
+                subagent_permission_label(permission)
+            ))
             .tooltip(subagent_permission_label(permission))
             .text_color(if granted {
-                dark().accent.primary
+                dark().text.primary
             } else {
                 dark().text.secondary
             })
@@ -606,7 +614,7 @@ impl AppView {
             .variant(ButtonVariant::Raised)
             .height(px(SUBAGENT_CHIP_HEIGHT))
             .radius(6.0)
-            .text_size(font::BODY_SM)
+            .text_size(font::BASE)
             .label(label)
             .tooltip(t("settings.subagents.effort_default_tooltip"))
             .disabled(!writes)
@@ -648,11 +656,11 @@ impl AppView {
             .variant(ButtonVariant::Raised)
             .height(px(SUBAGENT_CHIP_HEIGHT))
             .radius(6.0)
-            .text_size(font::BODY_SM)
-            .label(level.clone())
+            .text_size(font::BASE)
+            .label(format!("{}{}", if selected { "✓ " } else { "" }, level))
             .tooltip(t("settings.subagents.effort_allowed_tooltip"))
             .text_color(if selected {
-                dark().accent.primary
+                dark().text.primary
             } else {
                 dark().text.secondary
             })

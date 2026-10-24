@@ -311,7 +311,8 @@ impl AppView {
                 .rounded(px(metrics::CONTROL_RADIUS))
                 .bg(dark().bg.base)
                 .font_family(font::MONO)
-                .text_size(font::XS)
+                .text_size(font::BASE)
+                .line_height(font::DESCRIPTION_LINE_HEIGHT)
                 .child(text);
             if truncated {
                 text_column = text_column.child(
@@ -325,6 +326,8 @@ impl AppView {
         };
         self.settings_element("composer-attachment-preview")
             .w_full()
+            .text_size(font::BASE)
+            .line_height(font::CONTROL_LINE_HEIGHT)
             .flex()
             .flex_col()
             .gap(px(4.0))
@@ -353,6 +356,7 @@ impl AppView {
                         div()
                             .flex_none()
                             .text_size(font::XS)
+                            .line_height(font::META_LINE_HEIGHT)
                             .text_color(dark().text.secondary)
                             .child(meta_label),
                     )
@@ -361,6 +365,7 @@ impl AppView {
                             Button::new("composer-preview-close")
                                 .variant(ButtonVariant::Ghost)
                                 .padding(ButtonPadding::None)
+                                .width(px(metrics::ICON_BUTTON_MIN_SIZE))
                                 .track_focus(&close_focus)
                                 .text_size(font::XS)
                                 .label("×")
@@ -380,6 +385,7 @@ impl AppView {
 
     pub(super) fn composer_attachments_element(
         &mut self,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         // 回收已不存在附件的解码缓存，避免跨会话累积。
@@ -401,12 +407,13 @@ impl AppView {
         if let Some(attachment) = preview_attachment.as_ref() {
             column = column.child(self.composer_attachment_preview_element(attachment, cx));
         }
-        column.child(self.composer_attachment_chips_element(cx))
+        column.child(self.composer_attachment_chips_element(window, cx))
     }
 
     /// 附件 chip 行 + 本地化错误行（错误与附件同区域展示，RV-03）。
     fn composer_attachment_chips_element(
         &mut self,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let options = self.current_composer_options();
@@ -418,7 +425,8 @@ impl AppView {
             .flex()
             .flex_wrap()
             .gap_2()
-            .text_size(font::XS);
+            .text_size(font::DESCRIPTION)
+            .line_height(font::DESCRIPTION_LINE_HEIGHT);
         for attachment in options.attachments {
             let preview_id = format!("composer-preview-{}", attachment.id);
             let remove_id = format!("composer-remove-{}", attachment.id);
@@ -436,6 +444,17 @@ impl AppView {
             let remove_key = attachment.id.clone();
             let preview_key = attachment.id.clone();
             let preview_activate_key = attachment.id.clone();
+            let chrome = f32::from(window.rem_size())
+                + 4.0
+                + if attachment.image {
+                    22.0
+                } else {
+                    metrics::ICON_SM
+                };
+            let visible_name =
+                input_area::ellipsized_label(window, &attachment.name, 200.0 - chrome, font::BASE);
+            let chip_width =
+                (input_area::shape_label_width(window, &visible_name, font::BASE) + chrome).ceil();
             let thumb: gpui::AnyElement = if attachment.image {
                 match self.composer_attachment_image(&attachment) {
                     Some(image) => gpui::img(gpui::ImageSource::Image(image))
@@ -468,19 +487,32 @@ impl AppView {
                             Button::new(preview_id.clone())
                                 .variant(ButtonVariant::Raised)
                                 .track_focus(&preview_focus)
+                                .width(px(chip_width.min(200.0)))
                                 .max_width(px(200.0))
+                                .text_size(font::BASE)
                                 .child(
                                     div()
+                                        .w_full()
+                                        .min_w_0()
                                         .flex()
                                         .flex_row()
                                         .items_center()
                                         .gap(px(4.0))
                                         .child(thumb)
-                                        .child(div().flex().flex_row().flex_1().min_w_0().child(
-                                            div().truncate().child(attachment.name.clone()),
-                                        )),
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .flex_row()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .child(div().truncate().child(visible_name)),
+                                        ),
                                 )
-                                .tooltip(i18n::t("composer.preview_attachment"))
+                                .tooltip(format!(
+                                    "{} · {}",
+                                    i18n::t("composer.preview_attachment"),
+                                    attachment.name
+                                ))
                                 .on_click(cx.listener(move |view, event, _, cx| {
                                     if view.consume_button_key_click(
                                         &format!("composer-preview-{preview_key}"),
@@ -527,6 +559,7 @@ impl AppView {
                 self.settings_element(format!("composer-video-{index}"))
                     .w_full()
                     .text_size(font::XS)
+                    .line_height(font::META_LINE_HEIGHT)
                     .child(format!("{}: {}", i18n::t("video.title"), video.url)),
             );
         }
@@ -560,6 +593,8 @@ impl AppView {
                 div()
                     .w_full()
                     .text_color(dark().text.secondary)
+                    .text_size(font::DESCRIPTION)
+                    .line_height(font::DESCRIPTION_LINE_HEIGHT)
                     .child(error),
             );
         }
@@ -658,7 +693,20 @@ mod tests {
         });
         cx.refresh().unwrap();
         cx.update(|window, cx| {
-            window.focus(&view.read(cx).settings_action_focus["composer-preview-preview-test"]);
+            view.update(cx, |view, cx| {
+                view.handle_accessibility_request(
+                    accessibility::AxRequest {
+                        identifier: "composer-preview-preview-test".into(),
+                        action: accessibility::AxAction::Focus,
+                        value: None,
+                    },
+                    window,
+                    cx,
+                );
+                assert!(
+                    view.settings_action_focus["composer-preview-preview-test"].is_focused(window)
+                );
+            });
         });
         cx.refresh().unwrap();
         cx.simulate_keystrokes("enter");
@@ -921,6 +969,20 @@ mod tests {
 
         cx.refresh().unwrap();
         cx.update(|window, cx| {
+            let tree = view.read(cx).accessibility_tree(window, cx);
+            let preview = tree.find("composer-attachment-preview").unwrap();
+            let close = tree.find("composer-preview-close").unwrap();
+            assert!(
+                preview.bounds.width > 0.0 && preview.bounds.height > 0.0,
+                "visible preview must keep its AX frame: {:?}",
+                preview.bounds
+            );
+            assert!(
+                close.bounds.width >= metrics::ICON_BUTTON_MIN_SIZE
+                    && close.bounds.height >= metrics::ICON_BUTTON_MIN_SIZE,
+                "preview close must keep the shared icon hit target: {:?}",
+                close.bounds
+            );
             window.focus(&view.read(cx).settings_action_focus["composer-preview-close"]);
         });
         cx.refresh().unwrap();

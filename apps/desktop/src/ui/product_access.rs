@@ -4,18 +4,22 @@ use super::components::button::{Button, ButtonPadding};
 use super::components::label::Label;
 use super::theme::{dark, font, metrics};
 use super::*;
-use gpui::AnyElement;
+use gpui::{AnyElement, Bounds};
 
 #[derive(Default)]
 pub(super) struct PanelAccess {
     bridge: Option<AxBridge>,
     layouts: HashMap<String, ScrollHandle>,
     nodes: Vec<AxNode>,
+    scroll: ScrollHandle,
+    clips: HashMap<String, ScrollHandle>,
+    last_focus: Option<String>,
     error: Option<String>,
 }
 impl PanelAccess {
     pub(super) fn begin(&mut self) {
         self.nodes.clear();
+        self.clips.clear();
     }
     pub(super) fn wrap(
         &mut self,
@@ -49,7 +53,7 @@ impl PanelAccess {
         node.value = value;
         if enabled {
             node = match role {
-                AxRole::Button => node.action(AxAction::Press),
+                AxRole::Button => node.action(AxAction::Focus).action(AxAction::Press),
                 AxRole::TextArea => node.action(AxAction::Focus).action(AxAction::SetValue),
                 _ => node,
             };
@@ -66,6 +70,7 @@ impl PanelAccess {
         &mut self,
         window: &Window,
         cx: &mut Context<T>,
+        access: fn(&mut T) -> &mut PanelAccess,
         action: fn(&mut T, AxRequest, &mut Window, &mut Context<T>),
     ) {
         // GPUI test windows have no native handle. Their layout/focus checks
@@ -93,15 +98,96 @@ impl PanelAccess {
                 Err(error) => self.error = Some(error),
             }
         }
+        // Read the same tracked bounds after prepaint, including scroll-only frames.
+        let weak = cx.entity().downgrade();
+        window.on_next_frame(move |window, cx| {
+            let _ = weak.update(cx, |view, cx| {
+                if access(view).publish(window) {
+                    cx.notify();
+                }
+            });
+        });
+    }
+    pub(super) fn clip(&mut self, id: &str, viewport: &ScrollHandle) {
+        self.clips.insert(id.into(), viewport.clone());
+    }
+    pub(super) fn publish(&mut self, window: &Window) -> bool {
+        let viewport = self.scroll.bounds();
+        let focused = self
+            .nodes
+            .iter()
+            .find(|node| node.focused && node.enabled)
+            .map(|n| n.identifier.clone());
+        let mut scrolled = false;
+        if focused != self.last_focus {
+            if let Some(id) = focused.as_ref() {
+                if let Some(layout) = self.layouts.get(id) {
+                    let bounds = layout.bounds();
+                    if let Some(clip) = self.clips.get(id) {
+                        scrolled |= Self::reveal(clip, bounds);
+                    }
+                    // Nested scrolls update their tracked bounds on the next frame.
+                    // Recheck before marking the focus as revealed in both viewports.
+                    if !scrolled {
+                        scrolled |= Self::reveal(&self.scroll, bounds);
+                    }
+                    if !scrolled && bounds.size.height > px(0.0) {
+                        self.last_focus = focused;
+                    }
+                }
+            } else {
+                self.last_focus = focused;
+            }
+        }
+        for node in &mut self.nodes {
+            if let Some(layout) = self.layouts.get(&node.identifier) {
+                let mut bounds = layout.bounds().intersect(&viewport);
+                if let Some(clip) = self.clips.get(&node.identifier) {
+                    bounds = bounds.intersect(&clip.bounds());
+                }
+                node.bounds = AxRect::new(
+                    bounds.origin.x.into(),
+                    bounds.origin.y.into(),
+                    f32::from(bounds.size.width).max(0.0),
+                    f32::from(bounds.size.height).max(0.0),
+                );
+            }
+        }
         if let Some(bridge) = &mut self.bridge {
             let size = window.viewport_size();
             let mut tree = AxTree::new(f32::from(size.width), f32::from(size.height));
-            tree.children = self.nodes.clone();
+            tree.children = self
+                .nodes
+                .iter()
+                .filter(|n| n.bounds.width > 0.0 && n.bounds.height > 0.0)
+                .cloned()
+                .collect();
             if let Err(error) = bridge.update(tree) {
                 self.error = Some(error);
             }
         }
+        scrolled
     }
+    fn reveal(scroll: &ScrollHandle, bounds: Bounds<Pixels>) -> bool {
+        let viewport = scroll.bounds();
+        if bounds.size.height <= px(0.0) || viewport.size.height <= px(0.0) {
+            return false;
+        }
+        let top = viewport.top() + px(16.0);
+        let bottom = viewport.bottom() - px(16.0);
+        let delta = if bounds.top() < top || bounds.size.height > bottom - top {
+            top - bounds.top()
+        } else if bounds.bottom() > bottom {
+            bottom - bounds.bottom()
+        } else {
+            px(0.0)
+        };
+        let offset = scroll.offset();
+        let y = (offset.y + delta).clamp(-scroll.max_offset().height, px(0.0));
+        scroll.set_offset(point(offset.x, y));
+        scroll.offset() != offset
+    }
+
     pub(super) fn permits(&self, request: &AxRequest) -> bool {
         self.nodes.iter().any(|node| {
             node.identifier == request.identifier
@@ -125,24 +211,32 @@ impl PanelAccess {
 }
 
 /// 产品子窗口共用的滚动表单壳。字段和动作由调用方标成 flex_none，避免被压扁。
-pub(super) fn product_panel(id: &'static str) -> gpui::Stateful<gpui::Div> {
+pub(super) fn product_panel(id: &'static str, access: &PanelAccess) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
+        .track_scroll(&access.scroll)
+        .child(components::focus_ring::track_pointer_input())
+        .capture_key_down(components::focus_ring::key_down)
         .size_full()
         .overflow_y_scroll()
         .flex()
         .flex_col()
-        .gap_4()
-        .p_4()
+        .gap(px(16.0))
+        .p(px(24.0))
         .bg(dark().bg.base)
         .text_color(dark().text.primary)
 }
 
 pub(super) fn product_heading(
+    access: &mut PanelAccess,
+    icon: Icon,
     title: impl Into<SharedString>,
     note: impl Into<SharedString>,
-) -> gpui::Div {
-    div()
+) -> AnyElement {
+    let title = title.into();
+    let note = note.into();
+    let label = format!("{title}\n{note}");
+    let heading = div()
         .flex()
         .flex_col()
         .flex_none()
@@ -151,12 +245,26 @@ pub(super) fn product_heading(
         .child(
             div()
                 .w_full()
+                .flex()
+                .items_center()
+                .gap(px(12.0))
                 .text_size(font::TITLE)
+                .line_height(font::from_pixels(28.0))
+                .child(components::icon::icon(icon))
                 .font_weight(gpui::FontWeight::MEDIUM)
                 .text_color(dark().text.primary)
-                .child(title.into()),
+                .child(title),
         )
-        .child(product_note(note))
+        .child(product_note(note));
+    access.wrap(
+        "product-heading",
+        &label,
+        AxRole::StaticText,
+        None,
+        false,
+        false,
+        heading,
+    )
 }
 
 pub(super) fn product_note(text: impl Into<SharedString>) -> gpui::Div {
@@ -165,7 +273,7 @@ pub(super) fn product_note(text: impl Into<SharedString>) -> gpui::Div {
         .flex_none()
         .whitespace_normal()
         .text_size(font::BASE)
-        .line_height(gpui::rems(1.4))
+        .line_height(font::DESCRIPTION_LINE_HEIGHT)
         .text_color(dark().text.secondary)
         .child(text.into())
 }
@@ -176,7 +284,7 @@ pub(super) fn product_error(text: impl Into<SharedString>) -> gpui::Div {
         .flex_none()
         .whitespace_normal()
         .text_size(font::BASE)
-        .line_height(gpui::rems(1.4))
+        .line_height(font::DESCRIPTION_LINE_HEIGHT)
         .text_color(dark().semantic.danger_text)
         .child(text.into())
 }
@@ -198,7 +306,13 @@ pub(super) fn product_field(label: &'static str, control: impl IntoElement) -> g
 }
 
 pub(super) fn product_actions() -> gpui::Div {
-    div().flex().flex_none().flex_wrap().items_center().gap_2()
+    div()
+        .flex()
+        .flex_none()
+        .flex_wrap()
+        .items_center()
+        .gap(px(8.0))
+        .py(px(2.0))
 }
 
 pub(super) fn product_action(button: Button) -> Button {

@@ -1,5 +1,5 @@
 //! Skills are recorded from durable operations; plugin records stay distinct from MCP.
-use super::accessibility::{AxRequest, AxRole};
+use super::accessibility::{AxAction, AxRequest, AxRole};
 use super::product_access::{
     edit_input, product_error, product_field, product_heading, product_note, product_panel,
     PanelAccess,
@@ -26,6 +26,8 @@ struct RecordingView {
     preview_ready: bool,
     message: String,
     message_error: bool,
+    message_at_save: bool,
+    operations_scroll: ScrollHandle,
     focus: HashMap<String, FocusHandle>,
 }
 impl AppView {
@@ -88,6 +90,8 @@ impl AppView {
                         preview_ready: false,
                         message: String::new(),
                         message_error: false,
+                        message_at_save: false,
+                        operations_scroll: ScrollHandle::new(),
                         focus: HashMap::new(),
                     };
                     view.refresh(cx);
@@ -111,6 +115,7 @@ impl RecordingView {
         }
         self.busy = true;
         self.message.clear();
+        self.message_at_save = saving;
         self.message_error = false;
         let task = self.controller.product_request(request);
         cx.spawn(async move |this, cx| {
@@ -240,6 +245,7 @@ impl RecordingView {
         id: &'static str,
         label: &'static str,
         enabled: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let focus = self
@@ -251,7 +257,11 @@ impl RecordingView {
         let button = Button::new(format!("record-{id}"))
             .label(i18n::t(label))
             .variant(
-                if id == "save" || (id == "preview" && !self.preview_ready) {
+                if enabled
+                    && !self.busy
+                    && ((id == "save" && self.preview_ready)
+                        || (id == "preview" && !self.preview_ready))
+                {
                     ButtonVariant::Primary
                 } else {
                     ButtonVariant::Raised
@@ -278,7 +288,7 @@ impl RecordingView {
                 AxRole::Button,
                 None,
                 !self.busy && enabled,
-                false,
+                focus.is_focused(window),
                 button,
             ))
             .into_any_element()
@@ -294,23 +304,23 @@ impl Render for RecordingView {
         #[cfg(target_os = "macos")]
         install_appkit_tab_monitor(window, cx);
         self.access.begin();
-        let message_body = if self.message.is_empty() {
-            div()
-        } else if self.message_error {
-            product_error(self.message.clone())
-        } else {
-            product_note(self.message.clone())
-        };
-        let status = self.access.wrap(
-            "record-status",
-            &self.message,
-            AxRole::StaticText,
-            None,
-            false,
-            false,
-            message_body,
-        );
-        let refresh = self.button("refresh", "plan.refresh", true, cx);
+        let status = (!self.message.is_empty() && !self.message_at_save).then(|| {
+            let message_body = if self.message_error {
+                product_error(self.message.clone())
+            } else {
+                product_note(self.message.clone())
+            };
+            self.access.wrap(
+                "record-status",
+                &self.message,
+                AxRole::StaticText,
+                None,
+                false,
+                false,
+                message_body,
+            )
+        });
+        let refresh = self.button("refresh", "plan.refresh", true, window, cx);
         let title = i18n::t(if self.plugins {
             "record.plugins"
         } else {
@@ -321,27 +331,40 @@ impl Render for RecordingView {
         } else {
             i18n::t("record.hint")
         };
-        let mut body = product_panel("record-body")
-            .child(product_heading(title, note))
-            .when(!self.message.is_empty(), |body| body.child(status))
+        let mut body = product_panel("record-body", &self.access)
+            .child(product_heading(
+                &mut self.access,
+                if self.plugins {
+                    Icon::Resources
+                } else {
+                    Icon::Recording
+                },
+                title,
+                note,
+            ))
+            .children(status)
             .child(refresh);
         if self.plugins {
             let skills = self.button(
                 "skills",
                 "record.title",
                 self.session.is_some() && self.workspace.is_some(),
+                window,
                 cx,
             );
-            let mcp = self.button("mcp", "record.mcp", true, cx);
-            self.access.sync(window, cx, Self::ax_action);
+            let mcp = self.button("mcp", "record.mcp", true, window, cx);
+            self.access
+                .sync(window, cx, |view| &mut view.access, Self::ax_action);
             return body.child(skills).child(mcp);
         }
         if self.busy {
-            self.access.sync(window, cx, Self::ax_action);
+            self.access
+                .sync(window, cx, |view| &mut view.access, Self::ax_action);
             return body.child(product_note(i18n::t("plan.loading")));
         }
         let mut list = div()
             .id("record-operations")
+            .track_scroll(&self.operations_scroll)
             .max_h(px(180.0))
             .flex_none()
             .overflow_y_scroll()
@@ -386,6 +409,10 @@ impl Render for RecordingView {
                 }))
                 .on_activate(cx.listener(move |view, _, _, cx| view.select(&id, cx)));
             let operation_id = operation["event_id"].as_str().unwrap();
+            self.access.clip(
+                &format!("record-operation-{operation_id}"),
+                &self.operations_scroll,
+            );
             list = list.child(self.access.wrap(
                 &format!("record-operation-{operation_id}"),
                 &label,
@@ -396,11 +423,18 @@ impl Render for RecordingView {
                 button,
             ));
         }
-        let preview = self.button("preview", "record.preview", !self.selected.is_empty(), cx);
+        let preview = self.button(
+            "preview",
+            "record.preview",
+            !self.selected.is_empty(),
+            window,
+            cx,
+        );
         let save = self.button(
             "save",
             "record.save",
             self.preview_ready && self.workspace.is_some(),
+            window,
             cx,
         );
         let name = self.access.wrap(
@@ -430,14 +464,62 @@ impl Render for RecordingView {
             self.content.focus_handle(cx).is_focused(window),
             self.content.clone(),
         );
-        self.access.sync(window, cx, Self::ax_action);
+        self.access
+            .sync(window, cx, |view| &mut view.access, Self::ax_action);
+        let permission_hint = self.access.wrap(
+            "record-permission",
+            i18n::t("record.permission_hint"),
+            AxRole::StaticText,
+            None,
+            false,
+            false,
+            product_note(i18n::t("record.permission_hint")),
+        );
+        let saved_status = if self.message_at_save {
+            let message = if self.message_error {
+                product_error(self.message.clone())
+            } else {
+                product_note(self.message.clone())
+            };
+            Some(self.access.wrap(
+                "record-save-status",
+                &self.message,
+                AxRole::StaticText,
+                None,
+                false,
+                false,
+                message,
+            ))
+        } else {
+            None
+        };
         body = body
-            .when(!self.operations.is_empty(), |body| body.child(list))
-            .child(preview)
-            .child(product_field(i18n::t("record.name"), name))
-            .child(product_field(i18n::t("record.description"), description))
-            .child(product_field("SKILL.md", content))
-            .child(save);
+            .child(product_field(
+                i18n::t("record.operations"),
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_none()
+                    .gap(px(8.0))
+                    .when(!self.operations.is_empty(), |body| body.child(list))
+                    .child(super::product_access::product_actions().child(preview)),
+            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_none()
+                    .gap(px(16.0))
+                    .pt(px(16.0))
+                    .border_t_1()
+                    .border_color(dark().border.subtle)
+                    .child(product_field(i18n::t("record.name"), name))
+                    .child(product_field(i18n::t("record.description"), description))
+                    .child(product_field(i18n::t("record.review"), content))
+                    .child(permission_hint)
+                    .children(saved_status)
+                    .child(super::product_access::product_actions().child(save)),
+            );
         body
     }
 }
@@ -465,9 +547,23 @@ impl RecordingView {
         if let Some(input) = input {
             edit_input(input, request, window, cx);
         } else if let Some(id) = request.identifier.strip_prefix("record-operation-") {
-            self.select(id, cx);
+            if request.action == AxAction::Focus {
+                if let Some(focus) = self.focus.get(id) {
+                    window.focus(focus);
+                    cx.notify();
+                }
+            } else if request.action == AxAction::Press {
+                self.select(id, cx);
+            }
         } else if let Some(id) = request.identifier.strip_prefix("record-") {
-            self.action(id, cx);
+            if request.action == AxAction::Focus {
+                if let Some(focus) = self.focus.get(id) {
+                    window.focus(focus);
+                    cx.notify();
+                }
+            } else if request.action == AxAction::Press {
+                self.action(id, cx);
+            }
         }
     }
 }

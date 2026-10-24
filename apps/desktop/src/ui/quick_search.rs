@@ -45,16 +45,6 @@ impl SearchResult {
     }
 }
 
-fn quick_search_accent_mark() -> gpui::Div {
-    div()
-        .absolute()
-        .top_0()
-        .bottom_0()
-        .left_0()
-        .w(px(metrics::SETTINGS_LOCATE_MARK_WIDTH))
-        .bg(dark().accent.primary)
-}
-
 // 页面标题与设置行均来自 settings_search_entries()；断线设置页只允许
 // Appearance / Advanced，不依赖 Host 的浏览器面板仍保留。
 
@@ -441,14 +431,15 @@ impl AppView {
                     div()
                         .px_3()
                         .py_2()
-                        .text_size(font::BODY_SM)
+                        .text_size(font::META)
+                        .line_height(font::META_LINE_HEIGHT)
                         .text_color(dark().text.secondary)
                         .child(t(group)),
                 );
             }
             let target = result.target.clone();
             let full_title = SharedString::from(result.title.clone());
-            let title = input_area::ellipsized_label(window, &result.title, text_width, font::BODY);
+            let title = input_area::ellipsized_label(window, &result.title, text_width, font::BASE);
             let detail =
                 input_area::ellipsized_label(window, &result.detail, text_width, font::BODY_SM);
             let type_icon = result.type_icon();
@@ -467,7 +458,6 @@ impl AppView {
                     })
                     .hover(|s| s.bg(dark().surface.hover))
                     .tooltip(move |_, cx| tooltip_text(full_title.clone(), cx))
-                    .when(highlighted, |row| row.child(quick_search_accent_mark()))
                     .on_click(cx.listener(move |view, _, window, cx| {
                         view.activate_quick_result(target.clone(), window, cx)
                     }))
@@ -493,7 +483,11 @@ impl AppView {
                                             div()
                                                 .flex_1()
                                                 .truncate()
-                                                .text_size(font::BODY)
+                                                .text_size(font::BASE)
+                                                .line_height(font::CONTROL_LINE_HEIGHT)
+                                                .when(highlighted, |title| {
+                                                    title.font_weight(gpui::FontWeight::MEDIUM)
+                                                })
                                                 .child(title),
                                         ),
                                     )
@@ -503,6 +497,7 @@ impl AppView {
                                                 .flex_1()
                                                 .truncate()
                                                 .text_size(font::BODY_SM)
+                                                .line_height(font::META_LINE_HEIGHT)
                                                 .text_color(dark().text.secondary)
                                                 .child(detail),
                                         ),
@@ -517,7 +512,8 @@ impl AppView {
                     self.quick_search
                         .element("quick-search-empty")
                         .p_3()
-                        .text_size(font::BODY_SM)
+                        .text_size(font::DESCRIPTION)
+                        .line_height(font::DESCRIPTION_LINE_HEIGHT)
                         .child(t("quick.empty")),
                 )
                 .child(
@@ -525,7 +521,8 @@ impl AppView {
                         .element("quick-search-clear")
                         .p_3()
                         .cursor_pointer()
-                        .text_size(font::BODY_SM)
+                        .text_size(font::BASE)
+                        .line_height(font::CONTROL_LINE_HEIGHT)
                         .child(t("quick.clear"))
                         .on_click(cx.listener(|view, _, window, cx| {
                             view.quick_search
@@ -573,6 +570,7 @@ impl AppView {
                                     .px_2()
                                     .cursor_pointer()
                                     .text_size(font::BODY_SM)
+                                    .line_height(font::META_LINE_HEIGHT)
                                     .child("Esc")
                                     .on_click(cx.listener(|view, _, window, cx| {
                                         view.close_quick_search(window, cx)
@@ -588,6 +586,7 @@ impl AppView {
                         self.quick_search
                             .element("quick-search-scope")
                             .text_size(font::BODY_SM)
+                            .line_height(font::META_LINE_HEIGHT)
                             .text_color(dark().text.secondary)
                             .child(t(if connected {
                                 "quick.scope"

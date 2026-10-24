@@ -339,10 +339,10 @@ impl AppView {
             "inspector-back" | "inspector-approval-hint" => self.on_inspector_back(window, cx),
             "inspector-toggle" => self.toggle_menu(MenuKind::Activity, None, cx),
             "inspector-expand" => self.on_toggle_inspector(window, cx),
-            "changes-refresh" => self.refresh_changes(cx),
+            "changes-refresh" => self.activate_changes_refresh(cx),
             "changes-diff-scroll-left" => self.scroll_diff_horizontal(-1.0, cx),
             "changes-diff-scroll-right" => self.scroll_diff_horizontal(1.0, cx),
-            "resources-refresh" => self.refresh_resources(cx),
+            "resources-refresh" => self.activate_resources_refresh(cx),
             "terminal-back-to-bottom" => {
                 self.terminal_scroll.jump_to_bottom();
                 cx.notify();

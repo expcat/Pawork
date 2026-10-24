@@ -752,7 +752,7 @@ impl AppView {
                         Button::new(id)
                             .variant(ButtonVariant::Ghost)
                             .padding(ButtonPadding::None)
-                            .width(px(28.0))
+                            .width(px(32.0))
                             .height(px(32.0))
                             .center()
                             .child(icon(glyph))
@@ -780,11 +780,7 @@ impl AppView {
         let status = self.browser.status();
         // CU-14：有标签时显示标签条；每条 = 选中按钮（截断标题，Agent
         // 标签带色点）+ 独立关闭按钮；末尾「+」新建用户标签。
-        let strip = if self.browser.labels.is_empty() {
-            None
-        } else {
-            Some(self.browser_tab_strip(cx))
-        };
+        let strip = self.browser_tab_strip(cx);
         div()
             .flex()
             .flex_col()
@@ -793,7 +789,7 @@ impl AppView {
             .w_full()
             .overflow_hidden()
             .child(toolbar)
-            .when_some(strip, |body, strip| body.child(strip))
+            .child(strip)
             .child(
                 div()
                     .id("browser-page-layout")
@@ -806,13 +802,20 @@ impl AppView {
                         body.flex()
                             .flex_col()
                             .items_center()
-                            .justify_center()
                             .gap_2()
-                            .p_4()
-                            .text_size(font::SM)
+                            .px_4()
+                            .py(px(24.0))
+                            .text_size(font::DESCRIPTION)
+                            .line_height(font::DESCRIPTION_LINE_HEIGHT)
                             .text_color(dark().text.secondary)
-                            .child(icon(Icon::Network))
-                            .child(t("browser.empty"))
+                            .child(icon(Icon::Browser))
+                            .child(
+                                div()
+                                    .text_size(font::BODY)
+                                    .line_height(font::SECTION_LINE_HEIGHT)
+                                    .child(t("browser.empty")),
+                            )
+                            .child(t("browser.placeholder"))
                     })
                     .child(
                         canvas(
@@ -847,7 +850,8 @@ impl AppView {
                         .flex_none()
                         .px_2()
                         .py_1()
-                        .text_size(font::SM)
+                        .text_size(font::BASE)
+                        .line_height(font::DESCRIPTION_LINE_HEIGHT)
                         .text_color(
                             if self.browser.error.is_some() || self.browser.state.error.is_some() {
                                 dark().semantic.warning_text
@@ -919,7 +923,7 @@ impl AppView {
                     .flex_row()
                     .items_center()
                     .flex_none()
-                    .h(px(28.0))
+                    .min_h(px(32.0))
                     .rounded(px(6.0))
                     .when(selected, |row| row.bg(dark().surface.raised))
                     .child(
@@ -935,14 +939,16 @@ impl AppView {
                                     .track_focus(&focus)
                                     .padding(ButtonPadding::Horizontal(6.0))
                                     .width(px(160.0))
-                                    .height(px(28.0))
+                                    .height(px(32.0))
                                     .vcenter()
-                                    .text_size(font::SM)
+                                    .text_size(font::BASE)
                                     .tooltip(shown.clone())
                                     .child(
                                         div()
                                             .flex()
                                             .flex_row()
+                                            .flex_1()
+                                            .min_w_0()
                                             .items_center()
                                             .gap_1()
                                             .when(label.agent_owned, |row| {
@@ -956,14 +962,16 @@ impl AppView {
                                                 )
                                             })
                                             .child(
-                                                div()
-                                                    .truncate()
-                                                    .text_color(if selected {
-                                                        dark().text.primary
-                                                    } else {
-                                                        dark().text.secondary
-                                                    })
-                                                    .child(label.label.clone()),
+                                                div().flex_1().min_w_0().child(
+                                                    div()
+                                                        .truncate()
+                                                        .text_color(if selected {
+                                                            dark().text.primary
+                                                        } else {
+                                                            dark().text.secondary
+                                                        })
+                                                        .child(label.label.clone()),
+                                                ),
                                             ),
                                     )
                                     .on_click(cx.listener(move |view, event, window, cx| {
@@ -990,7 +998,7 @@ impl AppView {
                                     .variant(ButtonVariant::Ghost)
                                     .padding(ButtonPadding::None)
                                     .width(px(24.0))
-                                    .height(px(28.0))
+                                    .height(px(32.0))
                                     .center()
                                     .child(icon_sized(Icon::Cancel, px(12.0)))
                                     .tooltip(format!("{} · {}", t("browser.tab_close"), shown))
@@ -1020,8 +1028,8 @@ impl AppView {
                     Button::new("browser-new-tab")
                         .variant(ButtonVariant::Ghost)
                         .padding(ButtonPadding::None)
-                        .width(px(28.0))
-                        .height(px(28.0))
+                        .width(px(32.0))
+                        .height(px(32.0))
                         .center()
                         .child(icon(Icon::Plus))
                         .tooltip(t("browser.new_tab"))
@@ -1083,7 +1091,7 @@ impl AppView {
         }
         // CU-14：标签条与工具栏同一 AX 组，逐标签发布选中 / 关闭按钮，
         // 坐标取标签条实测布局并按面板可视范围裁剪。
-        if !self.browser.labels.is_empty() {
+        {
             let mut tabs_node = AxNode::new(
                 "browser-tabs",
                 AxRole::Group,

@@ -199,6 +199,12 @@ impl AppView {
                     self.settings_menu_element_bounds(&preview_id, "composer-options"),
                 )
                 .value(attachment.name.clone())
+                .focused(
+                    self.settings_action_focus
+                        .get(&preview_id)
+                        .is_some_and(|focus| focus.is_focused(window)),
+                )
+                .action(AxAction::Focus)
                 .action(AxAction::Press),
             );
             composer = composer.child(
@@ -209,6 +215,12 @@ impl AppView {
                     self.settings_menu_element_bounds(&id, "composer-options"),
                 )
                 .enabled(!self.composer_sending)
+                .focused(
+                    self.settings_action_focus
+                        .get(&id)
+                        .is_some_and(|focus| focus.is_focused(window)),
+                )
+                .action(AxAction::Focus)
                 .action(AxAction::Press),
             );
         }
@@ -246,6 +258,12 @@ impl AppView {
                         "composer-attachment-preview",
                     ),
                 )
+                .focused(
+                    self.settings_action_focus
+                        .get("composer-preview-close")
+                        .is_some_and(|focus| focus.is_focused(window)),
+                )
+                .action(AxAction::Focus)
                 .action(AxAction::Press),
             );
             composer = composer.child(
@@ -255,7 +273,7 @@ impl AppView {
                     "Attachment preview",
                     self.settings_menu_element_bounds(
                         "composer-attachment-preview",
-                        "composer-options",
+                        "composer-attachments",
                     ),
                 )
                 .value(format!(
@@ -409,13 +427,27 @@ impl AppView {
                     .action(AxAction::Focus),
                 );
             }
-            if self.model_menu_row_count() > 0 {
+            if self.model_menu_row_count() > 0 && self.model_menu_current_notice().is_none() {
                 menu = menu.child(AxNode::new(
                     "model-capability-help",
                     AxRole::StaticText,
                     t("model_capability.help"),
                     bounds("model-capability-help"),
                 ));
+            }
+            if let (Some(notice), Some((provider, id))) = (
+                self.model_menu_current_notice(),
+                self.projection.effective_model(),
+            ) {
+                menu = menu.child(
+                    AxNode::new(
+                        "model-menu-current-notice",
+                        AxRole::StaticText,
+                        notice,
+                        bounds("model-menu-current-notice"),
+                    )
+                    .value(format!("{provider} / {id}")),
+                );
             }
             if self.model_menu_row_count() == 0 {
                 let (title, hint) = self.model_menu_empty_text();
@@ -470,14 +502,14 @@ impl AppView {
                                     ),
                                 )
                                 .selected(selected)
-                                .description(
-                                    super::super::super::input_area::model_capability_label(&model),
-                                )
-                                .focused(ix == highlight)
+                                .description(format!(
+                                    "{}\n{}",
+                                    self.composer_model_row_source(&model),
+                                    super::super::super::input_area::model_capability_label(&model)
+                                ))
+                                .value(format!("{} / {}", model.provider_id, model.id))
+                                .focused(self.model_focus.is_focused(window) && ix == highlight)
                                 .enabled(self.can_switch_model());
-                                if title != model.id {
-                                    item = item.value(&model.id);
-                                }
                                 if self.can_switch_model() {
                                     item = item.action(AxAction::Press);
                                 }
@@ -495,7 +527,13 @@ impl AppView {
                     t("model_search.manage"),
                     bounds("model-menu-settings"),
                 )
-                .focused(highlight == self.model_menu_row_count())
+                .focused(
+                    self.settings_action_focus
+                        .get("model-menu-settings")
+                        .is_some_and(|focus| focus.is_focused(window))
+                        || (self.model_focus.is_focused(window)
+                            && highlight == self.model_menu_row_count()),
+                )
                 .action(AxAction::Press),
             );
             composer = composer.child(menu);
