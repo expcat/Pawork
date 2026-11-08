@@ -512,7 +512,7 @@ impl Render for RecordingView {
                     .gap(px(16.0))
                     .pt(px(16.0))
                     .border_t_1()
-                    .border_color(dark().border.subtle)
+                    .border_color(light().border.subtle)
                     .child(product_field(i18n::t("record.name"), name))
                     .child(product_field(i18n::t("record.description"), description))
                     .child(product_field(i18n::t("record.review"), content))

@@ -5,7 +5,7 @@ use super::*;
 use crate::projection::{TimelineEntry, TimelineEntryKind, TimelineRow};
 use crate::ui::components::button::{Button, ButtonPadding, ButtonVariant};
 use crate::ui::components::icon::{icon, Icon};
-use crate::ui::theme::{dark, font, metrics};
+use crate::ui::theme::{font, light, metrics};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum MessageKey {
@@ -486,7 +486,7 @@ impl AppView {
                 .center()
                 .vcenter()
                 .radius(metrics::CONTROL_RADIUS)
-                .text_color(dark().text.emphasis)
+                .text_color(light().text.emphasis)
                 .child(icon(icon_kind))
                 .tooltip(t(label_key))
                 .track_focus(&focus)
@@ -630,13 +630,13 @@ impl AppView {
             .flex_col()
             .gap_1()
             .border_b_1()
-            .border_color(dark().border.subtle)
+            .border_color(light().border.subtle)
             .child(controls)
             .child(
                 self.navigation_element("timeline-nav-scope")
                     .text_size(font::BODY_SM)
                     .line_height(font::META_LINE_HEIGHT)
-                    .text_color(dark().text.secondary)
+                    .text_color(light().text.secondary)
                     .child(scope),
             );
         if mode == NavigationMode::Turns {

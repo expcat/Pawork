@@ -201,9 +201,9 @@ impl AppView {
             .or_insert_with(|| cx.focus_handle().tab_stop(true))
             .clone();
         let text_color = if enabled || current {
-            dark().text.primary
+            light().text.primary
         } else {
-            dark().text.tertiary
+            light().text.tertiary
         };
         let mut row = div()
             .id(gpui::SharedString::from(id.clone()))
@@ -218,15 +218,15 @@ impl AppView {
             .rounded(px(6.0))
             .border_2()
             .border_color(gpui::rgba(0x00000000))
-            .focus(|style| style.border_color(dark().accent.primary))
+            .focus(|style| style.border_color(light().accent.primary))
             .bg(if current {
-                dark().surface.raised
+                light().surface.raised
             } else {
-                dark().bg.panel
+                light().bg.panel
             })
             .when(enabled, |row| {
                 row.cursor_pointer()
-                    .hover(|style| style.bg(dark().surface.hover))
+                    .hover(|style| style.bg(light().surface.hover))
             })
             .child(
                 div()
@@ -241,7 +241,7 @@ impl AppView {
                             .h(px(metrics::SETTINGS_RADIO_OUTER))
                             .rounded_full()
                             .border(px(1.5))
-                            .border_color(dark().text.secondary)
+                            .border_color(light().text.secondary)
                             .flex()
                             .items_center()
                             .justify_center()
@@ -251,7 +251,7 @@ impl AppView {
                                         .w(px(metrics::SETTINGS_RADIO_INNER))
                                         .h(px(metrics::SETTINGS_RADIO_INNER))
                                         .rounded_full()
-                                        .bg(dark().text.primary),
+                                        .bg(light().text.primary),
                                 )
                             }),
                     ),
@@ -280,7 +280,7 @@ impl AppView {
                             .whitespace_normal()
                             .text_size(font::DESCRIPTION)
                             .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                            .text_color(dark().text.secondary)
+                            .text_color(light().text.secondary)
                             .child(approval_mode_description(mode)),
                     ),
             );
@@ -289,7 +289,7 @@ impl AppView {
                 div().flex_none().child(
                     Label::new(t("settings.permissions.state_current"))
                         .size(font::XS)
-                        .color(dark().text.primary),
+                        .color(light().text.primary),
                 ),
             );
         } else if enabled {

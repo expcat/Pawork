@@ -474,7 +474,7 @@ impl AppView {
                         .px_3()
                         .py_2()
                         .text_size(font::BODY_SM)
-                        .text_color(dark().text.secondary)
+                        .text_color(light().text.secondary)
                         .child(t("settings.search.empty")),
                 )
                 .into_any_element();
@@ -486,7 +486,7 @@ impl AppView {
                 .px_3()
                 .py_2()
                 .cursor_pointer()
-                .hover(|style| style.bg(dark().surface.hover))
+                .hover(|style| style.bg(light().surface.hover))
                 .on_click(cx.listener(move |view, _, window, cx| {
                     view.settings_search_selected = Some(result_id.clone());
                     view.locate_settings_entry(page, row_id, window, cx);
@@ -505,13 +505,13 @@ impl AppView {
                             div()
                                 .truncate()
                                 .text_size(font::BODY_SM)
-                                .text_color(dark().text.secondary)
+                                .text_color(light().text.secondary)
                                 .child(detail),
                         ),
                     ),
                 );
             if index == selected {
-                row = row.bg(dark().surface.hover);
+                row = row.bg(light().surface.hover);
             }
             list = list.child(row);
         }

@@ -163,8 +163,8 @@ impl AppView {
                                 .flex_none()
                                 .rounded(px(6.0))
                                 .border_1()
-                                .border_color(dark().border.strong)
-                                .bg(dark().bg.panel),
+                                .border_color(light().border.strong)
+                                .bg(light().bg.panel),
                         )
                         .child(
                             div()
@@ -199,34 +199,34 @@ impl AppView {
                             .max_w(px(840.0))
                             .p_4()
                             .rounded(px(8.0))
-                            .bg(dark().surface.raised)
+                            .bg(light().surface.raised)
                             .child(
                                 div()
                                     .text_size(font::PAGE_TITLE)
                                     .line_height(font::from_pixels(32.0))
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(dark().text.primary)
+                                    .text_color(light().text.primary)
                                     .child(t("settings.appearance.sample_heading")),
                             )
                             .child(
                                 div()
                                     .text_size(font::BODY)
                                     .line_height(font::from_pixels(metrics::MSG_LINE_HEIGHT))
-                                    .text_color(dark().text.primary)
+                                    .text_color(light().text.primary)
                                     .child(t("settings.appearance.sample_body")),
                             )
                             .child(
                                 div()
                                     .text_size(font::DESCRIPTION)
                                     .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                                    .text_color(dark().text.secondary)
+                                    .text_color(light().text.secondary)
                                     .child(t("settings.appearance.sample_sub")),
                             )
                             .child(
                                 div()
                                     .text_size(font::META)
                                     .line_height(font::META_LINE_HEIGHT)
-                                    .text_color(dark().text.tertiary)
+                                    .text_color(light().text.tertiary)
                                     .child(t("settings.appearance.sample_meta")),
                             )
                             .child(
@@ -234,7 +234,7 @@ impl AppView {
                                     .font_family(font::MONO)
                                     .text_size(font::BASE)
                                     .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                                    .text_color(dark().text.primary)
+                                    .text_color(light().text.primary)
                                     .child(t("settings.appearance.sample_code")),
                             ),
                     )

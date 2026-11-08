@@ -13,7 +13,7 @@ use gpui::{
 use super::components::button::{Button, ButtonPadding, ButtonVariant};
 use super::components::icon::{icon, Icon};
 use super::i18n::t;
-use super::theme::{dark, font, metrics};
+use super::theme::{font, light, metrics};
 use super::AppView;
 
 /// 代码头与复制动作共用 32px 槽；代码正文独立使用 14/22。
@@ -716,7 +716,7 @@ fn copy_code_button(
                 .height(px(CODE_HEADER_HEIGHT))
                 .center()
                 .vcenter()
-                .text_color(dark().text.secondary)
+                .text_color(light().text.secondary)
                 .child(icon(Icon::Copy))
                 .tooltip(t("timeline.copy_code"))
                 .track_focus(&focus)
@@ -878,7 +878,7 @@ fn styled_line(
             font: face,
             color: color.into(),
             background_color: (span.style == InlineStyle::Code)
-                .then(|| dark().surface.raised.into()),
+                .then(|| light().surface.raised.into()),
             underline: (span.style == InlineStyle::Link).then(|| gpui::UnderlineStyle {
                 thickness: px(1.0),
                 color: Some(color.into()),
@@ -973,7 +973,7 @@ pub(super) fn message_body_element(
             element = element
                 .group("markdown-code")
                 .px(px(12.0))
-                .bg(dark().surface.raised)
+                .bg(light().surface.raised)
                 .rounded(px(4.0))
                 .child(
                     div()
@@ -985,7 +985,7 @@ pub(super) fn message_body_element(
                             let label = div()
                                 .text_size(font::BODY_SM)
                                 .line_height(font::META_LINE_HEIGHT)
-                                .text_color(dark().text.secondary)
+                                .text_color(light().text.secondary)
                                 .truncate();
                             #[cfg(test)]
                             let label = label.debug_selector({
@@ -1007,7 +1007,7 @@ pub(super) fn message_body_element(
             element = element
                 .pl(px(12.0))
                 .border_l_2()
-                .border_color(dark().border.subtle);
+                .border_color(light().border.subtle);
         }
         if block.kind == BlockKind::Table {
             let widths = table_column_widths_shaped(&block.table, window, color);
@@ -1028,9 +1028,9 @@ pub(super) fn message_body_element(
                     .w(px(table_width))
                     .min_w(px(table_width))
                     .border_b_1()
-                    .border_color(dark().border.subtle);
+                    .border_color(light().border.subtle);
                 if row_index == 0 {
-                    row_element = row_element.bg(dark().surface.hover);
+                    row_element = row_element.bg(light().surface.hover);
                 }
                 for (cell_index, cell) in row.iter().enumerate() {
                     let width = widths

@@ -1,6 +1,6 @@
 # Pawork Desktop GUI 设计
 
-> 更新：2026-10-22。本文定义现行界面与交互合同；能力边界见 [Desktop Spec](spec/desktop.md) 与 [desktop crate](spec/crates/desktop.md)，未闭合验收见 [ROADMAP](ROADMAP.md)。行为以源码 / golden 为准，布局与冻结契约以 [架构文档](architecture.md) 为准。
+> 更新：2026-11-08。本文定义现行界面与交互合同；能力边界见 [Desktop Spec](spec/desktop.md) 与 [desktop crate](spec/crates/desktop.md)，未闭合验收见 [ROADMAP](ROADMAP.md)。行为以源码 / golden 为准，布局与冻结契约以 [架构文档](architecture.md) 为准。
 
 2026-10-22 的 [字体、外观与交互优化方案](plan/ui-2026-10-22.md) 按 UI-01～08 分批实施；下文同步实际落地的共享组件、工作台壳、Timeline / 反馈与七种工作面板合同，页面迁移与验收状态见方案 §9。
 
@@ -10,9 +10,9 @@
 
 Pawork 是本机 Coding Agent 工作台：用户围绕一个任务阅读、输入、批准工具操作和检查结果；项目与历史任务可随时切换，工作面板在需要时出现。首页引导、阅读层级、任务 / 内容查找和设置定位围绕这一流程组织。
 
-独立 GPUI 进程经 `pawork-client` 连接 `pawork gui serve`；不嵌入 Core，不直连 Provider、SQLite、Git、PTY、Keychain 或文件索引。继续使用 Rust 构建链、现有深色 token 和 100% / 125% / 150% 字号。关闭窗口、进入设置或收起面板均不取消已进入 Core 的 Run。
+独立 GPUI 进程经 `pawork-client` 连接 `pawork gui serve`；不嵌入 Core，不直连 Provider、SQLite、Git、PTY、Keychain 或文件索引。继续使用 Rust 构建链、默认浅色 token 和 100% / 125% / 150% 字号。关闭窗口、进入设置或收起面板均不取消已进入 Core 的 Run。
 
-本文只规定界面与交互。当前不提供 PR / 云任务 / 定时任务目的地，不引入插件市场、完整 IDE、浅色 / 跟随系统主题或新的权限模式。候选能力见 §11，不能因为参考图中有入口就绘制可点击占位。
+本文只规定界面与交互。当前不提供 PR / 云任务 / 定时任务目的地，不引入插件市场、完整 IDE、主题切换 / 跟随系统主题或新的权限模式。候选能力见 §11，不能因为参考图中有入口就绘制可点击占位。
 
 ## 2. 参照与取舍
 
@@ -41,7 +41,7 @@ Composer 附件、模型用途、子代理、面板与 Settings 的交互见下�
 
 <a id="ui-1-工作台视觉更新2026-09-07"></a>
 
-沿用中性近黑色板（GUI3-08）：canvas `#141416`、panel `#0e0e10`、menu `#1c1c1f`、raised `#222226`、hover `#2c2c31`；正文 `#f2f2f3`、次要文字 `#aaaab2`、辅助文字 `#9b9ba4`，主动作 / 焦点蓝 `#2f6fed`。普通结构通过留白与细分隔线组织；Composer 使用 16px 圆角与轻阴影，浮层保留 elevation。hover / pressed / focus 即时；Switch 切换 120ms ease-out；Inspector 开合 180ms；流式 caret 为静态 2×14 条，不循环闪动。
+2026-11-08 起默认使用中性浅色板：canvas `#fafafa`、panel `#f4f4f5`、menu / raised `#ffffff`、hover `#e9e9ed`；正文 `#1b1b1f`、次要文字 `#4b4b55`、辅助文字 `#5f5f6a`，主动作 / 焦点蓝 `#245cca`。原深色 palette 保留在 `theme.rs`，当前没有主题切换入口。普通结构通过留白与细分隔线组织；Composer 使用 16px 圆角与轻阴影，浮层保留 elevation。hover / pressed / focus 即时；Switch 切换 120ms ease-out；Inspector 开合 180ms；流式 caret 为静态 2×14 条，不循环闪动。
 
 | 项目 | 当前有效值 |
 | --- | --- |
@@ -197,6 +197,8 @@ Changes 长行实际横向溢出时，在 diff 底部显示向左 / 向右浏览
 
 Terminal 首次打开且项目可用、无已有 PTY 或启动错误时自动创建；失败保留说明，避免循环重试。终端窗口不显示独立输入栏、发送 / Start / Size 按钮或尺寸步进器；用户直接在提示符后输入。仅保留标签选择、新建和关闭，关闭 PTY 标签须等待 Host 确认；可以关闭后台标签而不切换当前页。关闭当前 PTY 回落到同项目兄弟，最后一个关闭后回到其它工具或入口。关闭面板不关闭 PTY，窗口退出不取消 Run。运行中 I/O 失败仍保留终端可操作状态；旧权限 stale 时不据此作确定性拒绝。宽窗沿用 180ms 开合并从当前宽度反向续接，跨窄窗布局切换不做穿越不可用区域的动画。
 
+终端 ANSI 16 色使用适配浅底的色板，白色系映射为中性灰；16 种前景色在默认输出背景上均达到 4.5:1 对比度。
+
 ## 9. Settings
 
 <a id="ui-5-设置更新2026-09-08"></a>
@@ -224,7 +226,7 @@ Approvals 行最小高 3.5rem，名称 14/20、完整影响说明 14/22，由实
 - 「额度耗尽时切换」保持 ADR-060 的版本 / 账号 gate、默认关闭与手动选择后关闭语义；不因查找或面板交互触发。刷新保留旧读数并标加载，离页 / 断线 / 删除使旧请求失效。
 - 普通 UI / AX summary 不泄露 credential 片段、endpoint 或 raw 错误。secure 输入只在认证编辑中出现，完整值不进 AX / 日志 / 搜索，离开设置清缓冲。OAuth 只展示 Host 返回的 HTTP(S) 授权链接和存在的 device code；到期收起动作。
 
-其余设置仍使用现有范围：Network 只写 Global proxy；Approvals 保持五档与项目信任；Tools & MCP 提供真实 Test / Remove，空态解释平台配置路径、配置节与重启刷新；Terminal 默认只影响之后新建；Appearance 只提供现有字号 / 中英文与深色主题说明；Advanced 保留离线连接诊断，About 以当前认证握手的 `host_data_dir` 为可用条件。
+其余设置仍使用现有范围：Network 只写 Global proxy；Approvals 保持五档与项目信任；Tools & MCP 提供真实 Test / Remove，空态解释平台配置路径、配置节与重启刷新；Terminal 默认只影响之后新建；Appearance 只提供现有字号 / 中英文与浅色主题说明；Advanced 保留离线连接诊断，About 以当前认证握手的 `host_data_dir` 为可用条件。
 
 外观页字号与语言使用宽 112px、最小高 36px 的中性选项，当前项为 Raised、加勾选与 medium 字重，焦点环独立于当前项；选项组可换行。即时样例最大 840px，依次包含 24/32 半粗页标题、16/26 正文、14/22 说明、12/18 来源与 Menlo 14/22 代码，AX 按相同顺序读取。消息软换行输入使用 16px / 26px；设置字段与文件编辑仍为 14px，各自保持原有换行与保存方式。
 
@@ -259,7 +261,7 @@ Snapshot 不含历史正文。首连按 Snapshot / subscribe / SessionGet 分页
 | 全历史全文搜索 / 跨重启归档页 | Snapshot 不含全部历史 / 已归档列表，没有相应查询；先确认实际需求与协议方案 |
 | 常驻 minimap / 回合悬停预览 | 先验证查找与回合目录是否足够；不足时再评估变高虚拟列表、定位稳定性与视觉收益 |
 | 通知中心 | 现有待关注任务入口 / 内联错误可先使用；持久已读状态和跨任务通知不能仅靠 Toast 实现 |
-| PR / 定时任务 / 插件市场 / 浅色主题 | 尚无对应产品入口；立项时评估真实后端能力和架构边界 |
+| PR / 定时任务 / 插件市场 / 主题切换 / 跟随系统主题 | 尚无对应产品入口；立项时评估真实后端能力和架构边界 |
 
 通用候选登记以 [backlog](spec/backlog.md) 为入口。
 

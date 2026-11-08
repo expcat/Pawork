@@ -293,7 +293,7 @@ impl AppView {
                     .items_center()
                     .justify_center()
                     .text_size(font::XS)
-                    .text_color(dark().text.secondary)
+                    .text_color(light().text.secondary)
                     .child(i18n::t("composer.attachment_image"))
                     .into_any_element(),
             }
@@ -309,7 +309,7 @@ impl AppView {
                 .overflow_y_scroll()
                 .p(px(4.0))
                 .rounded(px(metrics::CONTROL_RADIUS))
-                .bg(dark().bg.base)
+                .bg(light().bg.base)
                 .font_family(font::MONO)
                 .text_size(font::BASE)
                 .line_height(font::DESCRIPTION_LINE_HEIGHT)
@@ -318,7 +318,7 @@ impl AppView {
                 text_column = text_column.child(
                     div()
                         .pt(px(4.0))
-                        .text_color(dark().text.tertiary)
+                        .text_color(light().text.tertiary)
                         .child(i18n::t("composer.preview_truncated")),
                 );
             }
@@ -333,9 +333,9 @@ impl AppView {
             .gap(px(4.0))
             .p(px(metrics::SPACE_2))
             .rounded(px(metrics::CONTROL_RADIUS))
-            .bg(dark().bg.panel)
+            .bg(light().bg.panel)
             .border_1()
-            .border_color(dark().border.subtle)
+            .border_color(light().border.subtle)
             .child(
                 div()
                     .flex()
@@ -357,7 +357,7 @@ impl AppView {
                             .flex_none()
                             .text_size(font::XS)
                             .line_height(font::META_LINE_HEIGHT)
-                            .text_color(dark().text.secondary)
+                            .text_color(light().text.secondary)
                             .child(meta_label),
                     )
                     .child(
@@ -592,7 +592,7 @@ impl AppView {
             row = row.child(
                 div()
                     .w_full()
-                    .text_color(dark().text.secondary)
+                    .text_color(light().text.secondary)
                     .text_size(font::DESCRIPTION)
                     .line_height(font::DESCRIPTION_LINE_HEIGHT)
                     .child(error),
@@ -602,29 +602,29 @@ impl AppView {
             let message = self.composer_attachment_error_text(error);
             row = row.child(
                 div().w_full().flex().flex_row().child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .flex_1()
-                        .min_w_0()
-                        .child(div().text_color(dark().semantic.danger_text).child(message)),
+                    div().flex().flex_row().flex_1().min_w_0().child(
+                        div()
+                            .text_color(light().semantic.danger_text)
+                            .child(message),
+                    ),
                 ),
             );
         }
         if let Some(error) = self.current_composer_send_error() {
             let message = i18n::t("composer.send_failed_reason").replace("{}", error);
-            row =
-                row.child(
-                    self.settings_element("composer-send-error")
-                        .w_full()
-                        .flex()
-                        .flex_row()
-                        .child(
-                            div().flex().flex_row().flex_1().min_w_0().child(
-                                div().text_color(dark().semantic.danger_text).child(message),
-                            ),
+            row = row.child(
+                self.settings_element("composer-send-error")
+                    .w_full()
+                    .flex()
+                    .flex_row()
+                    .child(
+                        div().flex().flex_row().flex_1().min_w_0().child(
+                            div()
+                                .text_color(light().semantic.danger_text)
+                                .child(message),
                         ),
-                );
+                    ),
+            );
         }
         row
     }

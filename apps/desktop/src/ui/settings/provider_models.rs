@@ -394,18 +394,18 @@ impl AppView {
             .child(
                 Label::new(t("settings.providers.effort_label"))
                     .size(font::BASE)
-                    .color(dark().text.secondary),
+                    .color(light().text.secondary),
             )
             .child(
                 div()
                     .flex_none()
                     .px_1()
                     .rounded(px(4.0))
-                    .bg(dark().surface.raised)
+                    .bg(light().surface.raised)
                     .child(
                         Label::new(source)
                             .size(font::XS)
-                            .color(dark().text.tertiary),
+                            .color(light().text.tertiary),
                     ),
             );
         // 默认强度 cycle 按钮。
@@ -469,9 +469,9 @@ impl AppView {
                     level
                 ))
                 .text_color(if selected_chip {
-                    dark().text.primary
+                    light().text.primary
                 } else {
-                    dark().text.secondary
+                    light().text.secondary
                 })
                 .tooltip(t("settings.providers.effort_range_tooltip"))
                 .disabled(!enabled)
@@ -633,7 +633,7 @@ impl AppView {
                     .child(
                         div()
                             .text_size(font::BASE)
-                            .text_color(dark().text.primary)
+                            .text_color(light().text.primary)
                             .child(format!(
                                 "{} · {}",
                                 t("settings.providers.models_title"),
@@ -643,7 +643,7 @@ impl AppView {
                     .child(
                         div()
                             .text_size(font::XS)
-                            .text_color(dark().text.secondary)
+                            .text_color(light().text.secondary)
                             .child(self.model_provider_status(provider_id)),
                     )
                     .child(settings_copy(crate::ui::i18n::t2(
@@ -661,7 +661,7 @@ impl AppView {
                     .whitespace_normal()
                     .text_size(font::DESCRIPTION)
                     .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                    .text_color(dark().text.secondary)
+                    .text_color(light().text.secondary)
                     .child(t("settings.providers.catalog_scope")),
             );
         let mut bulk_actions = div().flex().flex_wrap().gap_2();
@@ -767,7 +767,7 @@ impl AppView {
                         .child(
                             div()
                                 .text_size(font::BASE)
-                                .text_color(dark().text.primary)
+                                .text_color(light().text.primary)
                                 .child(t("settings.providers.models_empty_title")),
                         )
                         .child(
@@ -775,7 +775,7 @@ impl AppView {
                                 .whitespace_normal()
                                 .text_size(font::DESCRIPTION)
                                 .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                                .text_color(dark().text.secondary)
+                                .text_color(light().text.secondary)
                                 .child(t("settings.providers.models_empty_hint")),
                         ),
                 ),
@@ -788,7 +788,7 @@ impl AppView {
                         .px_2()
                         .py_3()
                         .text_size(font::BASE)
-                        .text_color(dark().text.secondary)
+                        .text_color(light().text.secondary)
                         .child(t("model_search.no_results")),
                 ),
             );
@@ -851,7 +851,7 @@ impl AppView {
                     .gap_2()
                     .py_3()
                     .border_t_1()
-                    .border_color(dark().border.subtle)
+                    .border_color(light().border.subtle)
                     .px_1()
                     .child(
                         div()
@@ -870,14 +870,14 @@ impl AppView {
                                     .child(
                                         div()
                                             .text_size(font::BASE)
-                                            .text_color(dark().text.primary)
+                                            .text_color(light().text.primary)
                                             .child(model.display_name.clone()),
                                     )
                                     .when(model.display_name != model.id, |label| {
                                         label.child(
                                             div()
                                                 .text_size(font::XS)
-                                                .text_color(dark().text.tertiary)
+                                                .text_color(light().text.tertiary)
                                                 .child(model.id.clone()),
                                         )
                                     }),
@@ -892,7 +892,7 @@ impl AppView {
                         row.child(
                             div()
                                 .text_size(font::XS)
-                                .text_color(dark().text.secondary)
+                                .text_color(light().text.secondary)
                                 .child(capability_label),
                         )
                     })

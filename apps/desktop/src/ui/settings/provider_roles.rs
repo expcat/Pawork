@@ -24,7 +24,7 @@ impl AppView {
             .gap_4()
             .pt_8()
             .border_t_1()
-            .border_color(dark().border.subtle)
+            .border_color(light().border.subtle)
             .child(
                 self.settings_element("settings-default-roles-title")
                     .flex()
@@ -37,7 +37,7 @@ impl AppView {
             section = section.child(
                 self.settings_element("settings-default-roles-unavailable")
                     .text_size(font::BASE)
-                    .text_color(dark().semantic.danger_text)
+                    .text_color(light().semantic.danger_text)
                     .child(settings_default_unavailable_note()),
             );
         }
@@ -120,7 +120,7 @@ impl AppView {
             .gap_4()
             .py_4()
             .when(ix + 1 < SettingsRole::ALL.len(), |row| {
-                row.border_b_1().border_color(dark().border.subtle)
+                row.border_b_1().border_color(light().border.subtle)
             })
             .child(
                 self.settings_element(format!("settings-role-label-{}", role.wire_name()))
@@ -242,7 +242,7 @@ impl AppView {
                     .child(
                         div()
                             .text_size(font::BASE)
-                            .text_color(dark().text.primary)
+                            .text_color(light().text.primary)
                             .child(t("settings.roles.empty_title")),
                     )
                     .child(
@@ -250,7 +250,7 @@ impl AppView {
                             .whitespace_normal()
                             .text_size(font::DESCRIPTION)
                             .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                            .text_color(dark().text.secondary)
+                            .text_color(light().text.secondary)
                             .child(t("settings.roles.empty_hint")),
                     ),
             );
@@ -279,7 +279,7 @@ impl AppView {
                 .min_w_0()
                 .truncate()
                 .text_size(font::BASE)
-                .text_color(dark().text.secondary)
+                .text_color(light().text.secondary)
                 .child(display_name),
             );
             for model in models {

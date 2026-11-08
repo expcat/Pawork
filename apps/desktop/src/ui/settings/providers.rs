@@ -143,9 +143,9 @@ impl AppView {
             remove_confirm,
         );
         let connection_color = match provider.auth {
-            ProviderAuthState::Connected { .. } => dark().semantic.success_fg,
-            ProviderAuthState::Error { .. } => dark().semantic.danger_text,
-            _ => dark().text.secondary,
+            ProviderAuthState::Connected { .. } => light().semantic.success_fg,
+            ProviderAuthState::Error { .. } => light().semantic.danger_text,
+            _ => light().text.secondary,
         };
         let catalog_summary = provider_catalog_overview_label(provider, model_count);
         let auth_methods = provider.auth_methods_label();
@@ -193,7 +193,7 @@ impl AppView {
                                 .text_size(font::BASE)
                                 .line_height(font::CONTROL_LINE_HEIGHT)
                                 .font_weight(FontWeight::MEDIUM)
-                                .text_color(dark().text.primary)
+                                .text_color(light().text.primary)
                                 .child(provider.display_name.clone()),
                         )
                         .child(
@@ -201,7 +201,7 @@ impl AppView {
                                 .whitespace_normal()
                                 .text_size(font::META)
                                 .line_height(font::META_LINE_HEIGHT)
-                                .text_color(dark().text.secondary)
+                                .text_color(light().text.secondary)
                                 .child(auth_methods),
                         ),
                     )
@@ -228,7 +228,7 @@ impl AppView {
                                 ))
                                 .text_size(font::META)
                                 .line_height(font::META_LINE_HEIGHT)
-                                .text_color(dark().text.secondary)
+                                .text_color(light().text.secondary)
                                 .child(catalog_summary),
                             ),
                     ),
@@ -244,8 +244,8 @@ impl AppView {
             .flex_col()
             .rounded(px(metrics::INPUT_MENU_RADIUS))
             .border_1()
-            .border_color(dark().border.subtle)
-            .bg(dark().surface.raised)
+            .border_color(light().border.subtle)
+            .bg(light().surface.raised)
             .child(header);
         if expanded {
             card = card.child(self.settings_provider_expanded_region(
@@ -387,7 +387,7 @@ impl AppView {
             .flex_col()
             .min_w_0()
             .border_t_1()
-            .border_color(dark().border.subtle);
+            .border_color(light().border.subtle);
         // Credentials 区：凭证逐条列出，动作按钮在区下方（ADR-056 D4）。
         region = region.child(self.settings_provider_credentials_block(
             provider,
@@ -432,7 +432,7 @@ impl AppView {
             .px_4()
             .py_4()
             .when(divider, |el| {
-                el.border_b_1().border_color(dark().border.subtle)
+                el.border_b_1().border_color(light().border.subtle)
             })
             .child(
                 self.settings_element(id)
@@ -507,7 +507,7 @@ impl AppView {
                 .child(
                     Label::new(state_label)
                         .size(font::BASE)
-                        .color(dark().text.secondary),
+                        .color(light().text.secondary),
                 )
                 .child(toggle),
         )
@@ -609,7 +609,7 @@ impl AppView {
                 .h(px(SETTINGS_PROVIDER_USAGE_BAR_HEIGHT))
                 .rounded(px(SETTINGS_PROVIDER_USAGE_BAR_HEIGHT / 2.0))
                 .border_1()
-                .border_color(dark().border.subtle),
+                .border_color(light().border.subtle),
         )
     }
 

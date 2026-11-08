@@ -143,7 +143,7 @@ impl AppView {
                     .whitespace_normal()
                     .text_size(font::DESCRIPTION)
                     .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                    .text_color(dark().semantic.danger_text)
+                    .text_color(light().semantic.danger_text)
                     .child(error),
             );
         }
@@ -161,7 +161,7 @@ impl AppView {
                     .px_4()
                     .py_4()
                     .border_1()
-                    .border_color(dark().border.subtle)
+                    .border_color(light().border.subtle)
                     .rounded(px(6.0))
                     .child(
                         self.settings_element("settings-subagents-enabled-text")
@@ -183,7 +183,7 @@ impl AppView {
                             .child(
                                 Label::new(enabled_state)
                                     .size(font::BASE)
-                                    .color(dark().text.secondary),
+                                    .color(light().text.secondary),
                             )
                             // AX bounds 同源：开关须包 settings_element。
                             .child(
@@ -348,7 +348,7 @@ impl AppView {
             .whitespace_normal()
             .text_size(font::BASE)
             .line_height(font::CONTROL_LINE_HEIGHT)
-            .text_color(dark().text.primary)
+            .text_color(light().text.primary)
             .child(model.display_name.clone()),
         );
         // 与 Composer 和目录使用同一能力词汇。
@@ -364,13 +364,21 @@ impl AppView {
                         .flex_none()
                         .px_1()
                         .border_1()
-                        .border_color(dark().border.subtle)
+                        .border_color(light().border.subtle)
                         .rounded(px(4.0))
-                        .child(Label::new(label).size(font::XS).color(dark().text.tertiary)),
+                        .child(
+                            Label::new(label)
+                                .size(font::XS)
+                                .color(light().text.tertiary),
+                        ),
                 );
             }
         }
-        name_row = name_row.child(Label::new(badge).size(font::XS).color(dark().text.tertiary));
+        name_row = name_row.child(
+            Label::new(badge)
+                .size(font::XS)
+                .color(light().text.tertiary),
+        );
         let mut card = self
             .settings_element(row_id)
             .flex()
@@ -379,9 +387,9 @@ impl AppView {
             .px_4()
             .py_3()
             .border_1()
-            .border_color(dark().border.subtle)
+            .border_color(light().border.subtle)
             .rounded(px(6.0))
-            .bg(dark().surface.raised)
+            .bg(light().surface.raised)
             .child(name_row)
             .child(
                 div()
@@ -398,7 +406,7 @@ impl AppView {
                             .child(
                                 Label::new(t("settings.subagents.allow_spawn"))
                                     .size(font::BASE)
-                                    .color(dark().text.secondary),
+                                    .color(light().text.secondary),
                             )
                             .child(spawn_switch),
                     )
@@ -411,7 +419,7 @@ impl AppView {
                             .child(
                                 Label::new(t("settings.subagents.allow_delegate"))
                                     .size(font::BASE)
-                                    .color(dark().text.secondary),
+                                    .color(light().text.secondary),
                             )
                             .child(delegate_switch),
                     ),
@@ -456,7 +464,7 @@ impl AppView {
                             .child(
                                 Label::new(t("settings.subagents.effort_default"))
                                     .size(font::BASE)
-                                    .color(dark().text.secondary),
+                                    .color(light().text.secondary),
                             )
                             .child(self.subagent_effort_default_button(
                                 &rule,
@@ -478,7 +486,7 @@ impl AppView {
                             .child(
                                 Label::new(t("settings.subagents.effort_allowed"))
                                     .size(font::BASE)
-                                    .color(dark().text.secondary),
+                                    .color(light().text.secondary),
                             )
                             .map(|chips| {
                                 let mut row = chips;
@@ -568,9 +576,9 @@ impl AppView {
             ))
             .tooltip(subagent_permission_label(permission))
             .text_color(if granted {
-                dark().text.primary
+                light().text.primary
             } else {
-                dark().text.secondary
+                light().text.secondary
             })
             .disabled(!writes)
             .on_click(cx.listener(move |view, event, _window, cx| {
@@ -660,9 +668,9 @@ impl AppView {
             .label(format!("{}{}", if selected { "✓ " } else { "" }, level))
             .tooltip(t("settings.subagents.effort_allowed_tooltip"))
             .text_color(if selected {
-                dark().text.primary
+                light().text.primary
             } else {
-                dark().text.secondary
+                light().text.secondary
             })
             .disabled(!writes)
             .on_click(cx.listener(move |view, event, _window, cx| {

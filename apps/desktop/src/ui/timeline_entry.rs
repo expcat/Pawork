@@ -12,7 +12,7 @@ use crate::ui::components::icon::{icon_sized, Icon};
 use crate::ui::components::label::Label;
 use crate::ui::components::list_row::ListRow;
 use crate::ui::i18n::t;
-use crate::ui::theme::{dark, font, metrics};
+use crate::ui::theme::{font, light, metrics};
 
 use super::task_rail::relative_activity;
 use super::timeline::tool_status_label;
@@ -49,7 +49,7 @@ pub(super) fn run_metrics_element(display: &RunUsageDisplay) -> gpui::Div {
             row.child(
                 Label::new(rate)
                     .size(font::BODY_SM)
-                    .color(dark().text.secondary),
+                    .color(light().text.secondary),
             )
         })
 }
@@ -60,11 +60,11 @@ fn run_metric_chip(icon: Icon, value: &str) -> gpui::Div {
         .flex_row()
         .items_center()
         .gap_1()
-        .child(icon_sized(icon, px(RUN_METRIC_ICON)).text_color(dark().text.tertiary))
+        .child(icon_sized(icon, px(RUN_METRIC_ICON)).text_color(light().text.tertiary))
         .child(
             Label::new(value.to_string())
                 .size(font::BODY_SM)
-                .color(dark().text.secondary),
+                .color(light().text.secondary),
         )
 }
 
@@ -479,7 +479,7 @@ fn message_label_element(role: &str, time: &str, role_color: Rgba, generating: b
             row.child(
                 div()
                     .text_size(font::BODY_SM)
-                    .text_color(dark().text.secondary)
+                    .text_color(light().text.secondary)
                     .child(t("tool.generating").to_string()),
             )
         })
@@ -487,7 +487,7 @@ fn message_label_element(role: &str, time: &str, role_color: Rgba, generating: b
             row.child(
                 div()
                     .text_size(font::BODY_SM)
-                    .text_color(dark().text.secondary)
+                    .text_color(light().text.secondary)
                     .truncate()
                     .child(time.to_string()),
             )
@@ -509,7 +509,7 @@ pub(super) fn entry_actions_element(
         .variant(ButtonVariant::Ghost)
         .height(px(24.0))
         .text_size(font::XS)
-        .text_color(dark().text.secondary)
+        .text_color(light().text.secondary)
         .padding(ButtonPadding::Horizontal(metrics::PADDING_XS))
         .child(icon_sized(Icon::More, px(metrics::ICON_SM)));
     if entry.fork_boundary.is_some() {
@@ -581,7 +581,7 @@ pub(super) fn entry_actions_element(
                     .px_2()
                     .py_1()
                     .text_size(font::BODY_SM)
-                    .text_color(dark().text.secondary)
+                    .text_color(light().text.secondary)
                     .child(view.fork_unavailable_reason(&event_id)),
             );
         }
@@ -631,7 +631,7 @@ fn entry_shell_element(
                 .when(wide, |bubble| bubble.w_full())
                 .px(px(metrics::MSG_USER_INSET_X))
                 .py(px(metrics::MSG_USER_INSET_Y))
-                .bg(dark().surface.hover)
+                .bg(light().surface.hover)
                 .rounded(px(metrics::SURFACE_RADIUS))
                 .child(if wide {
                     body.w_full().min_w_0()
@@ -658,7 +658,7 @@ fn entry_shell_element(
             div()
                 .text_size(font::BODY_SM)
                 .line_height(font::META_LINE_HEIGHT)
-                .text_color(dark().text.tertiary)
+                .text_color(light().text.tertiary)
                 .child(display_time(&entry.timestamp, now_unix_ms())),
         );
     } else {
@@ -680,10 +680,10 @@ fn entry_shell_element(
 /// （wire 无 tool duration 字段）。
 fn tool_status_element(row: &ToolRowView) -> gpui::Div {
     let word_color = match row.status {
-        ToolRowStatus::Succeeded => dark().text.emphasis,
-        ToolRowStatus::Failed | ToolRowStatus::Cancelled => dark().semantic.danger_text,
-        ToolRowStatus::Running | ToolRowStatus::Pending => dark().text.secondary,
-        ToolRowStatus::Stopped | ToolRowStatus::Other => dark().text.tertiary,
+        ToolRowStatus::Succeeded => light().text.emphasis,
+        ToolRowStatus::Failed | ToolRowStatus::Cancelled => light().semantic.danger_text,
+        ToolRowStatus::Running | ToolRowStatus::Pending => light().text.secondary,
+        ToolRowStatus::Stopped | ToolRowStatus::Other => light().text.tertiary,
     };
     let word = div()
         .text_size(font::BODY_SM)
@@ -698,7 +698,7 @@ fn tool_status_element(row: &ToolRowView) -> gpui::Div {
             .gap_2()
             .child(
                 icon_sized(Icon::Check, px(metrics::TOOL_CHECK_SIZE))
-                    .text_color(dark().semantic.success_fg),
+                    .text_color(light().semantic.success_fg),
             )
             .child(word),
         ToolRowStatus::Running | ToolRowStatus::Pending => div()
@@ -712,7 +712,7 @@ fn tool_status_element(row: &ToolRowView) -> gpui::Div {
                     .h(px(metrics::TOOL_CHECK_SIZE))
                     .flex_none()
                     .rounded_full()
-                    .bg(dark().accent.primary),
+                    .bg(light().accent.primary),
             )
             .child(word),
         ToolRowStatus::Failed | ToolRowStatus::Cancelled | ToolRowStatus::Stopped => div()
@@ -774,7 +774,7 @@ fn tool_row_element(view: &mut AppView, row: &ToolRowView, cx: &mut Context<AppV
                             .truncate()
                             .text_size(font::BASE)
                             .line_height(font::CONTROL_LINE_HEIGHT)
-                            .text_color(dark().text.primary)
+                            .text_color(light().text.primary)
                             .child(row.headline.clone()),
                     ),
                 )
@@ -782,13 +782,17 @@ fn tool_row_element(view: &mut AppView, row: &ToolRowView, cx: &mut Context<AppV
                 .when_some(source_menu, |header, menu| header.child(menu)),
         )
         .when_some(row.detail.clone(), |element, detail| {
-            element.child(div().px_3().pb_3().text_color(dark().text.secondary).child(
-                super::markdown::source_text_element(
-                    format!("tool-sources-{}", row.event_id),
-                    detail,
-                    dark().text.secondary,
-                ),
-            ))
+            element.child(
+                div()
+                    .px_3()
+                    .pb_3()
+                    .text_color(light().text.secondary)
+                    .child(super::markdown::source_text_element(
+                        format!("tool-sources-{}", row.event_id),
+                        detail,
+                        light().text.secondary,
+                    )),
+            )
         })
         .when(
             row.result_can_expand && !row.event_id.is_empty(),
@@ -816,7 +820,7 @@ fn tool_result_expand_element(
         .variant(ButtonVariant::Ghost)
         .height(px(RESULT_EXPAND_HEIGHT))
         .text_size(font::BASE)
-        .text_color(dark().text.secondary)
+        .text_color(light().text.secondary)
         .padding(ButtonPadding::Horizontal(metrics::PADDING_XS))
         .label(if expanded {
             t("tool.result_collapse")
@@ -1036,32 +1040,32 @@ impl AppView {
         let (role, label_color, body) = match &entry.kind {
             TimelineEntryKind::UserMessage { text } => (
                 t("timeline.you"),
-                dark().text.secondary,
+                light().text.secondary,
                 self.user_message_body_element(&entry.event_id, text, window, cx),
             ),
             TimelineEntryKind::Thinking { text } => (
                 t("timeline.thinking"),
-                dark().text.secondary,
+                light().text.secondary,
                 message_body_element(
                     self,
                     cx,
                     window,
                     &entry.event_id,
                     text,
-                    dark().text.secondary,
+                    light().text.secondary,
                     false,
                 ),
             ),
             TimelineEntryKind::AssistantMessage { text } => (
                 if generating { t("tool.generating") } else { "" },
-                dark().text.secondary,
+                light().text.secondary,
                 message_body_element(
                     self,
                     cx,
                     window,
                     &entry.event_id,
                     text,
-                    dark().text.emphasis,
+                    light().text.emphasis,
                     generating,
                 ),
             ),
@@ -1072,18 +1076,18 @@ impl AppView {
                 status,
                 detail,
                 arguments,
-            } => (t("timeline.tool"), dark().text.secondary, {
+            } => (t("timeline.tool"), light().text.secondary, {
                 let row =
                     ToolRowView::from_facts(name, status, arguments.as_deref(), detail.as_deref());
                 let mut element = div()
                     .py_1()
-                    .text_color(dark().text.secondary)
+                    .text_color(light().text.secondary)
                     .child(row.headline.clone());
                 if let Some(detail) = row.detail {
                     element = element.child(
                         div()
                             .text_size(font::XS)
-                            .text_color(dark().text.tertiary)
+                            .text_color(light().text.tertiary)
                             .child(detail),
                     );
                 }
@@ -1091,22 +1095,22 @@ impl AppView {
             }),
             TimelineEntryKind::RunState(state) => (
                 "Run",
-                dark().text.disabled,
+                light().text.disabled,
                 div()
                     .py_1()
-                    .text_color(dark().text.disabled)
+                    .text_color(light().text.disabled)
                     .child(state.clone()),
             ),
             TimelineEntryKind::Error(message) => (
                 "Error",
-                dark().semantic.danger_text,
+                light().semantic.danger_text,
                 message_body_element(
                     self,
                     cx,
                     window,
                     &entry.event_id,
                     message,
-                    dark().semantic.danger_text,
+                    light().semantic.danger_text,
                     false,
                 ),
             ),
@@ -1161,7 +1165,7 @@ impl AppView {
                         div()
                             .w(px(12.0))
                             .flex_none()
-                            .text_color(dark().text.secondary)
+                            .text_color(light().text.secondary)
                             .child(if collapsed {
                                 icon_sized(Icon::ChevronRight, px(12.0))
                             } else {
@@ -1175,7 +1179,7 @@ impl AppView {
                                 .text_size(font::BASE)
                                 .line_height(font::CONTROL_LINE_HEIGHT)
                                 .font_weight(FontWeight::MEDIUM)
-                                .text_color(dark().text.secondary)
+                                .text_color(light().text.secondary)
                                 .child(label),
                         ),
                     ),
@@ -1211,7 +1215,7 @@ impl AppView {
                 window,
                 event_id,
                 text,
-                dark().text.emphasis,
+                light().text.emphasis,
                 false,
             );
         };
@@ -1228,7 +1232,7 @@ impl AppView {
                         window,
                         &format!("{event_id}#seg{segment_index}"),
                         segment_text,
-                        dark().text.emphasis,
+                        light().text.emphasis,
                         false,
                     ));
                 }
@@ -1281,7 +1285,7 @@ impl AppView {
             .flex_col()
             .w_full()
             .border_1()
-            .border_color(dark().border.subtle)
+            .border_color(light().border.subtle)
             .rounded(px(6.0))
             .overflow_hidden();
         if let Some(content) = content {
@@ -1295,7 +1299,7 @@ impl AppView {
                         .p(px(12.0))
                         .text_size(font::BASE)
                         .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                        .text_color(dark().text.secondary)
+                        .text_color(light().text.secondary)
                         .child(content.clone()),
                 );
             }
@@ -1310,7 +1314,7 @@ impl AppView {
                     .px_2()
                     .text_size(font::BASE)
                     .line_height(font::CONTROL_LINE_HEIGHT)
-                    .text_color(dark().text.secondary)
+                    .text_color(light().text.secondary)
                     .child(icon_sized(Icon::File, px(12.0)))
                     .child(
                         div()
@@ -1349,7 +1353,7 @@ impl AppView {
                         .p(px(12.0))
                         .text_size(font::BASE)
                         .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                        .text_color(dark().text.secondary)
+                        .text_color(light().text.secondary)
                         .child(text.to_string()),
                 )
             })
@@ -1374,9 +1378,9 @@ impl AppView {
             .flex()
             .flex_col()
             .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
-            .bg(dark().surface.raised)
+            .bg(light().surface.raised)
             .when(!collapsed, |panel| {
-                panel.border_l_1().border_color(dark().border.subtle)
+                panel.border_l_1().border_color(light().border.subtle)
             })
             .rounded(px(metrics::TOOL_GROUP_RADIUS))
             .overflow_hidden()
@@ -1387,7 +1391,7 @@ impl AppView {
                     .flex()
                     .items_center()
                     .when(!collapsed, |header| {
-                        header.border_b_1().border_color(dark().border.subtle)
+                        header.border_b_1().border_color(light().border.subtle)
                     })
                     .child(header),
             );
@@ -1399,7 +1403,7 @@ impl AppView {
             if index > 0 {
                 element = element
                     .border_t(px(metrics::TOOL_ROW_DIVIDER))
-                    .border_color(dark().border.subtle);
+                    .border_color(light().border.subtle);
             }
             panel = panel.child(element);
         }
@@ -1428,7 +1432,7 @@ impl AppView {
         div()
             .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
             .border_1()
-            .border_color(dark().border.subtle)
+            .border_color(light().border.subtle)
             .rounded(px(metrics::TOOL_GROUP_RADIUS))
             .px(px(SUMMARY_BANNER_PAD_X))
             .py_3()
@@ -1437,16 +1441,18 @@ impl AppView {
     fn run_summary_status_circle(terminal: RunSummaryTerminal) -> gpui::Div {
         let (circle_bg, circle_fg, status_icon) = match terminal {
             RunSummaryTerminal::Completed => (
-                dark().semantic.success_fg,
-                dark().bg.base,
+                light().semantic.success_fg,
+                light().bg.base,
                 Some(Icon::Check),
             ),
             RunSummaryTerminal::Failed => (
-                dark().semantic.danger_bg,
-                dark().text.on_accent,
+                light().semantic.danger_bg,
+                light().text.on_accent,
                 Some(Icon::Cancel),
             ),
-            RunSummaryTerminal::Cancelled => (dark().surface.disabled, dark().text.tertiary, None),
+            RunSummaryTerminal::Cancelled => {
+                (light().surface.disabled, light().text.tertiary, None)
+            }
         };
         let mut circle = div()
             .w(px(SUMMARY_STATUS_CIRCLE))
@@ -1480,7 +1486,7 @@ impl AppView {
                     div()
                         .text_size(font::BODY)
                         .font_weight(FontWeight::MEDIUM)
-                        .text_color(dark().text.primary)
+                        .text_color(light().text.primary)
                         .child(view.title.clone()),
                 ),
             )
@@ -1505,9 +1511,9 @@ impl AppView {
         div()
             .max_w(px(metrics::TIMELINE_READABLE_WIDTH))
             .border_1()
-            .border_color(dark().border.subtle)
+            .border_color(light().border.subtle)
             .rounded(px(SUMMARY_FAIL_PILL_RADIUS))
-            .bg(dark().surface.raised)
+            .bg(light().surface.raised)
             .px(px(SUMMARY_BANNER_PAD_X))
             .py_3()
             .flex()
@@ -1521,7 +1527,7 @@ impl AppView {
                     .gap_2()
                     .child(
                         icon_sized(Icon::Warning, px(SUMMARY_FAIL_ICON))
-                            .text_color(dark().semantic.danger_text),
+                            .text_color(light().semantic.danger_text),
                     )
                     .child(
                         div().flex().flex_row().flex_1().min_w_0().child(
@@ -1529,7 +1535,7 @@ impl AppView {
                                 .truncate()
                                 .text_size(font::DESCRIPTION)
                                 .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                                .text_color(dark().semantic.danger_text)
+                                .text_color(light().semantic.danger_text)
                                 .child(view.description.clone()),
                         ),
                     ),
@@ -1662,7 +1668,7 @@ impl AppView {
                                     .text_size(font::DESCRIPTION)
                                     .line_height(font::DESCRIPTION_LINE_HEIGHT)
                                     .line_clamp(2)
-                                    .text_color(dark().text.secondary)
+                                    .text_color(light().text.secondary)
                                     .child(view.description.clone()),
                             ),
                         ),
@@ -1698,7 +1704,7 @@ impl AppView {
                     div().flex_none().child(
                         Label::new(label.to_string())
                             .size(font::BODY_SM)
-                            .color(dark().text.secondary),
+                            .color(light().text.secondary),
                     ),
                 )
             })
@@ -1708,7 +1714,7 @@ impl AppView {
                     div().flex_none().child(
                         Label::new(time.to_string())
                             .size(font::BODY_SM)
-                            .color(dark().text.secondary),
+                            .color(light().text.secondary),
                     ),
                 )
             })
@@ -1736,7 +1742,7 @@ impl AppView {
             window,
             &entry.event_id,
             &message,
-            dark().semantic.danger_text,
+            light().semantic.danger_text,
             false,
         );
         entry_shell_element(
@@ -1746,7 +1752,7 @@ impl AppView {
             entry,
             menu_open,
             can_fork,
-            message_label_element("Error", &time, dark().semantic.danger_text, false),
+            message_label_element("Error", &time, light().semantic.danger_text, false),
             body,
             true,
         )

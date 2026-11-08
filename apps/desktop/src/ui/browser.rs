@@ -18,7 +18,7 @@ use super::{
     components::button::{Button, ButtonPadding, ButtonVariant},
     i18n::t,
     icon, icon_sized,
-    theme::{dark, font},
+    theme::{font, light},
     AppRoute, AppView, Icon, InspectorTab, TextInput,
 };
 
@@ -807,7 +807,7 @@ impl AppView {
                             .py(px(24.0))
                             .text_size(font::DESCRIPTION)
                             .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                            .text_color(dark().text.secondary)
+                            .text_color(light().text.secondary)
                             .child(icon(Icon::Browser))
                             .child(
                                 div()
@@ -854,9 +854,9 @@ impl AppView {
                         .line_height(font::DESCRIPTION_LINE_HEIGHT)
                         .text_color(
                             if self.browser.error.is_some() || self.browser.state.error.is_some() {
-                                dark().semantic.warning_text
+                                light().semantic.warning_text
                             } else {
-                                dark().text.secondary
+                                light().text.secondary
                             },
                         )
                         .child(status),
@@ -925,7 +925,7 @@ impl AppView {
                     .flex_none()
                     .min_h(px(32.0))
                     .rounded(px(6.0))
-                    .when(selected, |row| row.bg(dark().surface.raised))
+                    .when(selected, |row| row.bg(light().surface.raised))
                     .child(
                         div()
                             .id(gpui::SharedString::from(format!("{select_id}-layout")))
@@ -958,7 +958,7 @@ impl AppView {
                                                         .w(px(6.0))
                                                         .h(px(6.0))
                                                         .rounded(px(3.0))
-                                                        .bg(dark().accent.primary),
+                                                        .bg(light().accent.primary),
                                                 )
                                             })
                                             .child(
@@ -966,9 +966,9 @@ impl AppView {
                                                     div()
                                                         .truncate()
                                                         .text_color(if selected {
-                                                            dark().text.primary
+                                                            light().text.primary
                                                         } else {
-                                                            dark().text.secondary
+                                                            light().text.secondary
                                                         })
                                                         .child(label.label.clone()),
                                                 ),

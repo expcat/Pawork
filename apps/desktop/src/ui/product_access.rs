@@ -2,7 +2,7 @@
 use super::accessibility::{AxAction, AxBridge, AxNode, AxRect, AxRequest, AxRole, AxTree};
 use super::components::button::{Button, ButtonPadding};
 use super::components::label::Label;
-use super::theme::{dark, font, metrics};
+use super::theme::{font, light, metrics};
 use super::*;
 use gpui::{AnyElement, Bounds};
 
@@ -223,8 +223,8 @@ pub(super) fn product_panel(id: &'static str, access: &PanelAccess) -> gpui::Sta
         .flex_col()
         .gap(px(16.0))
         .p(px(24.0))
-        .bg(dark().bg.base)
-        .text_color(dark().text.primary)
+        .bg(light().bg.base)
+        .text_color(light().text.primary)
 }
 
 pub(super) fn product_heading(
@@ -252,7 +252,7 @@ pub(super) fn product_heading(
                 .line_height(font::from_pixels(28.0))
                 .child(components::icon::icon(icon))
                 .font_weight(gpui::FontWeight::MEDIUM)
-                .text_color(dark().text.primary)
+                .text_color(light().text.primary)
                 .child(title),
         )
         .child(product_note(note));
@@ -274,7 +274,7 @@ pub(super) fn product_note(text: impl Into<SharedString>) -> gpui::Div {
         .whitespace_normal()
         .text_size(font::BASE)
         .line_height(font::DESCRIPTION_LINE_HEIGHT)
-        .text_color(dark().text.secondary)
+        .text_color(light().text.secondary)
         .child(text.into())
 }
 
@@ -285,7 +285,7 @@ pub(super) fn product_error(text: impl Into<SharedString>) -> gpui::Div {
         .whitespace_normal()
         .text_size(font::BASE)
         .line_height(font::DESCRIPTION_LINE_HEIGHT)
-        .text_color(dark().semantic.danger_text)
+        .text_color(light().semantic.danger_text)
         .child(text.into())
 }
 
@@ -300,7 +300,7 @@ pub(super) fn product_field(label: &'static str, control: impl IntoElement) -> g
         .child(
             Label::new(label)
                 .size(font::BASE)
-                .color(dark().text.secondary),
+                .color(light().text.secondary),
         )
         .child(control)
 }

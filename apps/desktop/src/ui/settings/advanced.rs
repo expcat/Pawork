@@ -25,7 +25,7 @@ impl AppView {
                     .gap_4()
                     .pb_4()
                     .border_b_1()
-                    .border_color(dark().border.subtle)
+                    .border_color(light().border.subtle)
                     .child(div().w(px(184.0)).flex_none().child(settings_copy(label)))
                     .child(
                         div()
@@ -36,7 +36,7 @@ impl AppView {
                             .font_family(font::MONO)
                             .text_size(font::BASE)
                             .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                            .text_color(dark().text.primary)
+                            .text_color(light().text.primary)
                             .child(value),
                     ),
             );

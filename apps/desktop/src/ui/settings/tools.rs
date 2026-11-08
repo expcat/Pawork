@@ -96,17 +96,17 @@ impl AppView {
             .rounded(px(4.0))
             .border_1()
             .border_color(if confirming {
-                dark().semantic.warning_text
+                light().semantic.warning_text
             } else {
-                dark().border.subtle
+                light().border.subtle
             })
-            .bg(dark().surface.raised)
+            .bg(light().surface.raised)
             .child(settings_mcp_server_heading(server))
             .child(settings_mcp_server_details(server));
         if confirming {
             card = card.child(status_line(
                 settings_mcp_remove_confirm_note(),
-                dark().semantic.warning_text,
+                light().semantic.warning_text,
             ));
         }
         let mut actions = vec![SettingsMcpAction::Test];
@@ -240,7 +240,7 @@ fn settings_mcp_server_heading(server: &McpServerEntry) -> gpui::Div {
                     .whitespace_normal()
                     .text_size(font::BASE)
                     .line_height(font::CONTROL_LINE_HEIGHT)
-                    .text_color(dark().text.primary)
+                    .text_color(light().text.primary)
                     .child(server.name.clone()),
             ),
         )
@@ -248,9 +248,9 @@ fn settings_mcp_server_heading(server: &McpServerEntry) -> gpui::Div {
             Label::new(settings_mcp_state_label(&server.state))
                 .size(font::XS)
                 .color(if failed {
-                    dark().semantic.danger_text
+                    light().semantic.danger_text
                 } else {
-                    dark().text.secondary
+                    light().text.secondary
                 }),
         )
 }
@@ -263,7 +263,7 @@ fn settings_mcp_server_details(server: &McpServerEntry) -> gpui::Div {
         .flex_col()
         .gap_1()
         .w_full()
-        .child(settings_mcp_wrapped(summary, dark().text.secondary));
+        .child(settings_mcp_wrapped(summary, light().text.secondary));
     if let Some(error) = nonempty_mcp_error(server) {
         details = details
             .child(
@@ -271,11 +271,11 @@ fn settings_mcp_server_details(server: &McpServerEntry) -> gpui::Div {
                     .whitespace_normal()
                     .text_size(font::DESCRIPTION)
                     .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                    .text_color(dark().semantic.danger_text)
+                    .text_color(light().semantic.danger_text)
                     .child(t("settings.tools.failure_summary")),
             )
             .child(
-                settings_mcp_wrapped(error.to_string(), dark().text.secondary)
+                settings_mcp_wrapped(error.to_string(), light().text.secondary)
                     .font_family(font::MONO)
                     .text_size(font::BASE)
                     .line_height(font::DESCRIPTION_LINE_HEIGHT),

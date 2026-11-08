@@ -291,10 +291,10 @@ fn localize(key: &'static str, lang: Language) -> &'static str {
         }
         "settings.appearance.title" => ("Appearance", "外观"),
         "settings.appearance.subtitle" => ("Desktop presentation preferences", "桌面显示偏好"),
-        "settings.appearance.theme" => ("Theme · Dark", "主题 · 深色"),
+        "settings.appearance.theme" => ("Theme · Light", "主题 · 浅色"),
         "settings.appearance.theme_note" => (
-            "Dark theme is currently the only theme.",
-            "当前仅提供深色主题。",
+            "Light is the default theme.",
+            "当前默认使用浅色主题。",
         ),
         "settings.appearance.text_size" => ("Text size", "字号"),
         "settings.appearance.current_scale" => ("Current · {}%", "当前 · {}%"),

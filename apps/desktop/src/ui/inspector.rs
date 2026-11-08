@@ -14,7 +14,7 @@ use crate::ui::components::icon::{icon, icon_sized, Icon};
 use crate::ui::components::panel::Panel;
 use crate::ui::i18n::t;
 use crate::ui::shell_layout::InspectorPlacement;
-use crate::ui::theme::{dark, font, metrics};
+use crate::ui::theme::{font, light, metrics};
 
 use super::{terminal_can_close, terminal_can_operate, AppView, MenuKind};
 
@@ -231,7 +231,7 @@ impl AppView {
                     .px_2()
                     .text_size(font::BASE)
                     .line_height(font::CONTROL_LINE_HEIGHT)
-                    .text_color(dark().text.secondary)
+                    .text_color(light().text.secondary)
                     .child(t("inspector.panel")),
             );
         }
@@ -247,7 +247,7 @@ impl AppView {
             .h(px(metrics::INSPECTOR_TAB_HEIGHT))
             .flex_none()
             .border_b_1()
-            .border_color(dark().border.subtle)
+            .border_color(light().border.subtle)
             .child(strip)
             .child(
                 self.shell_element("inspector-panel-layout")
@@ -284,7 +284,7 @@ impl AppView {
                             .variant(ButtonVariant::Ghost)
                             .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
                             .text_size(font::BASE)
-                            .text_color(dark().semantic.warning_text)
+                            .text_color(light().semantic.warning_text)
                             .label(t("inspector.return_for_approval"))
                             .track_focus(&self.inspector_approval_focus)
                             .on_click(cx.listener(|view, event, window, cx| {
@@ -500,7 +500,7 @@ impl AppView {
             .w(px(PANEL_TAB_WIDTH))
             .h(px(metrics::ICON_BUTTON_SIZE))
             .rounded(px(6.0))
-            .when(selected, |row| row.bg(dark().surface.raised))
+            .when(selected, |row| row.bg(light().surface.raised))
             .child(
                 div()
                     .id(gpui::SharedString::from(format!("{id}-layout")))
@@ -532,9 +532,9 @@ impl AppView {
                                         div()
                                             .truncate()
                                             .text_color(if selected {
-                                                dark().text.primary
+                                                light().text.primary
                                             } else {
-                                                dark().text.secondary
+                                                light().text.secondary
                                             })
                                             .child(tab.label.clone()),
                                     ),
@@ -663,7 +663,7 @@ impl AppView {
                                                     div()
                                                         .text_size(font::DESCRIPTION)
                                                         .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                                                        .text_color(dark().text.secondary)
+                                                        .text_color(light().text.secondary)
                                                         .child(tool.hint()),
                                                 ),
                                         ),
@@ -702,7 +702,7 @@ impl AppView {
                     .mt_auto()
                     .text_size(font::BASE)
                     .line_height(font::CONTROL_LINE_HEIGHT)
-                    .text_color(dark().text.secondary)
+                    .text_color(light().text.secondary)
                     .child(t("inspector.home_hint")),
             )
             .child(actions)
@@ -849,7 +849,7 @@ impl AppView {
                         .line_height(gpui::rems(
                             super::terminal_view::TERMINAL_LINE_HEIGHT / font::BASE_REM_PIXELS,
                         ))
-                        .text_color(dark().text.emphasis)
+                        .text_color(light().text.emphasis)
                         .on_scroll_wheel(cx.listener(|view, _, _, cx| {
                             view.terminal_scroll.on_scroll_wheel();
                             cx.notify();

@@ -5,7 +5,7 @@ use gpui::{div, prelude::*, px, Context, SharedString};
 
 use crate::ui::components::button::{Button, ButtonVariant};
 use crate::ui::i18n::t;
-use crate::ui::theme::{dark, font, metrics};
+use crate::ui::theme::{font, light, metrics};
 use crate::ui::timeline_entry::estimated_wrapped_lines;
 
 use super::AppView;
@@ -62,21 +62,21 @@ impl AppView {
             .p_2()
             .rounded_md()
             .border_l_1()
-            .border_color(dark().semantic.warning_border)
-            .bg(dark().semantic.warning_bg)
+            .border_color(light().semantic.warning_border)
+            .bg(light().semantic.warning_bg)
             .child(
                 div()
                     .text_size(font::DESCRIPTION)
                     .line_height(font::DESCRIPTION_LINE_HEIGHT)
                     .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(dark().semantic.warning_text)
+                    .text_color(light().semantic.warning_text)
                     .child(t("approval.title").replace("{}", &pending.tool_name)),
             )
             .child(
                 div()
                     .text_size(font::DESCRIPTION)
                     .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                    .text_color(dark().text.primary)
+                    .text_color(light().text.primary)
                     .child(pending.reason.clone()),
             );
         if let Some(detail) = pending
@@ -89,7 +89,7 @@ impl AppView {
                     .text_size(font::DESCRIPTION)
                     .line_height(font::DESCRIPTION_LINE_HEIGHT)
                     .font_family(font::MONO)
-                    .text_color(dark().text.detail)
+                    .text_color(light().text.detail)
                     .child(detail.to_string()),
             );
         }

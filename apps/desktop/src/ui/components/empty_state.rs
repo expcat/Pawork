@@ -8,7 +8,7 @@ use gpui::{
 use crate::ui::components::icon::{icon_sized, Icon};
 use crate::ui::components::label::Label;
 use crate::ui::i18n::t;
-use crate::ui::theme::{dark, font, metrics, theme};
+use crate::ui::theme::{font, light, metrics, theme};
 
 /// 居中空状态：可选图标 + 调用方子节点（标题 / 说明 / 动作 / 骨架）。
 #[derive(IntoElement)]
@@ -54,7 +54,7 @@ impl EmptyState {
                 Label::new(description)
                     .size(font::DESCRIPTION)
                     .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                    .color(dark().text.secondary),
+                    .color(light().text.secondary),
             )
     }
 
@@ -113,9 +113,9 @@ pub fn stale_notice(reason: impl AsRef<str>) -> gpui::Div {
         .px_2()
         .py_1()
         .border_b_1()
-        .border_color(dark().semantic.warning_text)
+        .border_color(light().semantic.warning_text)
         .text_size(font::DESCRIPTION)
         .line_height(font::DESCRIPTION_LINE_HEIGHT)
-        .text_color(dark().semantic.warning_text)
+        .text_color(light().semantic.warning_text)
         .child(format!("{} · {reason}", t("common.stale_data")))
 }

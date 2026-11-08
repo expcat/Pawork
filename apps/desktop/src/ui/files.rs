@@ -14,7 +14,7 @@ use super::{
     i18n::t,
     icon, icon_sized,
     inspector::{FileTab, PanelTab},
-    theme::{dark, font},
+    theme::{font, light},
     AppRoute, AppView, Icon, InspectorTab, SaveFile, TextInput,
 };
 use crate::{controller::FileOperation, projection::ConnectionState};
@@ -984,7 +984,7 @@ impl AppView {
                         div()
                             .flex_none()
                             .text_size(font::XS)
-                            .text_color(dark().text.secondary)
+                            .text_color(light().text.secondary)
                             .child(t(if is_image_path(path) {
                                 "files.attach_image"
                             } else {
@@ -1052,7 +1052,7 @@ impl AppView {
                     Icon::File,
                     t("changes.no_workspace"),
                     t("files.no_project"),
-                    dark().text.primary,
+                    light().text.primary,
                 )
                 .top_aligned(),
             );
@@ -1081,7 +1081,7 @@ impl AppView {
                     div().flex_1().min_w_0().child(
                         div()
                             .truncate()
-                            .text_color(dark().text.secondary)
+                            .text_color(light().text.secondary)
                             .child(path),
                     ),
                 )
@@ -1106,7 +1106,7 @@ impl AppView {
                 div()
                     .px_3()
                     .py_1()
-                    .text_color(dark().semantic.warning_text)
+                    .text_color(light().semantic.warning_text)
                     .child(t("files.offline")),
             );
         }
@@ -1115,7 +1115,7 @@ impl AppView {
                 div()
                     .px_3()
                     .py_1()
-                    .text_color(dark().semantic.danger_text)
+                    .text_color(light().semantic.danger_text)
                     .child(error),
             );
         }
@@ -1206,7 +1206,7 @@ impl AppView {
                     window,
                     "files-markdown",
                     &text,
-                    dark().text.primary,
+                    light().text.primary,
                     false,
                 );
                 content = content.child(
@@ -1247,14 +1247,14 @@ impl AppView {
                     .py_1()
                     .flex_none()
                     .text_color(if has_error {
-                        dark().semantic.danger_text
+                        light().semantic.danger_text
                     } else {
-                        dark().text.secondary
+                        light().text.secondary
                     })
                     .child(status),
             );
         } else {
-            content = content.child(div().p_4().text_color(dark().text.secondary).child(t(
+            content = content.child(div().p_4().text_color(light().text.secondary).child(t(
                 if reading.is_some() {
                     "files.loading"
                 } else {
@@ -1269,7 +1269,7 @@ impl AppView {
             .min_h_0()
             .w_full()
             .border_t_1()
-            .border_color(dark().border.subtle)
+            .border_color(light().border.subtle)
             .child(div().flex().flex_row().flex_1().min_w_0().child(content));
         if sidebar {
             let filter_layout = self
@@ -1319,9 +1319,9 @@ impl AppView {
                                 .pr_2()
                                 .py_1()
                                 .text_color(if danger {
-                                    dark().semantic.danger_text
+                                    light().semantic.danger_text
                                 } else {
-                                    dark().text.secondary
+                                    light().text.secondary
                                 })
                                 .child(text),
                         );
@@ -1329,7 +1329,7 @@ impl AppView {
                 }
             }
             if rows_empty {
-                listing = listing.child(div().p_2().text_color(dark().text.secondary).child(t(
+                listing = listing.child(div().p_2().text_color(light().text.secondary).child(t(
                     if loading {
                         "files.loading"
                     } else if !query.is_empty() {
@@ -1345,7 +1345,7 @@ impl AppView {
                 .w(px(160.))
                 .flex_none()
                 .border_l_1()
-                .border_color(dark().border.subtle)
+                .border_color(light().border.subtle)
                 .child(
                     div()
                         .flex()

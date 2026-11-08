@@ -125,7 +125,7 @@ impl AppView {
             .flex_none()
             .mt_2()
             .text_size(font::SM)
-            .text_color(dark().text.secondary)
+            .text_color(light().text.secondary)
             .child(
                 div()
                     .whitespace_normal()

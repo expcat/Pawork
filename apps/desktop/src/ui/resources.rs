@@ -14,7 +14,7 @@ use crate::ui::components::label::Label;
 use crate::ui::components::skeleton::loading_skeleton;
 use crate::ui::i18n::t;
 use crate::ui::settings::settings_mcp_state_label;
-use crate::ui::theme::{dark, font, metrics};
+use crate::ui::theme::{font, light, metrics};
 
 use super::AppView;
 
@@ -133,16 +133,16 @@ pub(super) fn mcp_server_name_row(server: &McpServerEntry) -> gpui::Div {
                 .truncate()
                 .text_size(font::BASE)
                 .line_height(font::CONTROL_LINE_HEIGHT)
-                .text_color(dark().text.primary)
+                .text_color(light().text.primary)
                 .child(server.name.clone()),
         )
         .child(
             Label::new(settings_mcp_state_label(&server.state))
                 .size(font::XS)
                 .color(if server.state == "failed" {
-                    dark().semantic.danger_text
+                    light().semantic.danger_text
                 } else {
-                    dark().text.secondary
+                    light().text.secondary
                 }),
         )
 }
@@ -210,7 +210,7 @@ impl AppView {
             .line_height(font::DESCRIPTION_LINE_HEIGHT)
             .child(
                 div()
-                    .text_color(dark().semantic.danger_text)
+                    .text_color(light().semantic.danger_text)
                     .child(t(summary)),
             )
             .child(
@@ -245,7 +245,7 @@ impl AppView {
                 body.child(
                     div()
                         .whitespace_normal()
-                        .text_color(dark().text.secondary)
+                        .text_color(light().text.secondary)
                         .child(reason),
                 )
             })
@@ -285,12 +285,12 @@ impl AppView {
             .py_1()
             .flex_none()
             .border_b_1()
-            .border_color(dark().border.subtle)
+            .border_color(light().border.subtle)
             .child(
                 Label::new(t("resources.mcp_title"))
                     .size(font::BODY)
                     .line_height(font::SECTION_LINE_HEIGHT)
-                    .color(dark().text.primary),
+                    .color(light().text.primary),
             )
             .child(div().flex_1())
             .child(
@@ -302,7 +302,7 @@ impl AppView {
                         Button::new("resources-refresh")
                             .variant(ButtonVariant::Ghost)
                             .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
-                            .text_color(dark().text.secondary)
+                            .text_color(light().text.secondary)
                             .child(icon_sized(Icon::Refresh, px(metrics::ICON_SM)))
                             .tooltip(t("resources.tooltip_refresh"))
                             .track_focus(&self.resources_refresh_focus)
@@ -360,7 +360,7 @@ impl AppView {
                         .whitespace_normal()
                         .text_size(font::META)
                         .line_height(font::META_LINE_HEIGHT)
-                        .text_color(dark().text.tertiary)
+                        .text_color(light().text.tertiary)
                         .child(mcp_server_meta_text(server)),
                 );
             if let Some(error) = &server.last_error {
@@ -398,7 +398,7 @@ fn resources_placeholder(key: &'static str) -> EmptyState {
         Icon::Resources,
         t(key).to_string(),
         description.to_string(),
-        dark().text.primary,
+        light().text.primary,
     )
     .top_aligned();
     if key == "resources.loading" {

@@ -8,7 +8,7 @@
 use std::borrow::Cow;
 use std::ops::Range;
 
-use super::theme::{dark, font, metrics};
+use super::theme::{font, light, metrics};
 use gpui::{
     actions, div, fill, point, prelude::*, px, relative, size, App, ClipboardItem, Context,
     CursorStyle, ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle,
@@ -1211,7 +1211,7 @@ impl Element for TextElement {
         let style = window.text_style();
 
         let text_color = if input.content.is_empty() {
-            dark().text.placeholder.into()
+            light().text.placeholder.into()
         } else {
             style.color
         };
@@ -1274,7 +1274,7 @@ impl Element for TextElement {
                             top + line_height,
                         ),
                     ),
-                    dark().accent.selection,
+                    light().accent.selection,
                 ));
             }
             None
@@ -1423,7 +1423,7 @@ impl Render for TextInput {
             .py_1()
             .px_2()
             .rounded_sm()
-            .bg(dark().surface.raised)
+            .bg(light().surface.raised)
             .text_size(text_size)
             .when(self.soft_wrap && !self.code_editor, |element| {
                 element.line_height(font::from_pixels(metrics::MSG_LINE_HEIGHT))

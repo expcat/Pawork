@@ -14,7 +14,7 @@ use crate::ui::components::icon::{icon, icon_sized, Icon};
 use crate::ui::components::label::Label;
 use crate::ui::i18n::{t, t2};
 use crate::ui::settings::settings_role_candidates;
-use crate::ui::theme::{dark, font, metrics};
+use crate::ui::theme::{font, light, metrics};
 
 use super::{AppView, InspectorTab, MenuKind};
 
@@ -459,14 +459,14 @@ impl AppView {
                 .line_height(font::CONTROL_LINE_HEIGHT)
                 .rounded(px(metrics::CONTROL_RADIUS))
                 .bg(if enabled && ix == highlight {
-                    dark().surface.raised
+                    light().surface.raised
                 } else {
-                    dark().bg.menu
+                    light().bg.menu
                 })
                 .text_color(if enabled {
-                    dark().text.primary
+                    light().text.primary
                 } else {
-                    dark().text.disabled
+                    light().text.disabled
                 })
                 .child(
                     div()
@@ -481,7 +481,7 @@ impl AppView {
                         div()
                             .text_size(font::DESCRIPTION)
                             .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                            .text_color(dark().text.secondary)
+                            .text_color(light().text.secondary)
                             .whitespace_normal()
                             .child(hint),
                     )
@@ -489,7 +489,7 @@ impl AppView {
             if enabled {
                 row = row
                     .cursor_pointer()
-                    .hover(|style| style.bg(dark().surface.hover))
+                    .hover(|style| style.bg(light().surface.hover))
                     .on_hover(cx.listener(move |view, hovered: &bool, _, cx| {
                         if *hovered {
                             view.menu_highlight = Some(ix);
@@ -595,7 +595,7 @@ impl AppView {
         let mut model_button = Button::new("model-picker")
             .track_focus(&model_focus)
             .variant(ButtonVariant::Raised)
-            .text_color(dark().text.primary)
+            .text_color(light().text.primary)
             .disabled(!can_open_model_menu)
             .child(
                 div()
@@ -673,7 +673,7 @@ impl AppView {
         let mut effort_button = Button::new("effort-picker")
             .track_focus(&effort_focus)
             .variant(ButtonVariant::Raised)
-            .text_color(dark().text.primary)
+            .text_color(light().text.primary)
             .disabled(!can_open_effort_menu)
             .child(
                 div()
@@ -734,7 +734,7 @@ impl AppView {
                 .icon_circle(metrics::COMPOSER_SEND_SIZE)
                 .disabled(!can_cancel)
                 .track_focus(&action_focus)
-                .child(icon(Icon::Cancel).text_color(dark().text.on_accent))
+                .child(icon(Icon::Cancel).text_color(light().text.on_accent))
                 .tooltip(cancel_tooltip);
             if can_cancel {
                 cancel = cancel
@@ -763,7 +763,7 @@ impl AppView {
                 .icon_circle(metrics::COMPOSER_SEND_SIZE)
                 .disabled(!can_send)
                 .track_focus(&action_focus)
-                .child(icon(Icon::Send).text_color(dark().text.on_accent))
+                .child(icon(Icon::Send).text_color(light().text.on_accent))
                 .tooltip(send_tooltip);
             if can_send {
                 send = send
@@ -804,12 +804,12 @@ impl AppView {
             .min_h(px(metrics::COMPOSER_PANEL_MIN_HEIGHT))
             .border_1()
             .border_color(if input_focused {
-                dark().accent.primary
+                light().accent.primary
             } else {
-                dark().border.subtle
+                light().border.subtle
             })
             .rounded(px(metrics::COMPOSER_RADIUS))
-            .bg(dark().surface.raised)
+            .bg(light().surface.raised)
             .shadow_sm()
             .when(has_options, |card| card.child(attachments))
             .child(
@@ -865,10 +865,10 @@ impl AppView {
             .track_scroll(&self.composer_layouts["composer-workspace"])
             .px(px(metrics::SPACE_2))
             .rounded(px(metrics::CONTROL_RADIUS))
-            .bg(dark().bg.panel)
+            .bg(light().bg.panel)
             .text_size(font::BASE)
             .line_height(font::CONTROL_LINE_HEIGHT)
-            .text_color(dark().text.secondary)
+            .text_color(light().text.secondary)
             .child(workspace_label);
         let mut project = div()
             .flex()
@@ -936,7 +936,7 @@ impl AppView {
                     .track_scroll(&self.composer_layouts["composer-context"])
                     .text_size(font::XS)
                     .line_height(font::META_LINE_HEIGHT)
-                    .text_color(dark().text.tertiary)
+                    .text_color(light().text.tertiary)
                     .child(self.projection.context_meter_label()),
             );
         }
@@ -955,7 +955,7 @@ impl AppView {
                         div().truncate().child(
                             Label::new(note)
                                 .size(font::XS)
-                                .color(dark().semantic.warning_text),
+                                .color(light().semantic.warning_text),
                         ),
                     ),
                 ),
@@ -1365,9 +1365,9 @@ impl AppView {
             .flex_none()
             .mt_2()
             .border_t_1()
-            .border_color(dark().border.subtle)
+            .border_color(light().border.subtle)
             .when(self.menu_highlight == Some(ix), |row| {
-                row.bg(dark().surface.raised)
+                row.bg(light().surface.raised)
             })
             .on_hover(cx.listener(move |view, hovered: &bool, _, cx| {
                 if *hovered {
@@ -1414,7 +1414,7 @@ impl AppView {
                             .py_1()
                             .text_size(font::XS)
                             .line_height(font::META_LINE_HEIGHT)
-                            .text_color(dark().text.secondary)
+                            .text_color(light().text.secondary)
                             .whitespace_normal()
                             .child(t("model_capability.help")),
                     )
@@ -1428,7 +1428,7 @@ impl AppView {
                     .py_1()
                     .text_size(font::DESCRIPTION)
                     .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                    .text_color(dark().text.secondary)
+                    .text_color(light().text.secondary)
                     .whitespace_normal()
                     .child(notice),
             );
@@ -1443,7 +1443,7 @@ impl AppView {
                             .text_size(font::DESCRIPTION)
                             .line_height(font::DESCRIPTION_LINE_HEIGHT)
                             .whitespace_normal()
-                            .text_color(dark().text.secondary)
+                            .text_color(light().text.secondary)
                             .child(format!("{title}\n{hint}")),
                     )
                     .child(self.model_settings_entry(cx)),
@@ -1479,7 +1479,7 @@ impl AppView {
             .truncate()
             .text_size(font::SM)
             .line_height(font::META_LINE_HEIGHT)
-            .text_color(dark().text.secondary)
+            .text_color(light().text.secondary)
             .child(title)
     }
 
@@ -1509,12 +1509,12 @@ impl AppView {
             .px_2()
             .rounded(px(metrics::CONTROL_RADIUS))
             .bg(if selected || ix == highlight {
-                dark().surface.raised
+                light().surface.raised
             } else {
-                dark().bg.menu
+                light().bg.menu
             })
-            .hover(|style| style.bg(dark().surface.hover))
-            .active(|style| style.bg(dark().surface.pressed))
+            .hover(|style| style.bg(light().surface.hover))
+            .active(|style| style.bg(light().surface.pressed))
             .cursor_pointer()
             .tooltip(move |_, cx| super::tooltip_text(full_value.clone(), cx))
             .on_hover(cx.listener(move |view, hovered: &bool, _, cx| {
@@ -1533,7 +1533,7 @@ impl AppView {
                         |slot| {
                             slot.child(
                                 icon_sized(Icon::Check, px(metrics::ICON_SM))
-                                    .text_color(dark().text.primary),
+                                    .text_color(light().text.primary),
                             )
                         },
                     ))
@@ -1551,7 +1551,7 @@ impl AppView {
                                     .when(selected, |title| {
                                         title.font_weight(gpui::FontWeight::MEDIUM)
                                     })
-                                    .text_color(dark().text.primary)
+                                    .text_color(light().text.primary)
                                     .whitespace_normal()
                                     .child(title.to_string()),
                             )
@@ -1559,7 +1559,7 @@ impl AppView {
                                 div()
                                     .text_size(font::META)
                                     .line_height(font::META_LINE_HEIGHT)
-                                    .text_color(dark().text.secondary)
+                                    .text_color(light().text.secondary)
                                     .whitespace_normal()
                                     .child(source),
                             )
@@ -1568,7 +1568,7 @@ impl AppView {
                                     div()
                                         .text_size(font::META)
                                         .line_height(font::META_LINE_HEIGHT)
-                                        .text_color(dark().text.secondary)
+                                        .text_color(light().text.secondary)
                                         .whitespace_normal()
                                         .child(capabilities),
                                 )
@@ -1670,12 +1670,12 @@ impl AppView {
                     .px_2()
                     .rounded(px(metrics::CONTROL_RADIUS))
                     .bg(if selected || ix == highlight {
-                        dark().surface.raised
+                        light().surface.raised
                     } else {
-                        dark().bg.menu
+                        light().bg.menu
                     })
-                    .hover(|style| style.bg(dark().surface.hover))
-                    .active(|style| style.bg(dark().surface.pressed))
+                    .hover(|style| style.bg(light().surface.hover))
+                    .active(|style| style.bg(light().surface.pressed))
                     .cursor_pointer()
                     .on_hover(cx.listener(move |view, hovered: &bool, _, cx| {
                         if *hovered && view.menu_highlight != Some(ix) {
@@ -1693,7 +1693,7 @@ impl AppView {
                                 |slot| {
                                     slot.child(
                                         icon_sized(Icon::Check, px(metrics::ICON_SM))
-                                            .text_color(dark().accent.primary),
+                                            .text_color(light().accent.primary),
                                     )
                                 },
                             ))
@@ -1703,7 +1703,7 @@ impl AppView {
                                     .min_w_0()
                                     .text_size(font::BASE)
                                     .line_height(font::CONTROL_LINE_HEIGHT)
-                                    .text_color(dark().text.primary)
+                                    .text_color(light().text.primary)
                                     .child(label),
                             ),
                     )

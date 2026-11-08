@@ -27,7 +27,7 @@ pub(super) use crate::ui::components::focus_ring::focus_ring;
 pub(super) use crate::ui::components::icon::{icon, icon_sized, Icon};
 pub(super) use crate::ui::components::label::Label;
 pub(super) use crate::ui::components::panel::Panel;
-pub(super) use crate::ui::theme::{dark, font, metrics};
+pub(super) use crate::ui::theme::{font, light, metrics};
 
 pub(super) use crate::controller::McpServerEntry;
 pub(super) use crate::projection::{
@@ -1054,7 +1054,7 @@ fn settings_section() -> gpui::Div {
         .gap_4()
         .pt_8()
         .border_t_1()
-        .border_color(dark().border.subtle)
+        .border_color(light().border.subtle)
 }
 
 fn settings_copy(text: impl Into<String>) -> gpui::Div {
@@ -1064,7 +1064,7 @@ fn settings_copy(text: impl Into<String>) -> gpui::Div {
         .whitespace_normal()
         .text_size(font::DESCRIPTION)
         .line_height(font::DESCRIPTION_LINE_HEIGHT)
-        .text_color(dark().text.secondary)
+        .text_color(light().text.secondary)
         .child(text.into())
 }
 
@@ -1073,7 +1073,7 @@ fn settings_label(text: &'static str) -> gpui::Div {
         .text_size(font::BODY)
         .line_height(font::SECTION_LINE_HEIGHT)
         .font_weight(FontWeight::MEDIUM)
-        .text_color(dark().text.primary)
+        .text_color(light().text.primary)
         .child(text)
 }
 
@@ -1084,7 +1084,7 @@ fn settings_locate_mark() -> gpui::Div {
         .bottom_0()
         .left_0()
         .w(px(metrics::SETTINGS_LOCATE_MARK_WIDTH))
-        .bg(dark().accent.primary)
+        .bg(light().accent.primary)
 }
 
 /// 导航槽：分组头或页面项。查找激活时列表为空（结果替换导航）。
@@ -1393,7 +1393,7 @@ impl AppView {
             // 背景与绝对定位左缘不参与布局，避免 OPT-4d 选中微移。
             element = element
                 .relative()
-                .bg(dark().surface.hover)
+                .bg(light().surface.hover)
                 .child(settings_locate_mark());
         }
         element
@@ -1449,7 +1449,7 @@ impl AppView {
                     .text_size(font::PAGE_TITLE)
                     .line_height(font::from_pixels(32.0))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(dark().text.primary)
+                    .text_color(light().text.primary)
                     .child(title),
             )
             .child(settings_copy(subtitle))
@@ -1468,14 +1468,14 @@ impl AppView {
             .py_3()
             .px_4()
             .rounded(px(6.0))
-            .bg(dark().surface.raised)
+            .bg(light().surface.raised)
             .text_size(font::DESCRIPTION)
             .line_height(font::DESCRIPTION_LINE_HEIGHT)
             .whitespace_normal()
             .text_color(if matches!(kind, "error" | "action") {
-                dark().semantic.danger_text
+                light().semantic.danger_text
             } else {
-                dark().text.secondary
+                light().text.secondary
             })
             .child(text)
     }
@@ -1525,7 +1525,7 @@ impl AppView {
                     .child(
                         Label::new(t("settings.rail_title"))
                             .size(font::TITLE)
-                            .color(dark().text.primary),
+                            .color(light().text.primary),
                     ),
             )
             .child(back)
@@ -1648,7 +1648,7 @@ impl AppView {
             .px(px(metrics::RAIL_INNER_PAD))
             .text_size(font::XS)
             .line_height(font::XS)
-            .text_color(dark().text.tertiary)
+            .text_color(light().text.tertiary)
             .child(label)
             .into_any_element()
     }
@@ -1760,7 +1760,7 @@ impl AppView {
                 .child(
                     Label::new(label)
                         .size(font::BASE)
-                        .color(dark().text.primary),
+                        .color(light().text.primary),
                 )
                 .into_any_element()
         } else {
@@ -1786,23 +1786,23 @@ impl AppView {
             .child(
                 icon_sized(settings_page_icon(page), px(metrics::ICON_SM)).text_color(
                     if selected {
-                        dark().text.primary
+                        light().text.primary
                     } else {
-                        dark().text.secondary
+                        light().text.secondary
                     },
                 ),
             )
             .child(div().flex_1().min_w_0().child(label_element));
         if selected {
-            item = item.bg(dark().surface.raised);
+            item = item.bg(light().surface.raised);
         } else {
             // 未选中：Ghost 同款 hover / active 色映射；click / Enter /
             // Space 与 AX Press 同一 handler（consume_button_key_click
             // 过滤 keyup 合成的键盘 click，与 Button 组件口径一致）。
             item = item
                 .cursor_pointer()
-                .hover(|style| style.bg(dark().surface.raised))
-                .active(|style| style.bg(dark().surface.hover))
+                .hover(|style| style.bg(light().surface.raised))
+                .active(|style| style.bg(light().surface.hover))
                 .on_click(cx.listener(move |view, event, window, cx| {
                     if view.consume_button_key_click(id, event) {
                         return;

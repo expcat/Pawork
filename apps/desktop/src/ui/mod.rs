@@ -77,7 +77,7 @@ use menus::MenuKind;
 use resources::ResourcesPanelState;
 use shell_layout::InspectorPlacement;
 use task_rail::RailStop;
-use theme::{dark, font, metrics};
+use theme::{font, light, metrics};
 
 pub use text_input::{SendMessage, TextInput};
 
@@ -219,11 +219,11 @@ impl Render for TooltipText {
             .px_2()
             .py_1()
             .rounded_md()
-            .bg(dark().surface.raised)
+            .bg(light().surface.raised)
             .border_1()
-            .border_color(dark().border.strong)
+            .border_color(light().border.strong)
             .text_size(font::XS)
-            .text_color(dark().text.primary)
+            .text_color(light().text.primary)
             .child(self.text.clone())
     }
 }
@@ -1374,7 +1374,7 @@ impl AppView {
             .center()
             .vcenter()
             .radius(metrics::HEADER_ACTION_RADIUS)
-            .text_color(dark().text.emphasis)
+            .text_color(light().text.emphasis)
             .child(icon(Icon::Plus))
             .tooltip(new_task_tooltip);
         if can_create {
@@ -1407,7 +1407,7 @@ impl AppView {
                 .center()
                 .vcenter()
                 .radius(metrics::HEADER_ACTION_RADIUS)
-                .text_color(dark().text.emphasis)
+                .text_color(light().text.emphasis)
                 .child(icon(Icon::More))
                 .tooltip(i18n::t("header.tooltip_activity"))
                 .track_focus(&self.inspector_activity_focus)
@@ -1452,7 +1452,7 @@ impl AppView {
             .center()
             .vcenter()
             .radius(metrics::HEADER_ACTION_RADIUS)
-            .text_color(dark().text.emphasis)
+            .text_color(light().text.emphasis)
             .child(icon(Icon::Inspector))
             .tooltip(i18n::t("header.tooltip_open_inspector"))
             .on_click(cx.listener(|view, event, window, cx| {
@@ -1483,7 +1483,7 @@ impl AppView {
             .pl(px(metrics::TIMELINE_CONTENT_INSET))
             .pr(px(metrics::HEADER_INSET_RIGHT))
             .gap(px(metrics::HEADER_ACTION_GAP))
-            .bg(dark().bg.base)
+            .bg(light().bg.base)
             .child(
                 div()
                     .flex()
@@ -1500,7 +1500,7 @@ impl AppView {
                                 .text_size(font::HEADER_TITLE)
                                 .line_height(font::from_pixels(26.0))
                                 .font_weight(FontWeight::MEDIUM)
-                                .text_color(dark().text.primary)
+                                .text_color(light().text.primary)
                                 .tooltip({
                                     let title = SharedString::from(title.clone());
                                     move |_, cx| tooltip_text(title.clone(), cx)
@@ -1572,13 +1572,13 @@ impl AppView {
             .h(px(metrics::INSPECTOR_BACK_HEIGHT))
             .px_3()
             .border_b_1()
-            .border_color(dark().border.subtle)
+            .border_color(light().border.subtle)
             .child(
                 Button::new("inspector-back")
                     .variant(ButtonVariant::Ghost)
                     .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
                     .text_size(font::SM)
-                    .text_color(dark().text.primary)
+                    .text_color(light().text.primary)
                     .label(i18n::t("inspector.back_to_conversation"))
                     .track_focus(&self.inspector_back_focus)
                     .on_click(cx.listener(|view, event, window, cx| {
@@ -1606,10 +1606,10 @@ impl AppView {
             .px(px(metrics::HEADER_CHIP_PAD_X))
             .py(px(metrics::HEADER_CHIP_PAD_Y))
             .rounded(px(metrics::HEADER_CHIP_RADIUS))
-            .bg(dark().surface.raised)
+            .bg(light().surface.raised)
             .text_size(font::META)
             .line_height(font::META_LINE_HEIGHT)
-            .text_color(dark().text.secondary)
+            .text_color(light().text.secondary)
     }
 
     fn welcome_visible(&self) -> bool {
@@ -3501,9 +3501,9 @@ fn live_action_enabled(connection: &ConnectionState, target_present: bool) -> bo
 /// （NeedsInput 琥珀 > Running 蓝 > Blocked 红；gui-design §R6 状态一致性）。
 fn header_status_visual(status: SessionLiveStatus) -> (f32, Rgba) {
     let color = match status {
-        SessionLiveStatus::Running => dark().accent.primary,
-        SessionLiveStatus::NeedsInput => dark().semantic.warning_text,
-        SessionLiveStatus::Blocked => dark().semantic.danger_text,
+        SessionLiveStatus::Running => light().accent.primary,
+        SessionLiveStatus::NeedsInput => light().semantic.warning_text,
+        SessionLiveStatus::Blocked => light().semantic.danger_text,
     };
     (metrics::HEADER_STATUS_DOT_SIZE, color)
 }
@@ -4038,8 +4038,8 @@ impl Render for AppView {
             .capture_key_down(components::focus_ring::key_down)
             .flex()
             .size_full()
-            .bg(dark().bg.base)
-            .text_color(dark().text.primary)
+            .bg(light().bg.base)
+            .text_color(light().text.primary)
             // 根节点键盘裁决（R3 Wave B）：菜单打开且触发器聚焦时 ↑/↓ 移高亮、
             // Enter 选择、Escape 关闭并焦点回触发器；其余情况 Escape 沿用既有
             // 关闭路径；Tab / Shift-Tab 映射 focus_next / focus_prev 走

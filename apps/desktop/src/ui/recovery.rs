@@ -3,7 +3,7 @@ use super::accessibility::{AxAction, AxNode, AxRect, AxRole};
 use super::i18n::t;
 use super::*;
 use crate::projection::{ApprovalModeWire, TerminalAvailability};
-use crate::ui::theme::dark;
+use crate::ui::theme::light;
 
 pub(super) const RECOVERY_IDS: [&str; 6] = [
     "connection-notice",
@@ -176,7 +176,7 @@ impl AppView {
                         .whitespace_normal()
                         .text_size(font::DESCRIPTION)
                         .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                        .text_color(dark().text.secondary)
+                        .text_color(light().text.secondary)
                         .child(reason.to_string()),
                 )
             })

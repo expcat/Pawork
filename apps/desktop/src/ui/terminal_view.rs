@@ -11,7 +11,7 @@ use gpui::{
 };
 use std::ops::Range;
 
-use super::theme::{dark, font as theme_font};
+use super::theme::{font as theme_font, light};
 
 pub(crate) use pawork_terminal::{size_from_bounds_scaled, TERMINAL_LINE_HEIGHT};
 
@@ -19,9 +19,10 @@ pub(crate) use pawork_terminal::{size_from_bounds_scaled, TERMINAL_LINE_HEIGHT};
 pub(crate) const TERMINAL_RESIZE_DEBOUNCE: std::time::Duration =
     std::time::Duration::from_millis(80);
 
+// ANSI 16 色适配浅色输出面；白色系使用中性灰，保持默认背景上的可读性。
 const SGR_PALETTE: [u32; 16] = [
-    0x000000, 0xcd3131, 0x0dbc79, 0xe5e510, 0x2472c8, 0xbc3fbc, 0x11a8cd, 0xe5e5e5, 0x666666,
-    0xf14c4c, 0x23d18b, 0xf5f543, 0x3b8eea, 0xd670d6, 0x29b8db, 0xffffff,
+    0x1b1b1f, 0xb3352b, 0x2f7438, 0x765400, 0x245cca, 0x8b3f95, 0x116b80, 0x4b4b55, 0x5f5f6a,
+    0xbd3124, 0x287b38, 0x806000, 0x306bce, 0x9c3aa6, 0x00798b, 0x5f5f6a,
 ];
 
 fn palette_color(index: u8) -> Rgba {
@@ -29,7 +30,7 @@ fn palette_color(index: u8) -> Rgba {
 }
 
 fn cell_color(attrs: pawork_terminal::Attrs) -> (Rgba, Option<Rgba>) {
-    let theme = dark();
+    let theme = light();
     let mut fg = attrs.fg.map(palette_color).unwrap_or(theme.text.emphasis);
     let mut bg = attrs.bg.map(palette_color);
     if attrs.inverse {
@@ -132,7 +133,7 @@ pub(crate) fn render_terminal_lines(
                                 len: preedit.len(),
                                 underline: Some(gpui::UnderlineStyle {
                                     thickness: gpui::px(1.0),
-                                    color: Some(dark().text.primary.into()),
+                                    color: Some(light().text.primary.into()),
                                     wavy: false,
                                 }),
                                 ..run.clone()
@@ -141,12 +142,12 @@ pub(crate) fn render_terminal_lines(
                         cursor_runs.push(TextRun {
                             len: char_len,
                             color: if caret {
-                                dark().bg.base.into()
+                                light().bg.base.into()
                             } else {
                                 run.color
                             },
                             background_color: if caret {
-                                Some(dark().text.emphasis.into())
+                                Some(light().text.emphasis.into())
                             } else {
                                 run.background_color
                             },

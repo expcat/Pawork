@@ -19,7 +19,7 @@ use crate::ui::components::label::Label;
 use crate::ui::components::list_row::ListRow;
 use crate::ui::components::skeleton::loading_skeleton;
 use crate::ui::i18n::t;
-use crate::ui::theme::{dark, font, metrics};
+use crate::ui::theme::{font, light, metrics};
 
 use super::{AppView, MenuKind};
 
@@ -118,7 +118,7 @@ fn format_line_no(n: Option<u32>) -> String {
 
 /// 文件状态色标：M 琥珀 / A 绿 / D 红；R / ? 等未知状态原样。
 pub(super) fn changes_status_chip(status: &str) -> (String, gpui::Rgba) {
-    let palette = dark();
+    let palette = light();
     match status {
         "M" | "modified" | "Modified" => ("M".into(), palette.semantic.warning_text),
         "A" | "added" | "Added" => ("A".into(), palette.semantic.success_fg),
@@ -461,17 +461,17 @@ impl AppView {
                     .text_size(font::BASE)
                     .line_height(font::CONTROL_LINE_HEIGHT)
                     .text_color(if current {
-                        dark().text.primary
+                        light().text.primary
                     } else {
-                        dark().text.secondary
+                        light().text.secondary
                     })
-                    .when(current, |tab| tab.bg(dark().surface.raised))
+                    .when(current, |tab| tab.bg(light().surface.raised))
                     .hover(|style| {
                         style
-                            .bg(dark().surface.hover)
-                            .text_color(dark().text.primary)
+                            .bg(light().surface.hover)
+                            .text_color(light().text.primary)
                     })
-                    .active(|style| style.bg(dark().surface.pressed))
+                    .active(|style| style.bg(light().surface.pressed))
                     .child(div().child(label))
                     .when(current, |tab| {
                         tab.child(
@@ -481,7 +481,7 @@ impl AppView {
                                 .bottom_0()
                                 .w(px(24.0))
                                 .h(px(metrics::TAB_UNDERLINE_HEIGHT))
-                                .bg(dark().text.secondary),
+                                .bg(light().text.secondary),
                         )
                     })
                     .on_click(cx.listener(move |view, event, _window, cx| {
@@ -502,7 +502,7 @@ impl AppView {
             .min_h(px(metrics::CHANGES_TAB_HEIGHT))
             .flex_none()
             .border_b_1()
-            .border_color(dark().border.subtle)
+            .border_color(light().border.subtle)
             .child(
                 div()
                     .id("changes-tabs-layout")
@@ -531,7 +531,7 @@ impl AppView {
                         Button::new("changes-refresh")
                             .variant(ButtonVariant::Ghost)
                             .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
-                            .text_color(dark().text.secondary)
+                            .text_color(light().text.secondary)
                             .child(icon_sized(Icon::Refresh, px(metrics::ICON_SM)))
                             .tooltip(t("changes.tooltip_refresh"))
                             .track_focus(&self.changes_refresh_focus)
@@ -562,9 +562,9 @@ impl AppView {
                     .px_2()
                     .py_1()
                     .border_b_1()
-                    .border_color(dark().border.subtle)
+                    .border_color(light().border.subtle)
                     .text_size(font::XS)
-                    .text_color(dark().text.tertiary)
+                    .text_color(light().text.tertiary)
                     .child(t("changes.scope_note")),
             )
             .when_some(self.changes.stale_reason.clone(), |block, reason| {
@@ -578,10 +578,10 @@ impl AppView {
                         .px_2()
                         .py_1()
                         .border_b_1()
-                        .border_color(dark().border.subtle)
+                        .border_color(light().border.subtle)
                         .text_size(font::DESCRIPTION)
                         .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                        .text_color(dark().text.tertiary)
+                        .text_color(light().text.tertiary)
                         .child(t("changes.session_mismatch").replace("{}", &data_session)),
                 )
             })
@@ -610,7 +610,7 @@ impl AppView {
                 changes_placeholder("changes.loading").into_any_element()
             }
             ChangesFetch::Failed(reason) => {
-                changes_placeholder_colored(reason.clone(), dark().semantic.danger_text)
+                changes_placeholder_colored(reason.clone(), light().semantic.danger_text)
                     .into_any_element()
             }
             ChangesFetch::Fetching | ChangesFetch::Ready => {
@@ -639,7 +639,7 @@ impl AppView {
             .overflow_y_scroll()
             .max_h(px(metrics::CHANGES_FILE_LIST_MAX_HEIGHT))
             .border_b_1()
-            .border_color(dark().border.subtle);
+            .border_color(light().border.subtle);
         for file in &self.changes.files {
             let selected = Some(&file.path) == self.changes.selected.as_ref();
             let path = file.path.clone();
@@ -665,7 +665,7 @@ impl AppView {
                             .truncate()
                             .text_size(font::BASE)
                             .line_height(font::CONTROL_LINE_HEIGHT)
-                            .text_color(dark().text.primary)
+                            .text_color(light().text.primary)
                             .child(path.clone()),
                     ),
                 )
@@ -680,12 +680,12 @@ impl AppView {
                         .line_height(font::CONTROL_LINE_HEIGHT)
                         .child(
                             div()
-                                .text_color(dark().semantic.success_fg)
+                                .text_color(light().semantic.success_fg)
                                 .child(format!("+{}", file.additions)),
                         )
                         .child(
                             div()
-                                .text_color(dark().semantic.danger_text)
+                                .text_color(light().semantic.danger_text)
                                 .child(format!("−{}", file.deletions)),
                         ),
                 );
@@ -722,7 +722,7 @@ impl AppView {
             DiffFetch::Idle => changes_placeholder("changes.diff_select_file").into_any_element(),
             DiffFetch::Fetching => changes_placeholder("changes.diff_loading").into_any_element(),
             DiffFetch::Failed(reason) => {
-                changes_placeholder_colored(reason.clone(), dark().semantic.danger_text)
+                changes_placeholder_colored(reason.clone(), light().semantic.danger_text)
                     .into_any_element()
             }
             DiffFetch::Ready(file) => {
@@ -736,32 +736,32 @@ impl AppView {
                     .gap_2()
                     .px_2()
                     .border_b_1()
-                    .border_color(dark().border.subtle)
-                    .bg(dark().surface.raised)
+                    .border_color(light().border.subtle)
+                    .bg(light().surface.raised)
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_color(dark().text.primary)
+                            .text_color(light().text.primary)
                             .child(file.path.clone()),
                     )
                     .child(
                         div()
                             .flex_none()
-                            .text_color(dark().text.secondary)
+                            .text_color(light().text.secondary)
                             .child(file.status.clone()),
                     )
                     .child(
                         div()
                             .flex_none()
-                            .text_color(dark().semantic.success_fg)
+                            .text_color(light().semantic.success_fg)
                             .child(format!("+{}", file.additions)),
                     )
                     .child(
                         div()
                             .flex_none()
-                            .text_color(dark().semantic.danger_text)
+                            .text_color(light().semantic.danger_text)
                             .child(format!("−{}", file.deletions)),
                     );
                 let mut body = div()
@@ -782,7 +782,7 @@ impl AppView {
                         div()
                             .px_2()
                             .py_1()
-                            .text_color(dark().text.secondary)
+                            .text_color(light().text.secondary)
                             .child(t("changes.diff_binary")),
                     );
                 } else if file.hunks.is_empty() {
@@ -790,7 +790,7 @@ impl AppView {
                         div()
                             .px_2()
                             .py_1()
-                            .text_color(dark().text.secondary)
+                            .text_color(light().text.secondary)
                             .child(t("changes.diff_no_hunks")),
                     );
                 } else {
@@ -812,15 +812,15 @@ impl AppView {
                                 .w_full()
                                 .flex()
                                 .flex_row()
-                                .bg(dark().surface.raised)
-                                .text_color(dark().text.secondary)
-                                .child(diff_number_gutter(None, dark().surface.raised))
-                                .child(diff_number_gutter(None, dark().surface.raised))
+                                .bg(light().surface.raised)
+                                .text_color(light().text.secondary)
+                                .child(diff_number_gutter(None, light().surface.raised))
+                                .child(diff_number_gutter(None, light().surface.raised))
                                 .child(
                                     div()
                                         .w(px(metrics::DIFF_SIGN_WIDTH))
                                         .flex_none()
-                                        .bg(dark().surface.raised),
+                                        .bg(light().surface.raised),
                                 )
                                 .child(
                                     div()
@@ -833,9 +833,9 @@ impl AppView {
                         );
                         for (line, nums) in hunk.lines.iter().zip(numbers) {
                             let (prefix, row_bg) = match line.kind {
-                                DiffLineKind::Addition => ('+', dark().diff.addition_bg),
-                                DiffLineKind::Deletion => ('-', dark().diff.deletion_bg),
-                                DiffLineKind::Context => (' ', dark().bg.panel),
+                                DiffLineKind::Addition => ('+', light().diff.addition_bg),
+                                DiffLineKind::Deletion => ('-', light().diff.deletion_bg),
+                                DiffLineKind::Context => (' ', light().bg.panel),
                             };
                             content = content.child(
                                 div()
@@ -853,7 +853,7 @@ impl AppView {
                                             .justify_center()
                                             .py_1()
                                             .bg(row_bg)
-                                            .text_color(dark().diff.gutter_fg)
+                                            .text_color(light().diff.gutter_fg)
                                             .child(prefix.to_string()),
                                     )
                                     .child(
@@ -861,7 +861,7 @@ impl AppView {
                                             .flex_1()
                                             .px_2()
                                             .py_1()
-                                            .text_color(dark().text.primary)
+                                            .text_color(light().text.primary)
                                             .whitespace_nowrap()
                                             .child(line.text.clone()),
                                     ),
@@ -920,7 +920,7 @@ impl AppView {
             .px_2()
             .min_h(px(metrics::DIFF_HEADER_HEIGHT))
             .border_t_1()
-            .border_color(dark().border.subtle)
+            .border_color(light().border.subtle)
             .child(self.diff_scroll_button(
                 "changes-diff-scroll-left",
                 Icon::ChevronLeft,
@@ -1004,7 +1004,7 @@ impl AppView {
                 changes_placeholder("changes.loading").into_any_element()
             }
             ChangesFetch::Failed(reason) => {
-                changes_placeholder_colored(reason.clone(), dark().semantic.danger_text)
+                changes_placeholder_colored(reason.clone(), light().semantic.danger_text)
                     .into_any_element()
             }
             ChangesFetch::Fetching | ChangesFetch::Ready => {
@@ -1102,11 +1102,14 @@ impl AppView {
                     .gap_2()
                     .p_4()
                     .child(
-                        div().border_b_1().border_color(dark().border.subtle).child(
-                            Label::new(t("changes.tab_activity"))
-                                .size(font::BODY)
-                                .color(dark().text.primary),
-                        ),
+                        div()
+                            .border_b_1()
+                            .border_color(light().border.subtle)
+                            .child(
+                                Label::new(t("changes.tab_activity"))
+                                    .size(font::BODY)
+                                    .color(light().text.primary),
+                            ),
                     )
                     .child(self.activity_subagent_card(subagent_bound, cx))
                     .child(
@@ -1116,13 +1119,13 @@ impl AppView {
                             .gap_1()
                             .p_2()
                             .border_1()
-                            .border_color(dark().border.subtle)
+                            .border_color(light().border.subtle)
                             .rounded(px(4.0))
-                            .bg(dark().surface.raised)
+                            .bg(light().surface.raised)
                             .child(
                                 Label::new(t("changes.tab_changes"))
                                     .size(font::BODY_SM)
-                                    .color(dark().text.secondary),
+                                    .color(light().text.secondary),
                             )
                             .child(
                                 div()
@@ -1146,7 +1149,7 @@ impl AppView {
                     .px_1()
                     .pb_1()
                     .text_size(font::XS)
-                    .text_color(dark().text.tertiary)
+                    .text_color(light().text.tertiary)
                     .child(format!("from latest session {data_session}")),
             ),
             None => panel,
@@ -1164,19 +1167,19 @@ impl AppView {
             .gap_1()
             .p_2()
             .border_1()
-            .border_color(dark().border.subtle)
+            .border_color(light().border.subtle)
             .rounded(px(4.0))
-            .bg(dark().surface.raised)
+            .bg(light().surface.raised)
             .child(
                 Label::new(t("subagents.title"))
                     .size(font::BODY_SM)
-                    .color(dark().text.secondary),
+                    .color(light().text.secondary),
             );
         if let Some(error) = &activity.error {
             card = card.child(
                 div()
                     .text_size(font::XS)
-                    .text_color(dark().semantic.danger_text)
+                    .text_color(light().semantic.danger_text)
                     .child(error.clone()),
             );
         }
@@ -1192,7 +1195,7 @@ impl AppView {
                 .child(
                     div()
                         .text_size(font::XS)
-                        .text_color(dark().text.tertiary)
+                        .text_color(light().text.tertiary)
                         .child(note),
                 )
                 .into_any_element();
@@ -1204,7 +1207,7 @@ impl AppView {
         card = card.child(
             div()
                 .text_size(font::XS)
-                .text_color(dark().text.secondary)
+                .text_color(light().text.secondary)
                 .child(summary),
         );
         if activity.agents.is_empty() {
@@ -1212,7 +1215,7 @@ impl AppView {
                 .child(
                     div()
                         .text_size(font::XS)
-                        .text_color(dark().text.tertiary)
+                        .text_color(light().text.tertiary)
                         .child(t("subagents.empty")),
                 )
                 .into_any_element();
@@ -1240,7 +1243,7 @@ impl AppView {
                 .flex_none()
                 .cursor_pointer()
                 .rounded(px(4.0))
-                .hover(|style| style.bg(dark().surface.hover))
+                .hover(|style| style.bg(light().surface.hover))
                 .on_click(cx.listener(move |view, _event, window, cx| {
                     view.on_activity_open_subagent(&agent_id, window, cx);
                 }))
@@ -1258,7 +1261,7 @@ impl AppView {
                         div().truncate().child(
                             Label::new(agent.title.clone())
                                 .size(font::XS)
-                                .color(dark().text.primary),
+                                .color(light().text.primary),
                         ),
                     ),
                 );
@@ -1267,19 +1270,19 @@ impl AppView {
             row = row.child(
                 Label::new(agent.model_id.clone())
                     .size(font::XS)
-                    .color(dark().text.tertiary),
+                    .color(light().text.tertiary),
             );
             if let Some(effort) = &agent.effort {
                 row = row.child(
                     Label::new(effort.clone())
                         .size(font::XS)
-                        .color(dark().text.tertiary),
+                        .color(light().text.tertiary),
                 );
             }
             row = row.child(
                 Label::new(status)
                     .size(font::XS)
-                    .color(dark().text.secondary),
+                    .color(light().text.secondary),
             );
             list = list.child(row);
         }
@@ -1379,7 +1382,7 @@ fn changes_placeholder(key: &'static str) -> EmptyState {
         Icon::Changes,
         t(key).to_string(),
         description.to_string(),
-        dark().text.primary,
+        light().text.primary,
     )
     .top_aligned();
     if key == "changes.loading" || key == "changes.diff_loading" {
@@ -1406,7 +1409,7 @@ fn summary_row(label: &str, value: String) -> impl IntoElement {
                     metrics::SUMMARY_LABEL_WIDTH / font::BASE_REM_PIXELS,
                 ))
                 .flex_none()
-                .text_color(dark().text.secondary)
+                .text_color(light().text.secondary)
                 .child(label.to_string()),
         )
         .child(div().flex_1().min_w_0().child(value))
@@ -1424,7 +1427,7 @@ fn diff_number_gutter(n: Option<u32>, bg: gpui::Rgba) -> impl IntoElement {
         .font_family(font::MONO)
         .text_size(font::BASE)
         .line_height(font::DESCRIPTION_LINE_HEIGHT)
-        .text_color(dark().diff.gutter_fg)
+        .text_color(light().diff.gutter_fg)
         .child(format_line_no(n))
 }
 
@@ -1723,8 +1726,8 @@ mod tests {
             }]
         );
         assert_eq!(metrics::CHANGES_FILE_ROW_HEIGHT, 32.0);
-        assert_ne!(dark().diff.addition_bg, dark().semantic.success_bg);
-        assert_ne!(dark().diff.deletion_bg, dark().semantic.danger_bg);
+        assert_ne!(light().diff.addition_bg, light().semantic.success_bg);
+        assert_ne!(light().diff.deletion_bg, light().semantic.danger_bg);
         assert_eq!(changes_status_chip("modified").0, "M");
         assert_eq!(changes_status_chip("added").0, "A");
         assert_eq!(changes_status_chip("deleted").0, "D");

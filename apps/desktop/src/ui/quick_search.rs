@@ -433,7 +433,7 @@ impl AppView {
                         .py_2()
                         .text_size(font::META)
                         .line_height(font::META_LINE_HEIGHT)
-                        .text_color(dark().text.secondary)
+                        .text_color(light().text.secondary)
                         .child(t(group)),
                 );
             }
@@ -452,11 +452,11 @@ impl AppView {
                     .py_2()
                     .cursor_pointer()
                     .bg(if highlighted {
-                        dark().surface.hover
+                        light().surface.hover
                     } else {
-                        dark().surface.raised
+                        light().surface.raised
                     })
-                    .hover(|s| s.bg(dark().surface.hover))
+                    .hover(|s| s.bg(light().surface.hover))
                     .tooltip(move |_, cx| tooltip_text(full_title.clone(), cx))
                     .on_click(cx.listener(move |view, _, window, cx| {
                         view.activate_quick_result(target.clone(), window, cx)
@@ -469,7 +469,7 @@ impl AppView {
                             .gap(px(metrics::SPACE_2))
                             .child(
                                 icon_sized(type_icon, px(metrics::ICON_SM))
-                                    .text_color(dark().text.secondary)
+                                    .text_color(light().text.secondary)
                                     .mt(px(2.0)),
                             )
                             .child(
@@ -498,7 +498,7 @@ impl AppView {
                                                 .truncate()
                                                 .text_size(font::BODY_SM)
                                                 .line_height(font::META_LINE_HEIGHT)
-                                                .text_color(dark().text.secondary)
+                                                .text_color(light().text.secondary)
                                                 .child(detail),
                                         ),
                                     ),
@@ -544,9 +544,9 @@ impl AppView {
             .flex()
             .flex_col()
             .overflow_hidden()
-            .bg(dark().surface.raised)
+            .bg(light().surface.raised)
             .border_1()
-            .border_color(dark().border.strong)
+            .border_color(light().border.strong)
             .rounded_lg()
             .shadow_lg()
             .occlude()
@@ -587,7 +587,7 @@ impl AppView {
                             .element("quick-search-scope")
                             .text_size(font::BODY_SM)
                             .line_height(font::META_LINE_HEIGHT)
-                            .text_color(dark().text.secondary)
+                            .text_color(light().text.secondary)
                             .child(t(if connected {
                                 "quick.scope"
                             } else {

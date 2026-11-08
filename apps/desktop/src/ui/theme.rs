@@ -1,7 +1,7 @@
-//! UI-1 / GUI3-08 共享深色工作台 token。
-//! 近黑画布 + 更深侧栏拉开层次，高对比正文；蓝色只承担主动作 / 焦点。
+//! UI-1 / GUI3-08 共享工作台 token。
+//! 浅色画布 + 分级侧栏拉开层次，高对比正文；蓝色只承担主动作 / 焦点。
 //! 色板、字阶、圆角、间距与有限动效由这里统一提供。普通面板无阴影，
-//! 仅浮层与 Composer 保留 elevation；运行时仍为单一 dark 主题。
+//! 仅浮层与 Composer 保留 elevation；运行时默认使用 light 主题。
 
 use gpui::{rgb, rgba, App, Global, Rgba};
 
@@ -24,15 +24,15 @@ pub struct Theme {
     pub diff: DiffColors,
 }
 
-/// 窗口级主题。当前只有 [`dark`]；页面经 [`theme`] 读取。
+/// 窗口级主题。默认使用 [`light`]，同时保留 [`dark`] palette。
 impl Global for Theme {}
 
-/// 把当前 dark palette 挂到 App。正式窗口在首帧前调用一次。
+/// 把默认 light palette 挂到 App。正式窗口在首帧前调用一次。
 pub fn install(cx: &mut App) {
-    cx.set_global(dark());
+    cx.set_global(light());
 }
 
-/// 当前窗口主题。正式窗口由 [`install`] 注入；测试窗口未注入时回退 [`dark`]。
+/// 当前窗口主题。正式窗口由 [`install`] 注入；测试窗口未注入时回退 [`light`]。
 pub fn theme(cx: &App) -> &Theme {
     if cx.has_global::<Theme>() {
         cx.global::<Theme>()
@@ -44,90 +44,90 @@ pub fn theme(cx: &App) -> &Theme {
 fn fallback() -> &'static Theme {
     use std::sync::OnceLock;
     static THEME: OnceLock<Theme> = OnceLock::new();
-    THEME.get_or_init(dark)
+    THEME.get_or_init(light)
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct BackgroundColors {
-    /// #141416：根 / Workspace 背景。
+    /// 根 / Workspace 背景。
     pub base: Rgba,
-    /// #0e0e10：侧栏 / Inspector / 状态栏等面板背景。
+    /// 侧栏 / Inspector / 状态栏等面板背景。
     pub panel: Rgba,
-    /// #1c1c1f：菜单 / 浮层背景与其未选中项。
+    /// 菜单 / 浮层背景与其未选中项。
     pub menu: Rgba,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct SurfaceColors {
-    /// #222226：可用态控件面 / 选中面 / 输入框背景。
+    /// 可用态控件面 / 选中面 / 输入框背景。
     pub raised: Rgba,
-    /// #19191c：禁用态控件面。
+    /// 禁用态控件面。
     pub disabled: Rgba,
-    /// #2c2c31：surface.raised 控件与选中行的 hover / active 背景。
+    /// surface.raised 控件与选中行的 hover / active 背景。
     pub hover: Rgba,
-    /// #18181b：raised 控件的 pressed 背景；比 hover 更沉，不靠缩放表达按下。
+    /// raised 控件的 pressed 背景；不靠缩放表达按下。
     pub pressed: Rgba,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct BorderColors {
-    /// #2a2a30：面板分隔线。
+    /// 面板分隔线。
     pub subtle: Rgba,
-    /// #3f3f46：浮层描边；亦作禁用态操作按钮背景（值 1:1，不拆分）。
+    /// 浮层描边；亦作禁用态操作按钮背景。
     pub strong: Rgba,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct TextColors {
-    /// #f2f2f3：正文。
+    /// 正文。
     pub primary: Rgba,
-    /// #dedee2：面板内强调正文（项目名 / 终端输出 / Assistant 消息）。
+    /// 面板内强调正文（项目名 / 终端输出 / Assistant 消息）。
     pub emphasis: Rgba,
-    /// #aaaab2：次要文字（含工具调用名，收敛自 text.tool）。
+    /// 次要文字（含工具调用名，收敛自 text.tool）。
     pub secondary: Rgba,
-    /// #9b9ba4：辅助文字（时间 / 提示）。
+    /// 辅助文字（时间 / 提示）。
     pub tertiary: Rgba,
-    /// #8f8f8f：禁用态控件文字。
+    /// 禁用态控件文字。
     pub disabled: Rgba,
-    /// #5a5a5a：不可用 Fork 文字。
+    /// 不可用 Fork 文字。
     pub ghost: Rgba,
-    /// #ffffff：主色 / 危险按钮上的文字。
+    /// 主色 / 危险按钮上的文字。
     pub on_accent: Rgba,
-    /// #b8b8b8：审批卡详情。
+    /// 审批卡详情。
     pub detail: Rgba,
-    /// #9b9ba4（不透明）：composer 占位文字；适用于交互面。
+    /// Composer 占位文字；适用于交互面且不透明。
     pub placeholder: Rgba,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct AccentColors {
-    /// #2f6fed：交互主色（选中 / 主按钮 / 焦点环）。
+    /// 交互主色（选中 / 主按钮 / 焦点环）。
     pub primary: Rgba,
-    /// #5b9dff55（RGBA）：输入框选区高亮。
+    /// 输入框选区高亮。
     pub selection: Rgba,
-    /// #3270e8：主按钮 hover / active 背景（满足白字对比度）。
+    /// 主按钮 hover / active 背景（满足白字对比度）。
     pub hover: Rgba,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct SemanticColors {
-    /// #3d7a4a：允许运行操作背景（Allow for run）。
+    /// 允许运行操作背景（Allow for run）。
     pub success_bg: Rgba,
-    /// #438251：允许运行按钮 hover / active 背景（满足白字对比度）。
+    /// 允许运行按钮 hover / active 背景（满足白字对比度）。
     pub success_hover: Rgba,
-    /// #74c94c：状态点绿（running 状态前景）。
+    /// 状态点绿（running 状态前景）。
     pub success_fg: Rgba,
-    /// #f0d58c：警示文字。
+    /// 警示文字。
     pub warning_text: Rgba,
-    /// #8a6d3b：警示描边。
+    /// 警示描边。
     pub warning_border: Rgba,
-    /// #2a2418：警示背景。
+    /// 警示背景。
     pub warning_bg: Rgba,
-    /// #f48771：错误文字。
+    /// 错误文字。
     pub danger_text: Rgba,
-    /// #8a3b32：危险操作背景（Cancel）。
+    /// 危险操作背景（Cancel）。
     pub danger_bg: Rgba,
-    /// #9c463c：危险操作按钮 hover / active 背景（R8 波 B）。
+    /// 危险操作按钮 hover / active 背景（R8 波 B）。
     pub danger_hover: Rgba,
 }
 
@@ -142,8 +142,60 @@ pub struct DiffColors {
     pub gutter_fg: Rgba,
 }
 
-/// 深色主题访问器。运行时使用 UI-1 单一 dark palette；
-/// 不读取 macOS Increase Contrast，也不派生第二套可访问 palette。
+/// 默认浅色主题。不读取 macOS 系统外观或 Increase Contrast。
+pub fn light() -> Theme {
+    Theme {
+        bg: BackgroundColors {
+            base: rgb(0xfafafa),
+            panel: rgb(0xf4f4f5),
+            menu: rgb(0xffffff),
+        },
+        surface: SurfaceColors {
+            raised: rgb(0xffffff),
+            disabled: rgb(0xf0f0f2),
+            hover: rgb(0xe9e9ed),
+            pressed: rgb(0xdedee3),
+        },
+        border: BorderColors {
+            subtle: rgb(0xd8d8de),
+            strong: rgb(0xbebec6),
+        },
+        text: TextColors {
+            primary: rgb(0x1b1b1f),
+            emphasis: rgb(0x2b2b31),
+            secondary: rgb(0x4b4b55),
+            tertiary: rgb(0x5f5f6a),
+            disabled: rgb(0x85858f),
+            ghost: rgb(0xa0a0a8),
+            on_accent: rgb(0xffffff),
+            detail: rgb(0x50505a),
+            placeholder: rgb(0x61616b),
+        },
+        accent: AccentColors {
+            primary: rgb(0x245cca),
+            selection: rgba(0x2f6fed33),
+            hover: rgb(0x3270e8),
+        },
+        semantic: SemanticColors {
+            success_bg: rgb(0x3d7a4a),
+            success_hover: rgb(0x438251),
+            success_fg: rgb(0x2f7438),
+            warning_text: rgb(0x765400),
+            warning_border: rgb(0xa87b22),
+            warning_bg: rgb(0xfff4d6),
+            danger_text: rgb(0xb3352b),
+            danger_bg: rgb(0x8a3b32),
+            danger_hover: rgb(0x9c463c),
+        },
+        diff: DiffColors {
+            addition_bg: rgb(0xe6f4ea),
+            deletion_bg: rgb(0xfbe9e7),
+            gutter_fg: rgb(0x5f5f6a),
+        },
+    }
+}
+
+/// 深色 palette 保留供显式使用；默认主题见 [`light`]。
 pub fn dark() -> Theme {
     Theme {
         bg: BackgroundColors {
@@ -603,31 +655,42 @@ mod tests {
     /// UI-1：全部次要文字在实际最亮交互面上达到 AA。
     #[test]
     fn wcag_text_on_surface_pairs_meet_aa() {
-        let theme = dark();
-        for foreground in [
-            theme.text.secondary,
-            theme.text.tertiary,
-            theme.text.placeholder,
-        ] {
-            for background in [
-                theme.bg.base,
-                theme.bg.panel,
-                theme.bg.menu,
-                theme.surface.raised,
-                theme.surface.hover,
+        for theme in [light(), dark()] {
+            for foreground in [
+                theme.text.secondary,
+                theme.text.tertiary,
+                theme.text.placeholder,
             ] {
-                assert!(contrast_ratio(foreground, background) >= 4.5);
+                for background in [
+                    theme.bg.base,
+                    theme.bg.panel,
+                    theme.bg.menu,
+                    theme.surface.raised,
+                    theme.surface.hover,
+                    theme.surface.pressed,
+                ] {
+                    assert!(contrast_ratio(foreground, background) >= 4.5);
+                }
             }
+            assert_eq!(theme.text.placeholder.a, 1.0);
         }
-        assert_eq!(theme.text.placeholder.a, 1.0);
+        assert!(contrast_ratio(light().accent.primary, light().surface.pressed) >= 4.5);
     }
 
     /// 操作按钮的文字在强调色和成功色的悬停表面上仍可读。
     #[test]
     fn action_text_remains_readable_on_interactive_surfaces() {
-        let theme = dark();
-        for background in [theme.accent.hover, theme.semantic.success_hover] {
-            assert!(contrast_ratio(theme.text.on_accent, background) >= 4.5);
+        for theme in [light(), dark()] {
+            for background in [
+                theme.accent.primary,
+                theme.accent.hover,
+                theme.semantic.success_bg,
+                theme.semantic.success_hover,
+                theme.semantic.danger_bg,
+                theme.semantic.danger_hover,
+            ] {
+                assert!(contrast_ratio(theme.text.on_accent, background) >= 4.5);
+            }
         }
     }
 

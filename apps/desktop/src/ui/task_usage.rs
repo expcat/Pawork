@@ -343,9 +343,9 @@ impl UsageView {
                     font::DESCRIPTION_LINE_HEIGHT
                 })
                 .text_color(if id == "usage-error" || id == "usage-detail-error" {
-                    dark().semantic.danger_text
+                    light().semantic.danger_text
                 } else {
-                    dark().text.secondary
+                    light().text.secondary
                 })
                 .child(label.clone()),
         )
@@ -567,7 +567,7 @@ impl Render for UsageView {
                 .gap(px(8.0))
                 .p(px(16.0))
                 .rounded_md()
-                .bg(dark().surface.raised);
+                .bg(light().surface.raised);
             for (label, value) in [
                 (tr("Records", "记录"), t.records.to_string()),
                 (
@@ -612,7 +612,7 @@ impl Render for UsageView {
                             div()
                                 .w(px(260.0))
                                 .max_w_full()
-                                .text_color(dark().text.secondary)
+                                .text_color(light().text.secondary)
                                 .child(label),
                         )
                         .child(div().flex_1().min_w(px(120.0)).child(value)),
@@ -797,9 +797,9 @@ impl Render for UsageView {
                 .gap_2()
                 .p_3()
                 .border_1()
-                .border_color(dark().border.strong)
+                .border_color(light().border.strong)
                 .rounded_md()
-                .bg(dark().bg.panel)
+                .bg(light().bg.panel)
                 .child(self.text("usage-detail-context", context))
                 .child(self.text("usage-detail", details));
             if let Some(code) = r.error_code {

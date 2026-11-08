@@ -445,7 +445,7 @@ impl Render for GoalView {
                 .gap(px(16.0))
                 .pt(px(16.0))
                 .border_t_1()
-                .border_color(dark().border.subtle)
+                .border_color(light().border.subtle)
                 .children(direction)
                 .child(product_actions().children(steer)),
         )

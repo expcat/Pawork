@@ -14,7 +14,7 @@ use crate::ui::components::follow_scroll::BackToBottom;
 use crate::ui::components::icon::{icon_sized, Icon};
 use crate::ui::components::label::Label;
 use crate::ui::i18n::t;
-use crate::ui::theme::{dark, font, metrics};
+use crate::ui::theme::{font, light, metrics};
 
 use super::AppView;
 
@@ -345,11 +345,11 @@ fn subagent_chip_label_width(window: &Window, title: &str, text_max: Option<f32>
 /// 运行蓝、等待琥珀、完成绿、失败红、其余弱化）。
 fn subagent_status_color(status: &str) -> Rgba {
     match status {
-        "running" => dark().accent.primary,
-        "waiting" => dark().semantic.warning_text,
-        "completed" => dark().semantic.success_fg,
-        "failed" => dark().semantic.danger_text,
-        _ => dark().text.tertiary,
+        "running" => light().accent.primary,
+        "waiting" => light().semantic.warning_text,
+        "completed" => light().semantic.success_fg,
+        "failed" => light().semantic.danger_text,
+        _ => light().text.tertiary,
     }
 }
 
@@ -552,7 +552,7 @@ impl AppView {
             chips = chips.child(
                 div()
                     .text_size(font::XS)
-                    .text_color(dark().text.tertiary)
+                    .text_color(light().text.tertiary)
                     .child(empty_label),
             );
         }
@@ -695,7 +695,7 @@ impl AppView {
             .px_2()
             .py_1()
             .border_b_1()
-            .border_color(dark().border.subtle)
+            .border_color(light().border.subtle)
             .child(chips)
             .when(show_cancel, |header| {
                 header.child(
@@ -731,7 +731,7 @@ impl AppView {
                             .disabled(!can_refresh)
                             .variant(ButtonVariant::Ghost)
                             .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
-                            .text_color(dark().text.secondary)
+                            .text_color(light().text.secondary)
                             .child(icon_sized(Icon::Refresh, px(metrics::ICON_SM)))
                             .tooltip(t("subagents.refresh_tooltip"))
                             .track_focus(&self.subagent_refresh_focus)
@@ -766,7 +766,7 @@ impl AppView {
                         .py_1()
                         .text_size(font::BASE)
                         .line_height(font::CONTROL_LINE_HEIGHT)
-                        .text_color(dark().semantic.danger_text)
+                        .text_color(light().semantic.danger_text)
                         .child(error),
                 )
             })
@@ -777,7 +777,7 @@ impl AppView {
                         .py_1()
                         .text_size(font::BASE)
                         .line_height(font::CONTROL_LINE_HEIGHT)
-                        .text_color(dark().text.secondary)
+                        .text_color(light().text.secondary)
                         // RV-11：断线保留内容但如实标注过期（本地化前缀 +
                         // 原始 reason；数据内容不翻译）。
                         .child(format!("{} · {reason}", t("subagents.stale_banner"))),
@@ -872,7 +872,7 @@ impl AppView {
                 div()
                     .text_size(font::BASE)
                     .line_height(font::CONTROL_LINE_HEIGHT)
-                    .text_color(dark().text.secondary)
+                    .text_color(light().text.secondary)
                     .child(t("subagents.loading")),
             );
             return transcript.into_any_element();
@@ -884,7 +884,7 @@ impl AppView {
             transcript = transcript.child(
                 div()
                     .text_size(font::XS)
-                    .text_color(dark().semantic.danger_text)
+                    .text_color(light().semantic.danger_text)
                     .child(format!("{} · {reason}", t("subagents.load_failed"))),
             );
         }
@@ -923,12 +923,12 @@ impl AppView {
                                     .unwrap_or(t("settings.subagents.effort_default"))
                             ))
                             .size(font::XS)
-                            .color(dark().text.tertiary),
+                            .color(light().text.tertiary),
                         )
                         .child(
                             Label::new(status)
                                 .size(font::XS)
-                                .color(dark().text.secondary),
+                                .color(light().text.secondary),
                         ),
                 ),
         );
@@ -960,13 +960,13 @@ impl AppView {
                 .gap_1()
                 .p_2()
                 .border_1()
-                .border_color(dark().border.subtle)
+                .border_color(light().border.subtle)
                 .rounded(px(4.0))
-                .bg(dark().surface.raised)
+                .bg(light().surface.raised)
                 .child(
                     Label::new(t("subagents.result_to_main"))
                         .size(font::XS)
-                        .color(dark().text.secondary),
+                        .color(light().text.secondary),
                 );
             if long {
                 result_box = result_box.child(self.subagent_result_toggle_element(
@@ -982,7 +982,7 @@ impl AppView {
                 div()
                     .text_size(font::BASE)
                     .line_height(font::CONTROL_LINE_HEIGHT)
-                    .text_color(dark().text.secondary)
+                    .text_color(light().text.secondary)
                     .child(t("subagents.result_in_transcript"))
                     .into_any_element()
             } else if expanded {
@@ -992,7 +992,7 @@ impl AppView {
                     window,
                     &format!("subagent-result-{}", agent.agent_id),
                     result,
-                    dark().text.primary,
+                    light().text.primary,
                     false,
                 )
                 .into_any_element()
@@ -1000,7 +1000,7 @@ impl AppView {
                 div()
                     .text_size(font::BASE)
                     .line_height(font::CONTROL_LINE_HEIGHT)
-                    .text_color(dark().text.secondary)
+                    .text_color(light().text.secondary)
                     .child(subagent_result_summary(result))
                     .into_any_element()
             };
@@ -1082,19 +1082,19 @@ impl AppView {
                     .gap_1()
                     .p_2()
                     .border_1()
-                    .border_color(dark().border.subtle)
+                    .border_color(light().border.subtle)
                     .rounded(px(4.0))
-                    .bg(dark().surface.raised)
+                    .bg(light().surface.raised)
                     .child(
                         Label::new(t("subagents.task_from_main"))
                             .size(font::XS)
-                            .color(dark().text.secondary),
+                            .color(light().text.secondary),
                     )
                     .child(
                         div()
                             .text_size(font::BASE)
                             .line_height(font::CONTROL_LINE_HEIGHT)
-                            .text_color(dark().text.primary)
+                            .text_color(light().text.primary)
                             .child(text),
                     )
                     .into_any_element()
@@ -1118,13 +1118,13 @@ impl AppView {
                     .child(
                         Label::new(t("timeline.you"))
                             .size(font::XS)
-                            .color(dark().text.tertiary),
+                            .color(light().text.tertiary),
                     )
                     .child(
                         div()
                             .text_size(font::BASE)
                             .line_height(font::CONTROL_LINE_HEIGHT)
-                            .text_color(dark().text.primary)
+                            .text_color(light().text.primary)
                             .child(text),
                     )
                     .into_any_element()
@@ -1148,7 +1148,7 @@ impl AppView {
                     .child(
                         Label::new(t("subagents.assistant_label"))
                             .size(font::XS)
-                            .color(dark().text.tertiary),
+                            .color(light().text.tertiary),
                     )
                     .child(super::markdown::message_body_element(
                         self,
@@ -1156,7 +1156,7 @@ impl AppView {
                         window,
                         &format!("subagent-{event_id}"),
                         &text,
-                        dark().text.primary,
+                        light().text.primary,
                         false,
                     ))
                     .into_any_element()
@@ -1177,17 +1177,17 @@ impl AppView {
                     .gap_1()
                     .pl_2()
                     .border_l_2()
-                    .border_color(dark().border.subtle)
+                    .border_color(light().border.subtle)
                     .child(
                         Label::new(t("subagents.thinking_label"))
                             .size(font::XS)
-                            .color(dark().text.tertiary),
+                            .color(light().text.tertiary),
                     )
                     .child(
                         div()
                             .text_size(font::BASE)
                             .line_height(font::CONTROL_LINE_HEIGHT)
-                            .text_color(dark().text.tertiary)
+                            .text_color(light().text.tertiary)
                             // 思考全文随外层 transcript 滚动（同主 Timeline 展开
                             // 思考盒）：不做内嵌滚动，避免滚轮被内层吃掉。
                             .child(text),
@@ -1211,8 +1211,8 @@ impl AppView {
                 let headline = super::timeline_entry::tool_headline(&name, arguments.as_deref());
                 let status_label = super::timeline::tool_status_label(&status);
                 let status_color = match status.as_str() {
-                    "failed" | "cancelled" => dark().semantic.danger_text,
-                    _ => dark().text.secondary,
+                    "failed" | "cancelled" => light().semantic.danger_text,
+                    _ => light().text.secondary,
                 };
                 let header_layout = self
                     .subagent_item_layouts
@@ -1235,7 +1235,7 @@ impl AppView {
                             Button::new(button_id)
                                 .variant(ButtonVariant::Ghost)
                                 .text_size(font::BASE)
-                                .text_color(dark().text.secondary)
+                                .text_color(light().text.secondary)
                                 .padding(ButtonPadding::Horizontal(metrics::PADDING_XS))
                                 .track_focus(&focus)
                                 .child(
@@ -1249,7 +1249,7 @@ impl AppView {
                                             div()
                                                 .w(px(12.0))
                                                 .flex_none()
-                                                .text_color(dark().text.secondary)
+                                                .text_color(light().text.secondary)
                                                 .child(if expanded {
                                                     icon_sized(Icon::ChevronDown, px(12.0))
                                                 } else {
@@ -1293,7 +1293,7 @@ impl AppView {
                         .gap_1()
                         .pl_2()
                         .border_l_1()
-                        .border_color(dark().border.subtle)
+                        .border_color(light().border.subtle)
                         // 参数与结果 / 错误原文均按主 Timeline 工具行口径：
                         // 等宽小号，随外层 transcript 滚动。
                         .child(
@@ -1301,7 +1301,7 @@ impl AppView {
                                 .text_size(font::BASE)
                                 .line_height(font::DESCRIPTION_LINE_HEIGHT)
                                 .font_family(font::MONO)
-                                .text_color(dark().text.secondary)
+                                .text_color(light().text.secondary)
                                 .child(super::timeline_entry::arguments_secondary(
                                     arguments.as_deref(),
                                 )),
@@ -1311,7 +1311,7 @@ impl AppView {
                                 .text_size(font::BASE)
                                 .line_height(font::DESCRIPTION_LINE_HEIGHT)
                                 .font_family(font::MONO)
-                                .text_color(dark().text.secondary)
+                                .text_color(light().text.secondary)
                                 .child(preview),
                         );
                     if can_expand {
@@ -1329,13 +1329,13 @@ impl AppView {
             }
             PanelItem::RunState(state) => div()
                 .text_size(font::XS)
-                .text_color(dark().text.tertiary)
+                .text_color(light().text.tertiary)
                 .child(subagent_run_label(&state))
                 .into_any_element(),
             PanelItem::Error(text) => div()
                 .text_size(font::BASE)
                 .line_height(font::CONTROL_LINE_HEIGHT)
-                .text_color(dark().semantic.danger_text)
+                .text_color(light().semantic.danger_text)
                 .child(text)
                 .into_any_element(),
         }
@@ -1368,7 +1368,7 @@ impl AppView {
                 Button::new(button_id)
                     .variant(ButtonVariant::Ghost)
                     .text_size(font::BASE)
-                    .text_color(dark().text.secondary)
+                    .text_color(light().text.secondary)
                     .padding(ButtonPadding::Horizontal(metrics::PADDING_XS))
                     .label(if expanded {
                         t("tool.result_collapse")
@@ -1419,7 +1419,7 @@ impl AppView {
                 Button::new(button_id)
                     .variant(ButtonVariant::Ghost)
                     .text_size(font::BASE)
-                    .text_color(dark().text.secondary)
+                    .text_color(light().text.secondary)
                     .padding(ButtonPadding::Horizontal(metrics::PADDING_XS))
                     .label(if expanded {
                         t("tool.result_collapse")
@@ -1443,7 +1443,7 @@ impl AppView {
 }
 
 fn subagent_placeholder(title: &'static str, description: String) -> gpui::AnyElement {
-    EmptyState::labeled(Icon::Subagents, title, description, dark().text.primary)
+    EmptyState::labeled(Icon::Subagents, title, description, light().text.primary)
         .top_aligned()
         .into_any_element()
 }

@@ -492,7 +492,7 @@ impl AppView {
             .py_4()
             .gap_4()
             .border_b_1()
-            .border_color(dark().border.subtle)
+            .border_color(light().border.subtle)
             .child(
                 self.settings_element(dynamic_identifier(
                     "settings-provider-credentials-header",
@@ -529,11 +529,11 @@ impl AppView {
                     .gap_2()
                     .child(div().flex_none().size(px(8.0)).rounded_full().bg(
                         if credential.expired {
-                            dark().semantic.danger_text
+                            light().semantic.danger_text
                         } else if credential.selected {
-                            dark().semantic.success_fg
+                            light().semantic.success_fg
                         } else {
-                            dark().text.tertiary
+                            light().text.tertiary
                         },
                     ));
             if renaming {
@@ -567,7 +567,7 @@ impl AppView {
                                 .whitespace_normal()
                                 .text_size(font::BASE)
                                 .line_height(font::CONTROL_LINE_HEIGHT)
-                                .text_color(dark().text.primary)
+                                .text_color(light().text.primary)
                                 .child(name),
                         ),
                 );
@@ -579,18 +579,18 @@ impl AppView {
                         .px_2()
                         .rounded(px(4.0))
                         .border_1()
-                        .border_color(dark().border.subtle)
+                        .border_color(light().border.subtle)
                         .child(
                             Label::new(provider_credential_kind_label(&credential.kind))
                                 .size(font::BODY_SM)
-                                .color(dark().text.tertiary),
+                                .color(light().text.tertiary),
                         ),
                 )
                 .when(credential.selected, |row| {
                     row.child(
                         Label::new(t("settings.providers.account_selected_badge"))
                             .size(font::BODY_SM)
-                            .color(dark().semantic.success_fg),
+                            .color(light().semantic.success_fg),
                     )
                 });
             if self.settings_accounts_supported() && !credential.credential_id.is_empty() {
@@ -615,7 +615,7 @@ impl AppView {
                 .gap_2()
                 .py_3()
                 .when(ix > 0, |row| {
-                    row.border_t_1().border_color(dark().border.subtle)
+                    row.border_t_1().border_color(light().border.subtle)
                 })
                 .child(header)
                 .child(
@@ -626,9 +626,9 @@ impl AppView {
                                 .text_size(font::META)
                                 .line_height(font::META_LINE_HEIGHT)
                                 .text_color(if credential.expired {
-                                    dark().semantic.danger_text
+                                    light().semantic.danger_text
                                 } else {
-                                    dark().text.tertiary
+                                    light().text.tertiary
                                 })
                                 .child(format!(
                                     "{} · {}",
@@ -757,9 +757,9 @@ impl AppView {
                     .w_full()
                     .min_w_0()
                     .text_color(if auth_error.is_some() || catalog_error {
-                        dark().semantic.danger_text
+                        light().semantic.danger_text
                     } else {
-                        dark().text.secondary
+                        light().text.secondary
                     })
                     .child(input),
             );

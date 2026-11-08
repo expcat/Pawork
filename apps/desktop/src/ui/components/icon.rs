@@ -5,7 +5,7 @@ use std::borrow::Cow;
 
 use gpui::{prelude::*, px, svg, AssetSource, Pixels, SharedString, Svg};
 
-use crate::ui::theme::{dark, metrics};
+use crate::ui::theme::{light, metrics};
 
 /// 登记的动作 / 类型图标。路径与 `apps/desktop/assets/icons/*.svg` 一一对应。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -181,7 +181,7 @@ pub fn icon_sized(icon: Icon, size: impl Into<Pixels>) -> Svg {
         .path(icon.path())
         .size(size)
         .flex_none()
-        .text_color(dark().text.primary)
+        .text_color(light().text.primary)
 }
 
 /// `include_bytes!` 静态表；不引入 rust-embed。

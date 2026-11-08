@@ -22,7 +22,7 @@ use crate::ui::components::label::Label;
 use crate::ui::components::list_row::ListRow;
 use crate::ui::components::panel::Panel;
 use crate::ui::i18n::t;
-use crate::ui::theme::{dark, font, metrics};
+use crate::ui::theme::{font, light, metrics};
 
 use super::{
     now_unix_ms, rail_focus_stops, rail_project_key, rail_project_occurrence_key,
@@ -50,12 +50,12 @@ impl Render for RailSessionTooltip {
             .flex_col()
             .gap(px(metrics::SPACE_2))
             .rounded(px(metrics::INPUT_MENU_RADIUS))
-            .bg(dark().surface.raised)
+            .bg(light().surface.raised)
             .border_1()
-            .border_color(dark().border.subtle)
+            .border_color(light().border.subtle)
             .shadow_md()
             .text_size(font::BASE)
-            .text_color(dark().text.primary)
+            .text_color(light().text.primary)
             .child(div().whitespace_normal().child(self.title.clone()))
             .child(
                 div()
@@ -63,7 +63,7 @@ impl Render for RailSessionTooltip {
                     .items_center()
                     .gap(px(metrics::SPACE_2))
                     .text_size(font::BODY_SM)
-                    .text_color(dark().text.secondary)
+                    .text_color(light().text.secondary)
                     .child(icon_sized(Icon::Project, px(metrics::ICON_SM)))
                     .child(div().flex_1().truncate().child(self.project.clone()))
                     .child(self.activity.clone()),
@@ -89,9 +89,9 @@ pub(super) fn relative_activity(updated_at_ms: u64, now_ms: u64) -> String {
 /// 会话行 live 状态点：仅 Needs input / Running / Blocked 出实心点；空闲不占位。
 fn session_status_dot_color(status: SessionLiveStatus) -> Rgba {
     match status {
-        SessionLiveStatus::NeedsInput => dark().semantic.warning_text,
-        SessionLiveStatus::Running => dark().accent.primary,
-        SessionLiveStatus::Blocked => dark().semantic.danger_text,
+        SessionLiveStatus::NeedsInput => light().semantic.warning_text,
+        SessionLiveStatus::Running => light().accent.primary,
+        SessionLiveStatus::Blocked => light().semantic.danger_text,
     }
 }
 
@@ -204,7 +204,7 @@ impl AppView {
             .vcenter()
             .radius(metrics::CONTROL_RADIUS)
             .text_size(font::BASE)
-            .text_color(dark().text.secondary)
+            .text_color(light().text.secondary)
             .width(
                 rail_width
                     - window.rem_size() * 1.5
@@ -302,10 +302,10 @@ impl AppView {
         // TR-05）；Connected 绿点冻结为 semantic.success_fg，Connecting 蓝
         // （accent.primary），断线 / 失败空心灰。
         let (connection_dot_filled, connection_dot_color) = match &self.projection.connection {
-            ConnectionState::Connected { .. } => (true, dark().semantic.success_fg),
-            ConnectionState::Connecting => (true, dark().accent.primary),
+            ConnectionState::Connected { .. } => (true, light().semantic.success_fg),
+            ConnectionState::Connecting => (true, light().accent.primary),
             ConnectionState::Disconnected { .. } | ConnectionState::Failed { .. } => {
-                (false, dark().text.tertiary)
+                (false, light().text.tertiary)
             }
         };
 
@@ -349,7 +349,7 @@ impl AppView {
                         div()
                             .text_size(font::HEADER_TITLE)
                             .font_weight(FontWeight::MEDIUM)
-                            .text_color(dark().text.primary)
+                            .text_color(light().text.primary)
                             .child(t("rail.tasks")),
                     )
                     .child(
@@ -400,7 +400,7 @@ impl AppView {
                         .height(px(metrics::RAIL_TOP_ROW_HEIGHT))
                         .vcenter()
                         .text_size(font::BASE)
-                        .text_color(dark().text.emphasis)
+                        .text_color(light().text.emphasis)
                         .label(t("rail.reconnect"))
                         .tooltip(t("recovery.retry"))
                         .on_click(cx.listener(|view, event, window, cx| {
@@ -468,7 +468,7 @@ impl AppView {
                             div().flex().flex_row().flex_1().min_w_0().child(
                                 div()
                                     .text_size(font::BODY_SM)
-                                    .text_color(dark().text.secondary)
+                                    .text_color(light().text.secondary)
                                     .whitespace_normal()
                                     .child(connection_label),
                             ),
@@ -620,7 +620,7 @@ impl AppView {
                     .child(
                         Label::new(t("rail.no_tasks"))
                             .size(font::BODY_SM)
-                            .color(dark().text.tertiary),
+                            .color(light().text.tertiary),
                     ),
             );
         }
@@ -644,7 +644,7 @@ impl AppView {
                             div()
                                 .text_size(font::BODY_SM)
                                 .font_weight(FontWeight::MEDIUM)
-                                .text_color(dark().text.secondary)
+                                .text_color(light().text.secondary)
                                 .child(group.bucket.display_label().to_string()),
                         );
                     if group_index > 0 {
@@ -768,10 +768,10 @@ impl AppView {
                         .min_w_0()
                         .text_size(font::BASE)
                         .font_weight(FontWeight::NORMAL)
-                        .text_color(dark().text.emphasis)
+                        .text_color(light().text.emphasis)
                         .child(
                             icon_sized(Icon::Project, px(metrics::ICON_SM))
-                                .text_color(dark().text.secondary),
+                                .text_color(light().text.secondary),
                         )
                         // 长项目头标题 truncate（flex_1 + min_w_0）。
                         .child(div().flex_1().truncate().child(project.name.clone()))
@@ -784,7 +784,7 @@ impl AppView {
                                 },
                                 px(metrics::SPACE_3),
                             )
-                            .text_color(dark().text.tertiary),
+                            .text_color(light().text.tertiary),
                         ),
                 )
                 .child({
@@ -806,7 +806,7 @@ impl AppView {
                                 .child(
                                     Label::new(project.task_count().to_string())
                                         .size(font::BODY_SM)
-                                        .color(dark().text.tertiary),
+                                        .color(light().text.tertiary),
                                 ),
                         );
                     if !project.is_unassigned() {
@@ -943,14 +943,14 @@ impl AppView {
                     self.rail_hovered_session.as_deref() == Some(task.session_id.as_str());
                 let fade_color = if is_active {
                     if hovered {
-                        dark().surface.hover
+                        light().surface.hover
                     } else {
-                        dark().surface.raised
+                        light().surface.raised
                     }
                 } else if hovered {
-                    dark().surface.raised
+                    light().surface.raised
                 } else {
-                    dark().bg.panel
+                    light().bg.panel
                 };
                 // 项目头与首个任务行连续排列；跳过项目头时首行吃桶头间距。
                 let row_gap = if task_index == 0 {
@@ -979,9 +979,9 @@ impl AppView {
                             .text_size(font::BASE)
                             .font_weight(weight)
                             .text_color(if is_active {
-                                dark().text.primary
+                                light().text.primary
                             } else {
-                                dark().text.emphasis
+                                light().text.emphasis
                             })
                             .child(title.clone());
                         let mut title_width = 0.0;
@@ -1138,7 +1138,7 @@ impl AppView {
                         .height(px(metrics::RAIL_SESSION_ACTION_SIZE))
                         .center()
                         .radius(metrics::CONTROL_RADIUS)
-                        .text_color(dark().text.secondary)
+                        .text_color(light().text.secondary)
                         .child(icon_sized(Icon::Edit, px(metrics::ICON_SM)))
                         .tooltip(t("taskrail.rename"))
                         .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
@@ -1171,12 +1171,12 @@ impl AppView {
                             .height(px(metrics::RAIL_SESSION_ACTION_SIZE))
                             .center()
                             .radius(metrics::CONTROL_RADIUS)
-                            .text_color(dark().text.secondary)
+                            .text_color(light().text.secondary)
                             .child(icon_sized(Icon::Archive, px(metrics::ICON_SM)).text_color(
                                 if can_create {
-                                    dark().text.secondary
+                                    light().text.secondary
                                 } else {
-                                    dark().text.disabled
+                                    light().text.disabled
                                 },
                             ))
                             .tooltip(t("taskrail.archive"))
@@ -1230,7 +1230,7 @@ impl AppView {
                             .child(
                                 Label::new(relative_activity(task.updated_at_ms, now_ms))
                                     .size(font::BODY_SM)
-                                    .color(dark().text.tertiary),
+                                    .color(light().text.tertiary),
                             ),
                     );
                 }

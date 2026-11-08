@@ -41,7 +41,7 @@ use crate::ui::components::icon::{icon_sized, Icon};
 use crate::ui::components::label::Label;
 use crate::ui::components::skeleton::loading_skeleton;
 use crate::ui::i18n::t;
-use crate::ui::theme::{dark, font, metrics};
+use crate::ui::theme::{font, light, metrics};
 
 use super::{AppView, INSPECTOR_TAB_INDEX};
 
@@ -884,9 +884,9 @@ fn observation_row_id(key: EvidenceKey) -> String {
 /// 其余为历史——wire 恒 historical，区分由客户端按新近度表达）。
 fn observation_chip(is_current: bool) -> gpui::Div {
     let (label, color) = if is_current {
-        (t("computer.observation_current"), dark().accent.primary)
+        (t("computer.observation_current"), light().accent.primary)
     } else {
-        (t("computer.observation_history"), dark().text.tertiary)
+        (t("computer.observation_history"), light().text.tertiary)
     };
     div()
         .px(px(6.0))
@@ -1015,33 +1015,33 @@ fn computer_stop_status(stop: &Option<ComputerStop>) -> Option<(String, gpui::Rg
     match &stop.phase {
         ComputerStopPhase::Dispatching => Some((
             format!("{} · {run}", t("computer.stop_dispatching")),
-            dark().semantic.warning_text,
+            light().semantic.warning_text,
         )),
         ComputerStopPhase::Confirming { note: None } => Some((
             format!("{} · {run}", t("computer.stop_confirming")),
-            dark().semantic.warning_text,
+            light().semantic.warning_text,
         )),
         ComputerStopPhase::Confirming { note: Some(reason) } => Some((
             format!(
                 "{} · {run}",
                 t("computer.stop_confirming_note").replace("{}", reason)
             ),
-            dark().semantic.warning_text,
+            light().semantic.warning_text,
         )),
         ComputerStopPhase::Stopped => Some((
             format!("{} · {run}", t("computer.stop_stopped")),
-            dark().semantic.success_fg,
+            light().semantic.success_fg,
         )),
         ComputerStopPhase::ObserveFailed { reason } => Some((
             format!(
                 "{} · {run}",
                 t("computer.stop_observe_failed").replace("{}", reason)
             ),
-            dark().semantic.danger_text,
+            light().semantic.danger_text,
         )),
         ComputerStopPhase::Unknown => Some((
             format!("{} · {run}", t("computer.stop_unknown")),
-            dark().semantic.warning_text,
+            light().semantic.warning_text,
         )),
     }
 }
@@ -1086,9 +1086,9 @@ fn grant_label(grant: Option<ComputerGrantKind>) -> &'static str {
 
 fn grant_color(grant: Option<ComputerGrantKind>) -> gpui::Rgba {
     match grant {
-        Some(ComputerGrantKind::ForRun) => dark().semantic.success_fg,
-        Some(ComputerGrantKind::Once) => dark().accent.primary,
-        None => dark().semantic.warning_text,
+        Some(ComputerGrantKind::ForRun) => light().semantic.success_fg,
+        Some(ComputerGrantKind::Once) => light().accent.primary,
+        None => light().semantic.warning_text,
     }
 }
 
@@ -1137,9 +1137,9 @@ fn support_label(support: ComputerCapabilitySupport) -> &'static str {
 /// 能力 chip 字形与颜色（不靠颜色单独表达状态：✓/?/× 前缀同源进 AX）。
 fn support_glyph(support: ComputerCapabilitySupport) -> (&'static str, gpui::Rgba) {
     match support {
-        ComputerCapabilitySupport::Supported => ("✓", dark().semantic.success_fg),
-        ComputerCapabilitySupport::Unverified => ("?", dark().semantic.warning_text),
-        ComputerCapabilitySupport::Unsupported => ("×", dark().text.tertiary),
+        ComputerCapabilitySupport::Supported => ("✓", light().semantic.success_fg),
+        ComputerCapabilitySupport::Unverified => ("?", light().semantic.warning_text),
+        ComputerCapabilitySupport::Unsupported => ("×", light().text.tertiary),
     }
 }
 
@@ -1697,12 +1697,12 @@ impl AppView {
             .px_2()
             .py_1()
             .border_b_1()
-            .border_color(dark().border.subtle)
+            .border_color(light().border.subtle)
             .child(
                 Label::new(t("computer.title"))
                     .size(font::BODY)
                     .line_height(font::SECTION_LINE_HEIGHT)
-                    .color(dark().text.primary),
+                    .color(light().text.primary),
             )
             .child(div().flex_1())
             .child(
@@ -1713,7 +1713,7 @@ impl AppView {
                         Button::new("computer-refresh")
                             .variant(ButtonVariant::Ghost)
                             .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
-                            .text_color(dark().text.secondary)
+                            .text_color(light().text.secondary)
                             .disabled(!can_refresh)
                             .child(icon_sized(Icon::Refresh, px(metrics::ICON_SM)))
                             .tooltip(t("computer.tooltip_refresh"))
@@ -1768,10 +1768,10 @@ impl AppView {
                         .px_2()
                         .py_1()
                         .border_b_1()
-                        .border_color(dark().semantic.danger_text)
+                        .border_color(light().semantic.danger_text)
                         .text_size(font::DESCRIPTION)
                         .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                        .text_color(dark().semantic.danger_text)
+                        .text_color(light().semantic.danger_text)
                         .child(format!("{} · {reason}", t("computer.action_failed"))),
                 )
             })
@@ -1823,7 +1823,7 @@ impl AppView {
                     .py_1()
                     .text_size(font::DESCRIPTION)
                     .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                    .text_color(dark().text.tertiary)
+                    .text_color(light().text.tertiary)
                     .child(t("computer.scope_note")),
             );
         } else {
@@ -1882,7 +1882,7 @@ impl AppView {
             .pt_2()
             .mt_1()
             .border_t_1()
-            .border_color(dark().border.subtle);
+            .border_color(light().border.subtle);
         let count = t("computer.observations_count")
             .replace("{}", &self.computer.observations.len().to_string());
         section = section.child(
@@ -1895,10 +1895,14 @@ impl AppView {
                     Label::new(t("computer.observations_title"))
                         .size(font::BODY)
                         .line_height(font::SECTION_LINE_HEIGHT)
-                        .color(dark().text.tertiary),
+                        .color(light().text.tertiary),
                 )
                 .child(div().flex_1())
-                .child(Label::new(count).size(font::XS).color(dark().text.tertiary)),
+                .child(
+                    Label::new(count)
+                        .size(font::XS)
+                        .color(light().text.tertiary),
+                ),
         );
         match self.computer.obs_fetch {
             ComputerFetch::Failed => {
@@ -1906,7 +1910,7 @@ impl AppView {
                     div()
                         .text_size(font::DESCRIPTION)
                         .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                        .text_color(dark().semantic.danger_text)
+                        .text_color(light().semantic.danger_text)
                         .child(format!(
                             "{} · {}",
                             t("computer.observations_failed"),
@@ -1919,7 +1923,7 @@ impl AppView {
                     div()
                         .text_size(font::DESCRIPTION)
                         .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                        .text_color(dark().text.tertiary)
+                        .text_color(light().text.tertiary)
                         .child(t("computer.observations_loading")),
                 );
             }
@@ -1928,7 +1932,7 @@ impl AppView {
                     div()
                         .text_size(font::DESCRIPTION)
                         .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                        .text_color(dark().text.tertiary)
+                        .text_color(light().text.tertiary)
                         .child(t("computer.observations_empty")),
                 );
             }
@@ -1953,7 +1957,7 @@ impl AppView {
                     section = section.child(
                         div()
                             .text_size(font::XS)
-                            .text_color(dark().text.tertiary)
+                            .text_color(light().text.tertiary)
                             .child(
                                 t("computer.observations_hidden")
                                     .replace("{}", &hidden.to_string()),
@@ -1967,7 +1971,7 @@ impl AppView {
                 div()
                     .text_size(font::DESCRIPTION)
                     .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                    .text_color(dark().text.tertiary)
+                    .text_color(light().text.tertiary)
                     .child(t("computer.observations_truncated")),
             );
         }
@@ -2002,7 +2006,7 @@ impl AppView {
             .p_2()
             .rounded(px(8.0))
             .border_1()
-            .border_color(dark().border.subtle);
+            .border_color(light().border.subtle);
         let Some(entry) = entry else {
             return card;
         };
@@ -2025,7 +2029,7 @@ impl AppView {
                     .child(
                         div()
                             .text_size(font::XS)
-                            .text_color(dark().text.tertiary)
+                            .text_color(light().text.tertiary)
                             .child(super::timeline_entry::display_time(
                                 &entry.captured_at_ms.to_string(),
                                 super::now_unix_ms(),
@@ -2036,7 +2040,7 @@ impl AppView {
                 div()
                     .w_full()
                     .text_size(font::XS)
-                    .text_color(dark().text.secondary)
+                    .text_color(light().text.secondary)
                     .child(observation_meta(&entry)),
             );
         if let Some(image) = self.computer.evidence_images.get(&key).cloned() {
@@ -2064,9 +2068,9 @@ impl AppView {
                     .justify_center()
                     .rounded(px(metrics::CONTROL_RADIUS))
                     .border_1()
-                    .border_color(dark().border.subtle)
+                    .border_color(light().border.subtle)
                     .text_size(font::XS)
-                    .text_color(dark().text.tertiary)
+                    .text_color(light().text.tertiary)
                     .child(observation_progress(load.received, load.total)),
             );
         } else if self.computer.evidence_error.is_some() {
@@ -2082,7 +2086,7 @@ impl AppView {
                             .flex_1()
                             .min_w_0()
                             .text_size(font::XS)
-                            .text_color(dark().semantic.danger_text)
+                            .text_color(light().semantic.danger_text)
                             .child(format!(
                                 "{} · {reason}",
                                 t("computer.observation_load_failed")
@@ -2140,7 +2144,7 @@ impl AppView {
                 Button::new(button_id)
                     .variant(ButtonVariant::Ghost)
                     .padding(ButtonPadding::Horizontal(metrics::PADDING_SM))
-                    .text_color(dark().text.secondary)
+                    .text_color(light().text.secondary)
                     .label(SharedString::from(label))
                     .text_size(font::BASE)
                     .height(px(36.0))
@@ -2225,7 +2229,7 @@ impl AppView {
             .track_scroll(&layout)
             .rounded(px(6.0))
             .when(selected, |row| {
-                row.border_1().border_color(dark().accent.primary)
+                row.border_1().border_color(light().accent.primary)
             })
             .child(
                 Button::new(id)
@@ -2253,7 +2257,7 @@ impl AppView {
                 div()
                     .px_2()
                     .text_size(font::XS)
-                    .text_color(dark().text.tertiary)
+                    .text_color(light().text.tertiary)
                     .child(
                         div()
                             .flex()
@@ -2293,7 +2297,7 @@ impl AppView {
                     .py(px(2.0))
                     .rounded(px(4.0))
                     .border_1()
-                    .border_color(dark().border.subtle)
+                    .border_color(light().border.subtle)
                     .text_size(font::DESCRIPTION)
                     .line_height(font::DESCRIPTION_LINE_HEIGHT)
                     .text_color(color)
@@ -2309,7 +2313,7 @@ impl AppView {
             .p_2()
             .rounded(px(8.0))
             .border_1()
-            .border_color(dark().border.subtle)
+            .border_color(light().border.subtle)
             // 标题行：flex_row + flex_1 + min_w_0 同层承载 truncate
             //（min_w_0 截断投毒修法，见 AGENTS.md 工程经验）。
             .child(
@@ -2324,7 +2328,7 @@ impl AppView {
                                 .truncate()
                                 .text_size(font::BASE)
                                 .line_height(font::CONTROL_LINE_HEIGHT)
-                                .text_color(dark().text.primary)
+                                .text_color(light().text.primary)
                                 .child(target_title(state)),
                         ),
                     )
@@ -2340,7 +2344,7 @@ impl AppView {
                         div()
                             .truncate()
                             .text_size(font::XS)
-                            .text_color(dark().text.tertiary)
+                            .text_color(light().text.tertiary)
                             .child(target_subtitle(state)),
                     ),
                 ),
@@ -2350,7 +2354,7 @@ impl AppView {
                     .w_full()
                     .text_size(font::DESCRIPTION)
                     .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                    .text_color(dark().text.secondary)
+                    .text_color(light().text.secondary)
                     .child(target_state_text(state)),
             )
             .child(caps_row);
@@ -2360,7 +2364,7 @@ impl AppView {
                     .w_full()
                     .text_size(font::DESCRIPTION)
                     .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                    .text_color(dark().text.tertiary)
+                    .text_color(light().text.tertiary)
                     .child(note),
             );
         }
@@ -2370,7 +2374,7 @@ impl AppView {
                     .w_full()
                     .text_size(font::DESCRIPTION)
                     .line_height(font::DESCRIPTION_LINE_HEIGHT)
-                    .text_color(dark().semantic.warning_text)
+                    .text_color(light().semantic.warning_text)
                     .child(t("computer.permission_note")),
             );
         }
@@ -2490,7 +2494,7 @@ fn computer_placeholder(key: &'static str) -> EmptyState {
         Icon::Computer,
         t(key).to_string(),
         description.to_string(),
-        dark().text.primary,
+        light().text.primary,
     )
     .top_aligned();
     if key == "computer.loading" {
@@ -2505,7 +2509,7 @@ fn computer_placeholder_colored(reason: String) -> EmptyState {
         Icon::Computer,
         t("computer.error_title"),
         reason,
-        dark().semantic.danger_text,
+        light().semantic.danger_text,
     )
     .top_aligned()
 }

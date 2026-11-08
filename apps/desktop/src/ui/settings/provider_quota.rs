@@ -25,11 +25,11 @@ pub(crate) struct AccountQuotaRow {
 
 fn quota_bar_color(used: u8) -> gpui::Rgba {
     if used >= 90 {
-        dark().semantic.danger_text
+        light().semantic.danger_text
     } else if used >= 70 {
-        dark().semantic.warning_text
+        light().semantic.warning_text
     } else {
-        dark().accent.primary
+        light().accent.primary
     }
 }
 
@@ -305,7 +305,7 @@ impl AppView {
                 .w_full()
                 .h(px(SETTINGS_PROVIDER_USAGE_BAR_HEIGHT))
                 .rounded_full()
-                .bg(dark().surface.raised)
+                .bg(light().surface.raised)
                 .overflow_hidden();
             if row.used.is_some() && fill > 0 {
                 track = track.child(
@@ -345,7 +345,7 @@ impl AppView {
                                     div()
                                         .truncate()
                                         .text_size(font::BASE)
-                                        .text_color(dark().text.secondary)
+                                        .text_color(light().text.secondary)
                                         .child(row.title),
                                 ),
                             )
@@ -353,7 +353,7 @@ impl AppView {
                                 Label::new(percent).size(font::BASE).color(
                                     row.used
                                         .map(quota_bar_color)
-                                        .unwrap_or(dark().text.tertiary),
+                                        .unwrap_or(light().text.tertiary),
                                 ),
                             ),
                     )
@@ -372,7 +372,7 @@ impl AppView {
                                 } else {
                                     font::META_LINE_HEIGHT
                                 })
-                                .text_color(dark().text.secondary)
+                                .text_color(light().text.secondary)
                                 .child(caption),
                         )
                     }),

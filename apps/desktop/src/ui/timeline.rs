@@ -33,7 +33,7 @@ use crate::ui::components::dropdown::Dropdown;
 use crate::ui::components::follow_scroll::BackToBottom;
 use crate::ui::components::icon::{icon_sized, Icon};
 use crate::ui::i18n::t;
-use crate::ui::theme::{dark, font, metrics};
+use crate::ui::theme::{font, light, metrics};
 
 use super::approval_card::approval_card_height;
 use super::timeline_entry::{
@@ -820,8 +820,8 @@ impl AppView {
                         .justify_center()
                         .size(px(48.0))
                         .rounded(px(metrics::SURFACE_RADIUS))
-                        .bg(dark().surface.raised)
-                        .text_color(dark().text.secondary)
+                        .bg(light().surface.raised)
+                        .text_color(light().text.secondary)
                         .child(icon_sized(Icon::Task, px(24.0))),
                 )
                 .child(
@@ -842,7 +842,7 @@ impl AppView {
                             .line_height(font::from_pixels(metrics::MSG_LINE_HEIGHT))
                             .text_center()
                             .whitespace_normal()
-                            .text_color(dark().text.secondary)
+                            .text_color(light().text.secondary)
                             .child(self.welcome_hint()),
                     )
                 })
@@ -968,7 +968,7 @@ impl AppView {
                 };
                 element
                     .when(self.navigation_message_selected(&entry), |element| {
-                        element.bg(dark().surface.hover).rounded_md()
+                        element.bg(light().surface.hover).rounded_md()
                     })
                     .into_any_element()
             }
@@ -981,7 +981,7 @@ impl AppView {
                 // 不与正文争抢主层级，也不纳入摘要。
                 div()
                     .text_size(font::BODY_SM)
-                    .text_color(dark().text.secondary)
+                    .text_color(light().text.secondary)
                     .child(state.clone())
                     .into_any_element()
             }
